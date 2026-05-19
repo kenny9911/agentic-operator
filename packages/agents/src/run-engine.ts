@@ -1,0 +1,272 @@
+/**
+ * Run engine — implements `BaseAgent.run()`.
+ *
+ * Responsibilities:
+ *   1. Resolve tenant + DB rows.
+ *   2. Allocate runId + correlationId; INSERT into `runs`.
+ *   3. Open the file log (writeRunLog 'run.start').
+ *   4. Build messages → call gateway.chat().
+ *   5. INSERT into `steps` (one row per call; v1 = 1 step).
+ *   6. Persist prompt + response sidecars under data/artifacts/<runId>/.
+ *   7. parseOutput().
+ *   8. UPDATE `runs` (status, tokens, model, ended_at, duration).
+ *   9. writeRunLog('run.ok' or 'run.fail').
+ *  10. Return AgentResult.
+ *
+ * Failure modes are caught and recorded; the LLMError is re-thrown for the
+ * caller (HTTP layer) to convert into a 4xx/5xx envelope.
+ */
+
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { and, eq } from "drizzle-orm";
+
+import { agents, agentVersions, getDb, runs, steps, tenants } from "@agentic/db";
+import type { DB } from "@agentic/db";
+import { makeId } from "@agentic/shared";
+import { writeRunLog } from "@agentic/runtime";
+import type { ProviderId } from "@agentic/contracts";
+import {
+  LLMError,
+  isLLMError,
+  type ChatMessage,
+  type ChatResponse,
+} from "@agentic/llm-gateway";
+
+import type { BaseAgent } from "./base-agent";
+import type { AgentContext, AgentResult } from "./types";
+import { getGateway } from "./gateway-host";
+
+const SYSTEM_TENANT_SLUG = "__system";
+
+function artifactsRoot(): string {
+  return process.env.AGENTIC_ARTIFACTS_DIR ?? "./artifacts";
+}
+
+async function writeArtifact(runId: string, name: string, payload: unknown): Promise<string> {
+  const dir = path.join(artifactsRoot(), runId);
+  await mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, name);
+  await writeFile(filePath, JSON.stringify(payload, null, 2), "utf8");
+  return filePath;
+}
+
+function resolveTenantId(db: DB, slug: string): { id: string; slug: string } {
+  const row = db.select().from(tenants).where(eq(tenants.slug, slug)).all()[0];
+  if (!row) {
+    throw new LLMError(
+      `Tenant '${slug}' not found — bootstrap must run first`,
+      "bad_request",
+      "mock",
+    );
+  }
+  return { id: row.id, slug: row.slug };
+}
+
+function resolveAgentRow(
+  db: DB,
+  agentName: string,
+  tenantId: string,
+): { agentId: string; agentVersionId: string | null } {
+  const agentRows = db
+    .select()
+    .from(agents)
+    .where(eq(agents.kebabId, agentName))
+    .all();
+
+  if (agentRows.length === 0) {
+    throw new LLMError(
+      `Agent '${agentName}' is not registered in DB — bootstrap must run first`,
+      "bad_request",
+      "mock",
+    );
+  }
+
+  // Prefer the row whose workflow is in the right tenant; otherwise take the first.
+  // For code agents the kebab_id is unique per workflow, and the __system workflow
+  // is the only one carrying them, so this lookup is effectively unambiguous.
+  const agentRow = agentRows[0]!;
+  const av = db
+    .select()
+    .from(agentVersions)
+    .where(eq(agentVersions.agentId, agentRow.id))
+    .all()[0];
+
+  return {
+    agentId: agentRow.id,
+    agentVersionId: av?.id ?? null,
+  };
+}
+
+export async function executeAgentRun<TInput, TOutput>(
+  agent: BaseAgent<TInput, TOutput>,
+  input: TInput,
+  ctx: AgentContext,
+): Promise<AgentResult<TOutput>> {
+  const db = getDb();
+  const gateway = getGateway();
+  const tenantSlug = ctx.tenantSlug || SYSTEM_TENANT_SLUG;
+  const { id: tenantId } = resolveTenantId(db, tenantSlug);
+  const { agentId, agentVersionId } = resolveAgentRow(db, agent.name, tenantId);
+
+  const runId = makeId("run");
+  const stepId = makeId("stp");
+  const correlationId = ctx.correlationId ?? makeId("cor");
+  const startedAt = Date.now();
+  const logCtx = { tenantSlug, runId, correlationId };
+
+  // Initial run row
+  db.insert(runs)
+    .values({
+      id: runId,
+      tenantId,
+      agentId,
+      agentVersionId: agentVersionId ?? null,
+      triggerEventId: null,
+      status: "running",
+      startedAt: new Date(startedAt),
+      correlationId,
+      subject: null,
+      logPath: null,
+    })
+    .run();
+
+  await writeRunLog(logCtx, "INFO", "run.start", {
+    agent: agent.name,
+    kind: "code",
+    invocation_id: ctx.invocationId ?? "—",
+  });
+
+  // Initial step row
+  db.insert(steps)
+    .values({
+      id: stepId,
+      runId,
+      ord: 1,
+      name: "llm.call",
+      type: "logic",
+      status: "running",
+      startedAt: new Date(),
+    })
+    .run();
+
+  try {
+    const provider: ProviderId | undefined = ctx.provider ?? agent.defaultProvider;
+    const model = ctx.model ?? agent.defaultModel;
+
+    const messages: ChatMessage[] = await agent._buildMessages(input, ctx);
+    const inputArtifact = await writeArtifact(runId, "step-1-input.json", {
+      agent: agent.name,
+      provider,
+      model,
+      messages,
+    });
+
+    const response: ChatResponse = await gateway.chat({
+      messages,
+      provider,
+      model: model ?? undefined,
+    });
+
+    const outputArtifact = await writeArtifact(runId, "step-1-output.json", {
+      text: response.text,
+      provider: response.provider,
+      model: response.model,
+      tokensIn: response.tokensIn,
+      tokensOut: response.tokensOut,
+      finishReason: response.finishReason,
+      latencyMs: response.latencyMs,
+    });
+
+    const stepEndedAt = Date.now();
+    db.update(steps)
+      .set({
+        status: "ok",
+        endedAt: new Date(stepEndedAt),
+        durationMs: stepEndedAt - startedAt,
+        inputRef: inputArtifact,
+        outputRef: outputArtifact,
+        provider: response.provider,
+        model: response.model,
+        tokensIn: response.tokensIn ?? null,
+        tokensOut: response.tokensOut ?? null,
+      })
+      .where(eq(steps.id, stepId))
+      .run();
+
+    const output = await agent._parseOutput(response.text, ctx);
+
+    const runEndedAt = Date.now();
+    db.update(runs)
+      .set({
+        status: "ok",
+        endedAt: new Date(runEndedAt),
+        durationMs: runEndedAt - startedAt,
+        tokensIn: response.tokensIn ?? null,
+        tokensOut: response.tokensOut ?? null,
+        model: response.model,
+      })
+      .where(eq(runs.id, runId))
+      .run();
+
+    await writeRunLog(logCtx, "INFO", "run.ok", {
+      agent: agent.name,
+      provider: response.provider,
+      model: response.model,
+      tokens_in: response.tokensIn ?? 0,
+      tokens_out: response.tokensOut ?? 0,
+      duration_ms: runEndedAt - startedAt,
+    });
+
+    return {
+      runId,
+      status: "ok",
+      output,
+      provider: response.provider,
+      model: response.model,
+      tokensIn: response.tokensIn,
+      tokensOut: response.tokensOut,
+      durationMs: runEndedAt - startedAt,
+    };
+  } catch (err) {
+    const llm = isLLMError(err)
+      ? err
+      : new LLMError(
+          err instanceof Error ? err.message : String(err),
+          "provider_error",
+          "mock",
+          err,
+        );
+
+    const stepEndedAt = Date.now();
+    db.update(steps)
+      .set({
+        status: "failed",
+        endedAt: new Date(stepEndedAt),
+        durationMs: stepEndedAt - startedAt,
+        error: `${llm.code}: ${llm.message}`,
+      })
+      .where(eq(steps.id, stepId))
+      .run();
+
+    const runEndedAt = Date.now();
+    db.update(runs)
+      .set({
+        status: "failed",
+        endedAt: new Date(runEndedAt),
+        durationMs: runEndedAt - startedAt,
+        errorMessage: `${llm.code}: ${llm.message}`,
+      })
+      .where(eq(runs.id, runId))
+      .run();
+
+    await writeRunLog(logCtx, "ERROR", "run.fail", {
+      agent: agent.name,
+      code: llm.code,
+      provider: llm.provider,
+      message: llm.message,
+    });
+
+    throw llm;
+  }
+}

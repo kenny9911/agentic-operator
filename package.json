@@ -1,0 +1,41 @@
+{
+  "name": "agentic-operator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic Operator — event-driven agentic workflow runtime + admin portal",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "packageManager": "pnpm@11.1.2",
+  "scripts": {
+    "predev": "lsof -ti:3500,3501,8288,8289,50052,50053 | xargs kill -9 2>/dev/null; exit 0",
+    "dev": "concurrently -n web,api,inngest -c blue,green,magenta \"pnpm --filter @agentic/web run dev\" \"pnpm --filter @agentic/api run dev\" \"npx -y inngest-cli@latest dev -u http://localhost:3501/inngest\"",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "db:generate": "DATABASE_URL=file:../../data/agentic.db pnpm --filter @agentic/db exec drizzle-kit generate",
+    "db:migrate": "DATABASE_URL=file:../../data/agentic.db pnpm --filter @agentic/db exec tsx src/migrate.ts",
+    "db:seed": "DATABASE_URL=file:../../data/agentic.db pnpm --filter @agentic/db exec tsx src/seed.ts",
+    "db:studio": "DATABASE_URL=file:../../data/agentic.db pnpm --filter @agentic/db exec drizzle-kit studio",
+    "seed:rich": "pnpm --filter @agentic/api run seed:rich"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "concurrently": "^9.2.1",
+    "prettier": "^3.8.3",
+    "turbo": "^2.9.14",
+    "typescript": "^6.0.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver"
+    ]
+  }
+}

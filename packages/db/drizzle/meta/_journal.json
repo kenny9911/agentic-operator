@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1778912573960,
+      "tag": "0000_colorful_moira_mactaggert",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778946541341,
+      "tag": "0001_loud_blue_blade",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779129909734,
+      "tag": "0002_bright_apocalypse",
+      "breakpoints": true
+    }
+  ]
+}

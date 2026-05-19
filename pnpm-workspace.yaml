@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "tenants/*"
+
+# pnpm 11 gates lifecycle scripts (postinstall, etc.) for security. Pre-approve
+# the natives we've vetted so a fresh `pnpm install` rebuilds them automatically
+# instead of stopping with an `[ERR_PNPM_IGNORED_BUILDS]` warning.
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true

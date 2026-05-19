@@ -1,0 +1,40 @@
+# deps
+node_modules
+.pnpm-store
+
+# build artifacts
+.next
+dist
+.turbo
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+
+# runtime data — all live under data/
+data/agentic.db
+data/agentic.db-shm
+data/agentic.db-wal
+data/logs/**/*
+!data/logs/.gitkeep
+data/artifacts/**/*
+!data/artifacts/.gitkeep
+
+# editor / OS
+.DS_Store
+.vscode
+.idea
+*.swp
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# test
+coverage
+playwright-report
+test-results

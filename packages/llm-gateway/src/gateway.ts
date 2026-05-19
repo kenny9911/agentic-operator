@@ -1,0 +1,159 @@
+/**
+ * LLMGateway — single entry point for all LLM calls.
+ *
+ * Responsibilities:
+ *   - Provider registry (in-process Map of ProviderId → Adapter)
+ *   - chat() dispatch with provider resolution, failover, timeout, retry
+ *   - Surface configured providers (for /v1/llm/providers)
+ *
+ * Not responsible for: persistence (BaseAgent + step engine handle that),
+ * audit logging (caller writes to audit_log with the response metadata),
+ * cost calculation (derived elsewhere from tokens × prices).
+ */
+
+import { PROVIDER_MODEL_CATALOG, type ProviderId } from "@agentic/contracts";
+import type {
+  ChatRequest,
+  ChatResponse,
+  GatewayConfig,
+  ProviderAdapter,
+  ProviderInfo,
+} from "./types";
+import { LLMError, isLLMError } from "./errors";
+
+export class LLMGateway {
+  private readonly providers = new Map<ProviderId, ProviderAdapter>();
+
+  constructor(private readonly config: GatewayConfig) {}
+
+  registerProvider(adapter: ProviderAdapter): void {
+    this.providers.set(adapter.id, adapter);
+  }
+
+  hasProvider(id: ProviderId): boolean {
+    return this.providers.has(id);
+  }
+
+  getProvider(id: ProviderId): ProviderAdapter | undefined {
+    return this.providers.get(id);
+  }
+
+  get defaultProvider(): ProviderId {
+    return this.config.defaultProvider;
+  }
+
+  get defaultModel(): string | null {
+    return this.config.defaultModel;
+  }
+
+  listProviders(): ProviderInfo[] {
+    const out: ProviderInfo[] = [];
+    for (const [id, adapter] of this.providers) {
+      const catalog = PROVIDER_MODEL_CATALOG[id] ?? [];
+      out.push({
+        id,
+        name: adapter.name,
+        hasKey: adapter.hasKey,
+        defaultModel: adapter.defaultModel,
+        models: catalog.map((m) => m.name),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Main dispatch. Resolves provider chain, model, timeout, then iterates
+   * providers, retrying once on transient errors and falling through to
+   * the next provider on subsequent transient failures.
+   *
+   * Throws LLMError on terminal failure (last provider's error).
+   */
+  async chat(req: ChatRequest): Promise<ChatResponse> {
+    const providers = this.resolveProviderChain(req);
+    const timeoutMs = req.timeoutMs ?? this.config.timeoutMs;
+    // Env-supplied model wins over adapter's catalog default when caller didn't specify.
+    const resolvedModel = req.model ?? this.config.defaultModel ?? undefined;
+    let lastError: unknown = null;
+
+    for (const id of providers) {
+      const adapter = this.providers.get(id);
+      if (!adapter) {
+        lastError = new LLMError(
+          `Provider not registered: ${id}`,
+          "bad_request",
+          id,
+        );
+        continue;
+      }
+
+      const signal = combineSignals(req.signal, timeoutMs);
+      const subReq: ChatRequest = {
+        ...req,
+        model: resolvedModel,
+        signal,
+        providers: undefined,
+        provider: id,
+      };
+
+      try {
+        return await adapter.chat(subReq);
+      } catch (err1) {
+        const e1 = toLLMError(err1, id);
+        if (!e1.transient) throw e1;
+        // One retry with backoff
+        await delay(250);
+        try {
+          const signal2 = combineSignals(req.signal, timeoutMs);
+          return await adapter.chat({ ...subReq, signal: signal2 });
+        } catch (err2) {
+          const e2 = toLLMError(err2, id);
+          lastError = e2;
+          if (!e2.transient) throw e2;
+          // Continue to next provider
+        }
+      }
+    }
+
+    if (isLLMError(lastError)) throw lastError;
+    throw new LLMError(
+      "All providers failed",
+      "provider_error",
+      providers[0] ?? this.config.defaultProvider,
+      lastError,
+    );
+  }
+
+  private resolveProviderChain(req: ChatRequest): ProviderId[] {
+    if (req.providers && req.providers.length > 0) return [...req.providers];
+    if (req.provider) return [req.provider];
+    return [this.config.defaultProvider];
+  }
+}
+
+function toLLMError(err: unknown, provider: ProviderId): LLMError {
+  if (isLLMError(err)) return err;
+  const msg = err instanceof Error ? err.message : String(err);
+  return new LLMError(msg, "provider_error", provider, err);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Compose a caller-provided AbortSignal with a timeout. Returns a fresh
+ * signal aborted when EITHER fires. Uses native AbortSignal.any when
+ * available (Node ≥20), with a polyfill for older runtimes.
+ */
+function combineSignals(caller: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!caller) return timeout;
+  const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === "function") return anyFn([caller, timeout]);
+  // Polyfill
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  caller.addEventListener("abort", onAbort, { once: true });
+  timeout.addEventListener("abort", onAbort, { once: true });
+  return ac.signal;
+}
