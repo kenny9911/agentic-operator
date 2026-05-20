@@ -28,6 +28,9 @@ data/artifacts/**/*
 .idea
 *.swp
 
+# Claude Code worktrees (isolated branches; never tracked)
+.claude/worktrees/
+
 # logs
 npm-debug.log*
 pnpm-debug.log*
