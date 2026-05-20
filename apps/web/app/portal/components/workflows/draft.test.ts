@@ -1,0 +1,116 @@
+import { describe, it, expect } from "vitest";
+import {
+  applyDraft,
+  countDraftChanges,
+  emptyDraft,
+  toManifest,
+  type WorkflowDraft,
+} from "./draft";
+import type { RaasAgent } from "@/lib/hooks/data-context";
+
+function agent(id: string, overrides: Partial<RaasAgent> = {}): RaasAgent {
+  return {
+    id,
+    name: id,
+    title: `Agent ${id}`,
+    description: "",
+    actor: "Agent",
+    stage: 0,
+    triggers: [],
+    emits: [],
+    steps: [],
+    tools: [],
+    model: "",
+    input_data: {},
+    ontology_instructions: "",
+    tool_use: undefined,
+    typescript_code: "",
+    ...overrides,
+  };
+}
+
+describe("applyDraft", () => {
+  it("returns base list unchanged for empty draft", () => {
+    const base = [agent("1"), agent("2")];
+    expect(applyDraft(base, emptyDraft())).toEqual(base);
+  });
+
+  it("filters out removed agents", () => {
+    const base = [agent("1"), agent("2")];
+    const draft: WorkflowDraft = {
+      agents: {},
+      added: new Set(),
+      removed: new Set(["1"]),
+    };
+    const out = applyDraft(base, draft);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.id).toBe("2");
+  });
+
+  it("overrides edited fields", () => {
+    const base = [agent("1", { title: "old", triggers: ["A"] })];
+    const draft: WorkflowDraft = {
+      agents: { "1": { id: "1", title: "new", triggers: ["B"] } },
+      added: new Set(),
+      removed: new Set(),
+    };
+    const out = applyDraft(base, draft);
+    expect(out[0]?.title).toBe("new");
+    expect(out[0]?.triggers).toEqual(["B"]);
+  });
+
+  it("appends added agents", () => {
+    const base = [agent("1")];
+    const draft: WorkflowDraft = {
+      agents: { "new-1": { id: "new-1", title: "Brand new" } },
+      added: new Set(["new-1"]),
+      removed: new Set(),
+    };
+    const out = applyDraft(base, draft);
+    expect(out).toHaveLength(2);
+    expect(out[1]?.id).toBe("new-1");
+    expect(out[1]?.title).toBe("Brand new");
+  });
+});
+
+describe("toManifest", () => {
+  it("converts agents to AgentSpec-shape entries", () => {
+    const agents = [
+      agent("1", {
+        triggers: ["TRIG_A"],
+        emits: ["EMIT_A"],
+        title: "First",
+      }),
+    ];
+    const out = toManifest(agents);
+    expect(out[0]?.id).toBe("1");
+    expect(out[0]?.trigger).toEqual(["TRIG_A"]);
+    expect(out[0]?.triggered_event).toEqual(["EMIT_A"]);
+    expect(out[0]?.actor).toEqual(["Agent"]);
+    expect(out[0]?.actions).toHaveLength(1);
+  });
+
+  it("preserves Human actor", () => {
+    const out = toManifest([agent("1", { actor: "Human" })]);
+    expect(out[0]?.actor).toEqual(["Human"]);
+  });
+});
+
+describe("countDraftChanges", () => {
+  it("counts added / modified / removed", () => {
+    const draft: WorkflowDraft = {
+      agents: {
+        "1": { id: "1", title: "mod" },
+        "2": { id: "2", title: "rm-then-edit" },
+        "new-1": { id: "new-1" },
+      },
+      added: new Set(["new-1"]),
+      removed: new Set(["2"]),
+    };
+    expect(countDraftChanges(draft)).toEqual({
+      added: 1,
+      modified: 1,
+      removed: 1,
+    });
+  });
+});

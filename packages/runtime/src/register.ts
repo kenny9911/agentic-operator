@@ -67,13 +67,35 @@ export function registerAgent(
     event: `${tenantSlug}/${t}` as `${string}/${string}`,
   }));
 
+  // Per review M2: prior to this change `register.ts` hardcoded `limit: 8`
+  // and never read `agent.concurrency.max_concurrent_executions`, which made
+  // the lint check `concurrency_excess` a no-op (checking dead config). The
+  // cap is now honoured at registration time. A missing / disabled
+  // `concurrency` block falls back to the historical default of 8.
+  const concurrencyConfig = (
+    agent as AgentSpec & {
+      concurrency?: { enabled?: boolean; max_concurrent_executions?: number };
+    }
+  ).concurrency;
+  const concurrencyCap =
+    concurrencyConfig?.enabled !== false &&
+    typeof concurrencyConfig?.max_concurrent_executions === "number"
+      ? concurrencyConfig.max_concurrent_executions
+      : 8;
+
   return inngest.createFunction(
     {
       id: fnId,
       name: agent.title ?? agent.name,
+      // P5-TEN-01 (G7) — concurrency key now composes the tenant slug with
+      // the subject. Without the tenant prefix, two tenants whose agents
+      // both process subject="REQ-2041" would share the same Inngest slot
+      // bucket — one heavy tenant could starve another. With the prefix,
+      // each tenant gets its own bucket per subject, and the per-agent
+      // `concurrencyCap` only counts that tenant's traffic.
       concurrency: {
-        limit: 8,
-        key: "event.data.subject",
+        limit: concurrencyCap,
+        key: `"${tenantSlug}:" + event.data.subject`,
       },
       retries: 3,
       // v4: triggers moved into opts (was a separate 2nd arg in v3)
@@ -86,6 +108,13 @@ export function registerAgent(
         typeof data.__triggerEventId === "string"
           ? data.__triggerEventId
           : null;
+      // Event Tester plumbing: the publish route stamps `__test: true` on the
+      // Inngest envelope when the caller opted in. We propagate that into
+      // `runs.isTest` so test traffic from operator publishes is filterable
+      // and never pollutes production observability (PRD G5, NFR-7). The
+      // legacy spelling is `__test`; downstream actions should not read it
+      // directly — runs.isTest is the source of truth.
+      const isTest = data.__test === true;
 
       // step.run memoizes results across Inngest replays. Wrap correlation +
       // run-row allocation so identical IDs are reused on every replay, and
@@ -128,6 +157,7 @@ export function registerAgent(
             startedAt: new Date(startedAt),
             correlationId: cid,
             subject,
+            isTest,
             logPath: null,
           })
           .run();
@@ -210,9 +240,12 @@ export function registerAgent(
             return { stepId: sid, taskId: tid, sStarted };
           });
 
+          // P5-TEN-01 — pin the predicate to the issuing tenant so a leaked
+          // taskId in another tenant cannot resume this run. tasks.ts:resolve
+          // now includes auth.tenantId in the event payload.
           const resolved = await step.waitForEvent(`wait-task-${ord}`, {
             event: "task.resolved",
-            if: `async.data.taskId == "${initStep.taskId}"`,
+            if: `async.data.taskId == "${initStep.taskId}" && async.data.tenantId == "${ctx.tenantId}"`,
             timeout: "7d",
           });
 

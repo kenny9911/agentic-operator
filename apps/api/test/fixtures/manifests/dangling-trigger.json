@@ -1,0 +1,19 @@
+[
+  {
+    "id": "dangling-intake",
+    "name": "danglingIntake",
+    "title": "Dangling Intake",
+    "description": "Triggers on an event no agent emits.",
+    "actor": ["Agent"],
+    "trigger": ["NOBODY_EMITS_THIS_EVENT"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "logRequest",
+        "description": "Log the inbound payload.",
+        "type": "tool"
+      }
+    ],
+    "triggered_event": ["DANGLING_DONE"]
+  }
+]

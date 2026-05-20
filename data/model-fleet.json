@@ -1,0 +1,30 @@
+{
+  "entries": [
+    {
+      "id": "mdl-2b6ca21043d3",
+      "tenantSlug": "raas",
+      "provider": "openrouter",
+      "modelName": "anthropic/claude-sonnet-4-5",
+      "alias": "fast-claude",
+      "role": "primary",
+      "dailyCapUsd": 50,
+      "maxOutTokens": 2048,
+      "temperature": 0.2,
+      "addedAt": 1779259478806,
+      "addedBy": "raas"
+    },
+    {
+      "id": "mdl-ca2db632326a",
+      "tenantSlug": "raas",
+      "provider": "openrouter",
+      "modelName": "openai/gpt-4.1-mini",
+      "alias": "openai/gpt-4.1-mini",
+      "role": "primary",
+      "dailyCapUsd": 30,
+      "maxOutTokens": 2048,
+      "temperature": 0.2,
+      "addedAt": 1779259792905,
+      "addedBy": "raas"
+    }
+  ]
+}

@@ -1,0 +1,225 @@
+/*
+ * Agentic Operator — design tokens (P2-FE-02)
+ *
+ * Single source of truth for theme tokens, density scaling, the z-index
+ * ladder (P2-FE-26), keyframes, and reset rules.
+ *
+ * Imported once from app/layout.tsx. Components consume tokens via
+ * `var(--token)` in their inline style props — there is NO Tailwind / no
+ * CSS-in-JS layer. This matches the v1_1 prototype's authoring model.
+ *
+ * Ported verbatim from agentic-operator_v1_1/index.html lines 11-143 with
+ * the density and z-index ladder additions.
+ */
+
+/* ─── Color + typography ─── (v1_1 index.html:12-42) */
+:root {
+  --bg: #0a0a0b;
+  --bg-2: #0f0f11;
+  --panel: #131317;
+  --panel-2: #18181d;
+  --panel-3: #1d1d23;
+  --border: #232329;
+  --border-2: #2c2c34;
+  --border-3: #393942;
+  --text: #ebebef;
+  --text-2: #a8aab1;
+  --text-3: #6f7178;
+  --text-4: #46474d;
+
+  --signal: #d0ff00;          /* electric lime — live/active */
+  --signal-dim: #5a6e00;
+  --blue: #84a9ff;
+  --green: #65e0a3;
+  --amber: #ffb547;
+  --red: #ff6470;
+  --violet: #b594ff;
+
+  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --display: "Instrument Serif", "IBM Plex Serif", Georgia, serif;
+
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+
+  /* ─── Density scale (P2-FE-20) ─────────────────────────────────────
+   * Components multiply paddings / gaps / heights against
+   * calc(<value> * var(--density-mult)) where it matters. The hooks
+   * useDensity() helper returns the same scalar for JS-driven sizing.
+   *
+   * default = 1 (untouched), compact = 0.85, comfortable = 1.18. */
+  --density: 1;
+  --density-mult: 1;
+
+  /* ─── Z-index ladder (P2-FE-26) ───────────────────────────────────
+   * ESLint rule (eslint-plugin-no-inline-z-index) bans literal z-index
+   * in TSX; every layer goes through one of these tokens. */
+  --z-base: 0;
+  --z-overlay: 100;
+  --z-modal: 200;
+  --z-toast: 300;
+  --z-tooltip: 400;
+}
+
+/* ─── Light theme override (v1_1 index.html:45-60) ─── */
+html[data-theme="light"] {
+  --bg: #f6f6f4;
+  --bg-2: #efefec;
+  --panel: #ffffff;
+  --panel-2: #f8f8f6;
+  --panel-3: #f1f1ee;
+  --border: #e3e3df;
+  --border-2: #d4d4cf;
+  --border-3: #b8b8b2;
+  --text: #1a1a1d;
+  --text-2: #5a5b62;
+  --text-3: #8c8d94;
+  --text-4: #b8b9be;
+  --signal: #4d5e00;
+  --signal-dim: #c8d985;
+}
+
+/* ─── Density (P2-FE-20, replaces v1_1 placeholder) ─── */
+html[data-density="comfortable"] { --density: 1.18; --density-mult: 1.18; }
+html[data-density="compact"]     { --density: 0.85; --density-mult: 0.85; }
+html[data-density="default"]     { --density: 1;    --density-mult: 1;    }
+
+/* ─── Reset (v1_1 index.html:62-72) ─── */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ─── Scrollbars (v1_1 index.html:76-79) ─── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 10px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--border-3); }
+
+/* ─── Selection (v1_1 index.html:82) ─── */
+::selection { background: var(--signal); color: #000; }
+
+/* ─── Utility classes (v1_1 index.html:85-89) ─── */
+.mono { font-family: var(--mono); font-feature-settings: "ss01" on; }
+.display { font-family: var(--display); font-weight: 400; letter-spacing: -0.01em; }
+.muted { color: var(--text-2); }
+.dim { color: var(--text-3); }
+.nowrap { white-space: nowrap; }
+
+/* ─── Keyframes (v1_1 index.html:91-121) ─── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.45; transform: scale(0.85); }
+}
+@keyframes tick {
+  0%   { transform: translateX(-4px); opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes edge-flow {
+  from { stroke-dashoffset: 24; }
+  to   { stroke-dashoffset: 0; }
+}
+@keyframes dot-flow {
+  from { offset-distance: 0%; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  to   { offset-distance: 100%; opacity: 0; }
+}
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes shimmer {
+  0%   { background-position: -200px 0; }
+  100% { background-position:  200px 0; }
+}
+@keyframes fadein  { from { opacity: 0; } to { opacity: 1; } }
+
+/* ─── Live dot (v1_1 index.html:123-133) ─── */
+.live-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 6px var(--signal);
+  animation: pulse 1.4s infinite;
+}
+.live-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.live-dot.amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.live-dot.red   { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+
+/* ─── Button + anchor base (v1_1 index.html:136) ─── */
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; padding: 0; }
+a      { color: inherit; text-decoration: none; }
+
+/* ─── Focus ring (P2-FE-24, not in v1_1) ───────────────────────────────
+ *
+ * Every interactive primitive opts into a uniform signal-lime focus ring
+ * via this single selector. The 2px ring + 2px offset matches the v1_1
+ * design language (signal-lime accent, breathing room around the
+ * element). `:focus-visible` (not `:focus`) means the ring only appears
+ * for keyboard activation, not mouse clicks — that keeps the chrome
+ * clean while still scoring 0 critical axe violations.
+ *
+ * Border-radius is inherited via `outline-radius` where supported and
+ * falls back to a sensible 4px for rounded primitives (buttons, chips,
+ * inputs). Components that need a different ring color (e.g. a danger
+ * button against a red background) can override locally; the default
+ * works for ≈98 % of the surface.
+ */
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* `<a>` and inline buttons inside dense layouts (table rows, lists)
+ * benefit from a 1px offset so the ring doesn't push neighbours. */
+a:focus-visible,
+[role="row"] :focus-visible,
+[role="listitem"] :focus-visible {
+  outline-offset: 1px;
+}
+/* Remove the default browser focus ring everywhere a :focus-visible
+ * style takes over — keeps the chrome tight while preserving
+ * keyboard-only visibility. */
+button:focus,
+a:focus,
+[role="button"]:focus,
+[role="separator"]:focus,
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+}
+
+/* P2-FE-24 — Skip-link for keyboard users. Hidden until focused so it
+ * doesn't pollute the design; on focus it lands top-left as a high-
+ * contrast pill. Mount in chrome.tsx as the first interactive element. */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 8px;
+  z-index: var(--z-toast);
+  padding: 6px 12px;
+  background: var(--signal);
+  color: #000;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: top 0.15s;
+}
+.skip-link:focus {
+  top: 8px;
+}

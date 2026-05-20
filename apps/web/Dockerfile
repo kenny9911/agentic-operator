@@ -1,0 +1,85 @@
+# syntax=docker/dockerfile:1.6
+#
+# apps/web — Next.js 16 + React 19 standalone production build.
+#
+# We deliberately use Next.js's `output: "standalone"` mode (configured in
+# `next.config.mjs`) so the runtime image carries only the bundled server
+# + the minimal `node_modules` Next needs at runtime — about 30 MB instead
+# of the multi-hundred-MB unbundled tree.
+#
+# Web has zero direct DB access — every read goes through `/v1/*` to the
+# api service, so this image carries no native modules and no SQLite.
+# `AGENTIC_API_URL` controls where rewrites point.
+#
+# Build:
+#   docker build -f apps/web/Dockerfile -t agentic-web:dev .
+#
+# Run:
+#   docker run --rm -p 3500:3500 -e AGENTIC_API_URL=http://api:3501 agentic-web:dev
+
+# --- base ----------------------------------------------------------------
+FROM node:26-slim AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH="$PNPM_HOME:$PATH"
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/*
+# node:26-slim does NOT ship corepack; install pnpm via npm.
+RUN npm install --global pnpm@11.1.2
+WORKDIR /app
+
+# --- build ---------------------------------------------------------------
+FROM base AS build
+# Workspace skeleton — keep dep installs cache-friendly.
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json turbo.json ./
+COPY apps/api/package.json apps/api/tsconfig.json apps/api/
+COPY apps/web/package.json apps/web/tsconfig.json apps/web/
+COPY apps/cli/package.json apps/cli/tsconfig.json apps/cli/
+COPY packages packages
+COPY tenants tenants
+COPY data/system-agents/package.json data/system-agents/tsconfig.json data/system-agents/
+
+# Install workspace deps. Web only needs @agentic/contracts at runtime,
+# but the pnpm workspace install is whole-graph so dependants resolve.
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# Now the source.
+COPY apps/web apps/web
+COPY packages packages
+
+# `next build` reads the same env at build time as `next dev`. Inject a
+# build-time API URL so rewrites compile in.
+ARG AGENTIC_API_URL=http://api:3501
+ENV AGENTIC_API_URL=${AGENTIC_API_URL}
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm --filter @agentic/web build
+
+# --- runtime -------------------------------------------------------------
+FROM node:26-slim AS runtime
+ENV NODE_ENV=production
+ENV PORT=3500
+ENV HOSTNAME=0.0.0.0
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 1001 agentic \
+ && useradd  --system --uid 1001 --gid agentic --home /app --shell /usr/sbin/nologin agentic
+WORKDIR /app
+
+# Next.js standalone output is self-contained: server.js + its trimmed
+# node_modules. Copy alongside .next/static + public.
+COPY --from=build --chown=agentic:agentic /app/apps/web/.next/standalone /app/
+COPY --from=build --chown=agentic:agentic /app/apps/web/.next/static /app/apps/web/.next/static
+COPY --from=build --chown=agentic:agentic /app/apps/web/public /app/apps/web/public
+
+USER agentic
+EXPOSE 3500
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+ (process.env.PORT||3500) +'/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "apps/web/server.js"]

@@ -20,7 +20,10 @@ export type IdPrefix =
   | "agv"
   | "aud"
   | "cor"
-  | "inv";
+  | "inv"
+  | "mdl"
+  | "imp"
+  | "iss";
 
 export function makeId(prefix: IdPrefix): string {
   const uuid = crypto.randomUUID().replace(/-/g, "");

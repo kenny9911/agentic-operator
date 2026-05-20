@@ -1,0 +1,242 @@
+{
+  "title": "Agentic Operator Workflow Manifest",
+  "description": "Canonical shape of `models/<tenant>-v<n>/workflow_v*.json`. Generated from `packages/runtime/src/manifest.ts` (WorkflowManifestSchema). Some legacy on-disk shapes (eg `tool_use: \"\"`, array-of-strings tool refs, omitted `name`/`type`/`order` on actions) are tolerated by the runtime and accepted by this schema; the runtime normalizes them at parse time.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "description": {
+        "default": "",
+        "type": "string"
+      },
+      "actor": {
+        "minItems": 1,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "Agent",
+            "Human"
+          ]
+        }
+      },
+      "trigger": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "actions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "order": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "default": "",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "tool",
+                "logic",
+                "manual",
+                "condition",
+                "delay",
+                "subflow"
+              ]
+            },
+            "condition": {
+              "type": "string"
+            },
+            "task_type": {
+              "type": "string"
+            },
+            "task_timeout_s": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "retries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "timeout_s": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "delay_ms": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "subflow": {
+              "type": "string"
+            },
+            "subflow_input": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "required": [],
+          "additionalProperties": {},
+          "description": "Step in an agent's action list. On disk either `id` or `order` must be present; missing `name` falls back to `id`/`order`, and missing `type` defaults to 'logic' at runtime.",
+          "anyOf": [
+            {
+              "required": [
+                "id"
+              ]
+            },
+            {
+              "required": [
+                "order"
+              ]
+            }
+          ]
+        }
+      },
+      "triggered_event": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "input_data": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "ontology_instructions": {
+        "type": "string"
+      },
+      "tool_use": {
+        "description": "Tools advertised to the LLM. Canonical: array of {name, description?, input_schema?}. Runtime also accepts an array of bare tool-name strings, or an empty string as a no-tools placeholder.",
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "input_schema": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          {
+            "type": "string",
+            "maxLength": 0
+          }
+        ]
+      },
+      "typescript_code": {
+        "type": "string"
+      },
+      "cron": {
+        "type": "string"
+      },
+      "cron_timezone": {
+        "type": "string"
+      },
+      "retries": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "timeout_s": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "model": {
+        "type": "string"
+      },
+      "concurrency": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_concurrent_executions": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "queue_strategy": {
+            "default": "FIFO",
+            "type": "string",
+            "enum": [
+              "FIFO",
+              "LIFO",
+              "PRIORITY"
+            ]
+          }
+        },
+        "required": [
+          "enabled",
+          "max_concurrent_executions",
+          "queue_strategy"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "description",
+      "actor",
+      "trigger",
+      "actions",
+      "triggered_event"
+    ],
+    "additionalProperties": {}
+  }
+}

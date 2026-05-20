@@ -1,0 +1,18 @@
+[
+  {
+    "id": "intake-bad",
+    "name": "intakeBad",
+    "title": "Intake (missing actor)",
+    "description": "Receives the inbound request.",
+    "trigger": ["REQUEST_RECEIVED"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "logRequest",
+        "description": "Log the inbound payload.",
+        "type": "tool"
+      }
+    ],
+    "triggered_event": ["REQUEST_PARSED"]
+  }
+]

@@ -1,0 +1,19 @@
+[
+  {
+    "id": "human-orphan",
+    "name": "humanOrphan",
+    "title": "Human Orphan",
+    "description": "Human actor without a taskDefinition tool.",
+    "actor": ["Human"],
+    "trigger": ["HUMAN_NEEDED"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "askHuman",
+        "description": "Wait for input.",
+        "type": "manual"
+      }
+    ],
+    "triggered_event": ["HUMAN_REPLIED"]
+  }
+]

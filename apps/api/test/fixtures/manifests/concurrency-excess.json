@@ -1,0 +1,24 @@
+[
+  {
+    "id": "ce-intake",
+    "name": "ceIntake",
+    "title": "Concurrency-Excess Intake",
+    "description": "Asks for way too much concurrency.",
+    "actor": ["Agent"],
+    "trigger": ["CE_REQUEST"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "burnCpu",
+        "description": "Allegedly spawns 999 workers.",
+        "type": "tool"
+      }
+    ],
+    "triggered_event": ["CE_DONE"],
+    "concurrency": {
+      "enabled": true,
+      "max_concurrent_executions": 999,
+      "queue_strategy": "FIFO"
+    }
+  }
+]

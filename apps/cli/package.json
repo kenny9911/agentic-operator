@@ -1,0 +1,29 @@
+{
+  "name": "@agentic/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "agentic — Agentic Operator command-line client (init, deploy, logs, events)",
+  "bin": {
+    "agentic": "./dist/cli.js"
+  },
+  "main": "./src/cli.ts",
+  "scripts": {
+    "build": "tsc --noEmit && node scripts/build-shim.mjs",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@agentic/contracts": "workspace:*",
+    "tsx": "^4.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.4",
+    "@vitest/coverage-v8": "3.2.4"
+  }
+}

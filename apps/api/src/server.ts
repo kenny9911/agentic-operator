@@ -14,6 +14,7 @@ import { webhooksRoutes } from "./routes/v1/webhooks";
 import { artifactsRoutes } from "./routes/v1/artifacts";
 import { readsRoutes } from "./routes/v1/reads";
 import { llmRoutes } from "./routes/v1/llm";
+import { manifestImportRoutes } from "./routes/v1/manifest-import";
 import { inngestRoute } from "./routes/inngest";
 import { bootstrapRuntime } from "./bootstrap";
 
@@ -62,6 +63,7 @@ export async function build() {
       await v1.register(artifactsRoutes);
       await v1.register(readsRoutes);
       await v1.register(llmRoutes);
+      await v1.register(manifestImportRoutes);
     },
     { prefix: "/v1" },
   );

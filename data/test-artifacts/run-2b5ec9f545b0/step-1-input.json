@@ -1,0 +1,13 @@
+{
+  "agent": "testAgent",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a concise technical writer. Reply in one paragraph."
+    },
+    {
+      "role": "user",
+      "content": "Introduce what is Agentic Operator."
+    }
+  ]
+}

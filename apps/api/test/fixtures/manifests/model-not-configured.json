@@ -1,0 +1,20 @@
+[
+  {
+    "id": "mnc-intake",
+    "name": "mncIntake",
+    "title": "Model-Not-Configured Intake",
+    "description": "Requests a model nobody serves.",
+    "actor": ["Agent"],
+    "trigger": ["MNC_REQUEST"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "callLLM",
+        "description": "Ask the unicorn.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["MNC_DONE"],
+    "model": "unicorn-3-ultra"
+  }
+]

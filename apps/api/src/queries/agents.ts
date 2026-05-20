@@ -93,6 +93,68 @@ interface ManifestShape {
   actions?: AgentDetail["actions"];
 }
 
+/**
+ * Lookup the most recent manifest version of a named agent in the given tenant,
+ * returning its first trigger event so `/v1/agents/:name/invoke` can emit it.
+ *
+ * Used by the invoke route to extend Test-Run support to manifest agents
+ * (Option B from the use-case verification: route falls back to a DB lookup
+ * + Inngest event emit when the agent isn't in the code registry).
+ */
+export async function findManifestAgentTrigger(
+  tenantSlug: string,
+  agentName: string,
+): Promise<{
+  agentId: string;
+  name: string;
+  actor: "Agent" | "Human";
+  enabled: boolean;
+  triggers: string[];
+} | null> {
+  const db = getDb();
+  const tenantId = await resolveTenantId(tenantSlug);
+  if (!tenantId) return null;
+
+  const row = db
+    .select({
+      id: agents.id,
+      name: agents.name,
+      actor: agents.actor,
+      kind: agents.kind,
+      enabled: agents.enabled,
+      manifestJson: agentVersions.manifestJson,
+      versionCreatedAt: workflowVersions.createdAt,
+    })
+    .from(agents)
+    .innerJoin(workflows, eq(workflows.id, agents.workflowId))
+    .innerJoin(agentVersions, eq(agentVersions.agentId, agents.id))
+    .innerJoin(
+      workflowVersions,
+      eq(workflowVersions.id, agentVersions.workflowVersionId),
+    )
+    .where(
+      and(
+        eq(workflows.tenantId, tenantId),
+        eq(agents.name, agentName),
+        eq(agents.kind, "manifest"),
+      ),
+    )
+    .orderBy(desc(workflowVersions.createdAt))
+    .limit(1)
+    .all()[0];
+
+  if (!row) return null;
+  const manifest = row.manifestJson as ManifestShape | null;
+  const triggers = manifest?.trigger ?? [];
+  return {
+    agentId: row.id,
+    name: row.name,
+    actor: row.actor === "Human" ? "Human" : "Agent",
+    enabled: row.enabled,
+    triggers,
+  };
+}
+
 export async function getAgentDetail(
   tenantSlug: string,
   kebabId: string,

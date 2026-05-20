@@ -1,0 +1,15 @@
+{
+  "agent": "scorerAgent",
+  "provider": "mock",
+  "jsonMode": true,
+  "messages": [
+    {
+      "role": "system",
+      "content": "Return strict JSON: { score, label }."
+    },
+    {
+      "role": "user",
+      "content": "x"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, like, or, sql } from "drizzle-orm";
 import {
   agents,
   events,
@@ -212,7 +212,10 @@ export async function listRecentEvents(
   const tenantId = await resolveTenantId(tenantSlug);
   if (!tenantId) return [];
 
-  const whereParts = [eq(events.tenantId, tenantId)];
+  // Soft-deleted events are invisible to operator views. The SSE live tail
+  // (fetchEventsSince) applies the same filter — both surfaces must agree
+  // or the catch-up GET and the live socket disagree on what's "current".
+  const whereParts = [eq(events.tenantId, tenantId), isNull(events.deletedAt)];
   if (opts.name) whereParts.push(eq(events.name, opts.name));
 
   return db

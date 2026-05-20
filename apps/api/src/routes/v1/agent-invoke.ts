@@ -23,20 +23,32 @@ import type { FastifyInstance } from "fastify";
 import { agentRegistry } from "@agentic/agents";
 import { PROVIDER_IDS, type ProviderId } from "@agentic/contracts";
 import { isLLMError } from "@agentic/llm-gateway";
+import { inngest } from "@agentic/runtime";
 import { InvokeAgentBody } from "@agentic/contracts";
 import { makeId } from "@agentic/shared";
 import { getLLMGateway } from "../../services/llm";
+import { requireAuth } from "../../plugins/auth";
+import { findManifestAgentTrigger } from "../../queries/agents";
 
 function isProviderId(s: string): s is ProviderId {
   return (PROVIDER_IDS as readonly string[]).includes(s);
 }
 
 export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Params: { name: string } }>(
+  app.post<{
+    Params: { name: string };
+    Querystring: { testRun?: string; async?: string };
+  }>(
     "/agents/:name/invoke",
     async (req, reply) => {
       const agentName = req.params.name;
       const body = InvokeAgentBody.parse(req.body ?? {});
+      // `?testRun=1` or `?testRun=true` flags the run as a test. Used by the
+      // portal's "Test run" button to mark runs.is_test=true and the SSE
+      // `run.started` payload's `testRun` field. Falls back to false when
+      // the param is absent or any other value.
+      const testRunQuery =
+        req.query.testRun === "1" || req.query.testRun === "true";
 
       // Validate provider exists in the gateway registry
       if (body.provider !== undefined) {
@@ -53,13 +65,103 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      // P5-TEN-01 — `agentRegistry.get` gains an optional tenant-slug arg in
+      // the agent-runtime package so tenants can override platform agents.
+      // The canonical @agentic/agents registry on this branch only accepts a
+      // name; we pass just `agentName` to stay compatible while the registry
+      // refactor lands. When @agentic/agents adopts the same signature, swap
+      // to `agentRegistry.get(agentName, req.auth?.tenantSlug)`.
       const agent = agentRegistry.get(agentName);
       if (!agent) {
-        return reply.fail(
-          "not_found",
-          `Agent '${agentName}' not found in code registry`,
-          404,
+        // Option B fallback — manifest agents aren't in the code registry but
+        // they ARE invocable: emit their first declared trigger event into
+        // Inngest and the manifest engine picks it up. This makes the
+        // portal's "Test run" button work uniformly for both AgentKinds.
+        const auth = requireAuth(req);
+        const manifestAgent = await findManifestAgentTrigger(
+          auth.tenantSlug,
+          agentName,
         );
+        if (!manifestAgent) {
+          return reply.fail(
+            "not_found",
+            `Agent '${agentName}' not found in tenant '${auth.tenantSlug}' (neither as a code agent nor as a manifest agent).`,
+            404,
+          );
+        }
+        if (!manifestAgent.enabled) {
+          return reply.fail(
+            "agent_disabled",
+            `Agent '${agentName}' is disabled`,
+            409,
+          );
+        }
+        if (manifestAgent.triggers.length === 0) {
+          return reply.fail(
+            "no_auto_trigger",
+            `Agent '${agentName}' has no declared trigger event (actor=${manifestAgent.actor}). Emit an event manually via POST /v1/events to invoke it.`,
+            409,
+          );
+        }
+
+        const triggerEvent = manifestAgent.triggers[0]!;
+        const eventId = makeId("evt");
+        const correlationId = makeId("cor");
+
+        // Determine the subject. Body.input may carry one (e.g. {subject: "REQ-2041"}
+        // or {candidate_id, job_requisition_id}); fall back to a synthetic test
+        // subject so the run doesn't surface a NULL subject in the UI.
+        const inputObj =
+          body.input && typeof body.input === "object"
+            ? (body.input as Record<string, unknown>)
+            : {};
+        const subject =
+          (typeof inputObj.subject === "string" && inputObj.subject) ||
+          (typeof inputObj.candidate_id === "string" && inputObj.candidate_id) ||
+          (typeof inputObj.job_requisition_id === "string" &&
+            inputObj.job_requisition_id) ||
+          `TEST-${eventId.slice(4, 12)}`;
+
+        const inngestData: Record<string, unknown> = {
+          ...inputObj,
+          subject,
+          __triggerEventId: eventId,
+          __correlationId: correlationId,
+          __invokedAgent: agentName,
+        };
+        if (testRunQuery) {
+          inngestData.__test = true;
+        }
+
+        try {
+          await inngest.send({
+            name: `${auth.tenantSlug}/${triggerEvent}` as `${string}/${string}`,
+            data: inngestData,
+          });
+        } catch (err) {
+          req.log.error({ err }, "agent-invoke: inngest.send failed");
+          return reply.fail(
+            "internal_error",
+            "Failed to enqueue invocation event",
+            500,
+          );
+        }
+
+        return reply
+          .code(202)
+          .send({
+            ok: true,
+            data: {
+              kind: "manifest",
+              status: "queued",
+              eventId,
+              eventName: triggerEvent,
+              subject,
+              correlationId,
+              note:
+                "Manifest agent dispatched via Inngest. Watch /v1/runs (SSE) for the resulting run.",
+            },
+          });
       }
 
       if (!agent.enabled) {

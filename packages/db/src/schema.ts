@@ -36,9 +36,21 @@ export const tenants = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(now),
+    /** P5-TEN-01 — tenant lifecycle. Archived tenants are hidden from the
+     * default list and have their Inngest functions de-registered, but rows
+     * remain so audit trails and prior runs stay readable. Restore by setting
+     * back to null. Hard-delete is a separate platform-admin operation. */
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    /** P5-TEN-01 — last time any tenant attribute (name/subtitle/color) or
+     * lifecycle flag changed. Tracked separately from createdAt so the SPA
+     * can show "Updated 3m ago" without inferring it from audit_log. */
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(now),
   },
   (t) => ({
     slugUq: uniqueIndex("tenants_slug_uq").on(t.slug),
+    archivedAtIdx: index("tenants_archived_at_idx").on(t.archivedAt),
   }),
 );
 
@@ -136,10 +148,30 @@ export const deployments = sqliteTable(
       .notNull()
       .default(now),
     note: text("note"),
+    /**
+     * Expiry for `status='pending'` rows produced by the manifest-import
+     * wizard. Set to `now + 1h` when validate inserts the pending row; nulled
+     * out at commit. Boot-time `reconcileImports` drops expired rows along
+     * with their `data/imports/<deployment_id>/` tmp dirs. Null for live
+     * rows. (Per review A2: the deployment row's `id` IS the session token —
+     * no separate `import_session_id` column.)
+     */
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    /**
+     * Path to the on-disk manifest backing this deployment. Between phases
+     * 3 and 4 of the commit transaction this points at the tmp staging file
+     * `data/imports/<deployment_id>/workflow.json`; after the atomic rename
+     * in phase 4 it points at `models/<slug>-vN/workflow_v<N+1>.json`. The
+     * boot-time reconciler queries this column to complete crashed renames
+     * and detect missing on-disk files. Null for non-import deployments.
+     */
+    filePath: text("file_path"),
   },
   (t) => ({
     tenantStatusIdx: index("dpl_tenant_status_idx").on(t.tenantId, t.status),
     versionIdx: index("dpl_version_idx").on(t.versionId),
+    expiresAtIdx: index("deployments_expires_at_idx").on(t.expiresAt),
+    filePathIdx: index("deployments_file_path_idx").on(t.filePath),
   }),
 );
 
@@ -207,11 +239,23 @@ export const events = sqliteTable(
       .notNull()
       .default(now),
     payloadRef: text("payload_ref"),
+    /** P1-API-04b — soft-delete tombstone. */
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   },
   (t) => ({
     tenantNameReceivedIdx: index("evt_tenant_name_received_idx").on(
       t.tenantId,
       t.name,
+      t.receivedAt,
+    ),
+    deletedAtIdx: index("events_deleted_at_idx").on(t.deletedAt),
+    // Event Tester SSE poll (GET /v1/events/stream without ?names=) uses
+    // `WHERE tenantId = ? AND receivedAt > ?` — the (tenantId, name, ...)
+    // index cannot serve that because `name` sits between the equality and
+    // the range predicate. A covering (tenantId, receivedAt) index keeps
+    // the 250ms poll query a B-tree seek even on tenants with 100k+ events.
+    tenantReceivedIdx: index("evt_tenant_received_idx").on(
+      t.tenantId,
       t.receivedAt,
     ),
     tenantSubjectIdx: index("evt_tenant_subject_idx").on(t.tenantId, t.subject),
@@ -246,6 +290,8 @@ export const runs = sqliteTable(
       .references(() => agents.id),
     agentVersionId: text("agent_version_id").references(() => agentVersions.id),
     triggerEventId: text("trigger_event_id").references(() => events.id),
+    /** P1-RT-04 — parent run id when this run was composed via `subflow`. */
+    parentRunId: text("parent_run_id"),
     status: text("status", {
       enum: ["queued", "running", "ok", "failed", "waiting", "cancelled"],
     }).notNull(),
@@ -260,6 +306,16 @@ export const runs = sqliteTable(
     logPath: text("log_path"),
     correlationId: text("correlation_id").notNull(),
     subject: text("subject"),
+    /** P1-API-04b — soft-delete tombstone. */
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+    /**
+     * Test-run marker. Set true when:
+     *   • the synchronous code-agent invoke route accepts `testRun: true`, or
+     *   • the manifest path sees `event.data.__test === true` (Event Tester
+     *     publishes via `POST /v1/events` with `test: true`).
+     * The column is indexed so dashboards can default to non-test traffic.
+     */
+    isTest: integer("is_test", { mode: "boolean" }).notNull().default(false),
   },
   (t) => ({
     tenantStartedIdx: index("runs_tenant_started_idx").on(
@@ -270,6 +326,8 @@ export const runs = sqliteTable(
     agentIdx: index("runs_agent_idx").on(t.agentId),
     correlationIdx: index("runs_correlation_idx").on(t.correlationId),
     subjectIdx: index("runs_subject_idx").on(t.subject),
+    deletedAtIdx: index("runs_deleted_at_idx").on(t.deletedAt),
+    isTestIdx: index("runs_is_test_idx").on(t.isTest),
   }),
 );
 
@@ -329,10 +387,13 @@ export const tasks = sqliteTable(
     resolvedBy: text("resolved_by").references(() => users.id),
     payloadJson: text("payload_json", { mode: "json" }),
     resolutionJson: text("resolution_json", { mode: "json" }),
+    /** P1-API-04b — soft-delete tombstone. */
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   },
   (t) => ({
     tenantStatusIdx: index("tasks_tenant_status_idx").on(t.tenantId, t.status),
     runIdx: index("tasks_run_idx").on(t.runId),
+    deletedAtIdx: index("tasks_deleted_at_idx").on(t.deletedAt),
   }),
 );
 
@@ -439,6 +500,116 @@ export const entityTypes = sqliteTable(
   }),
 );
 
+// ─── Budgets (P1-DB-01) ─────────────────────────────────────────────────────
+
+export const tenantBudgets = sqliteTable("tenant_budgets", {
+  tenantId: text("tenant_id")
+    .primaryKey()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  monthlyTokenCap: integer("monthly_token_cap"),
+  monthlyUsdCap: integer("monthly_usd_cap"),
+  usedTokensMonth: integer("used_tokens_month").notNull().default(0),
+  usedUsdMonth: integer("used_usd_month").notNull().default(0),
+  periodStart: integer("period_start", { mode: "timestamp_ms" })
+    .notNull()
+    .default(now),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(now),
+});
+
+// ─── Schema metadata (P1-DB-02) ─────────────────────────────────────────────
+
+export const meta = sqliteTable("_meta", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(now),
+});
+
+// ─── Webhook subscriptions (P3-RT-04) ───────────────────────────────────────
+
+export const webhookSubscriptions = sqliteTable(
+  "webhook_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    secretEncrypted: text("secret_encrypted").notNull(),
+    signingAlgo: text("signing_algo").notNull().default("hmac-sha256"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(now),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(now),
+  },
+  (t) => ({
+    tenantSourceUq: uniqueIndex("webhook_sub_tenant_source_uq")
+      .on(t.tenantId, t.source)
+      .where(sql`${t.enabled} = 1`),
+    sourceIdx: index("webhook_sub_source_idx")
+      .on(t.source)
+      .where(sql`${t.enabled} = 1`),
+  }),
+);
+
+// ─── Agent memory (P3-DB-01) ────────────────────────────────────────────────
+
+export const agentMemoryShort = sqliteTable(
+  "agent_memory_short",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    valueJson: text("value_json").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(now),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.runId, t.key] }),
+    runIdx: index("agent_memory_short_run_idx").on(t.runId),
+  }),
+);
+
+export const agentMemoryLong = sqliteTable(
+  "agent_memory_long",
+  {
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    agentName: text("agent_name").notNull(),
+    subject: text("subject").notNull(),
+    key: text("key").notNull(),
+    valueJson: text("value_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(now),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(now),
+  },
+  (t) => ({
+    pk: primaryKey({
+      columns: [t.tenantId, t.agentName, t.subject, t.key],
+    }),
+    tenantAgentIdx: index("agent_memory_long_tenant_agent_idx").on(
+      t.tenantId,
+      t.agentName,
+    ),
+    subjectIdx: index("agent_memory_long_subject_idx").on(
+      t.tenantId,
+      t.subject,
+    ),
+  }),
+);
+
 // ─── Relations (used by Drizzle's relational queries) ───────────────────────
 
 export const tenantsRelations = relations(tenants, ({ many }) => ({
@@ -530,6 +701,11 @@ export const schema = {
   apiTokens,
   eventTypes,
   entityTypes,
+  tenantBudgets,
+  meta,
+  webhookSubscriptions,
+  agentMemoryShort,
+  agentMemoryLong,
   tenantsRelations,
   workflowsRelations,
   workflowVersionsRelations,

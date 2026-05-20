@@ -67,7 +67,7 @@ function App() {
         <TopBar view={view} params={params} navigate={navigate} liveStream={tweaks.liveStream} setTweak={setTweak} />
         <div style={{ flex: 1, overflow: "hidden", minHeight: 0, position: "relative" }}>
           {view === "dashboard" && <Dashboard navigate={navigate} liveStream={tweaks.liveStream} />}
-          {view === "workflows" && <Workflows navigate={navigate} liveStream={tweaks.liveStream} />}
+          {view === "workflows" && <Workflows navigate={navigate} liveStream={tweaks.liveStream} tenant={tenant} />}
           {view === "agents" && <Agents navigate={navigate} params={params} models={models} />}
           {view === "runs" && <Runs navigate={navigate} params={params} />}
           {view === "events" && <Events navigate={navigate} params={params} liveStream={tweaks.liveStream} />}

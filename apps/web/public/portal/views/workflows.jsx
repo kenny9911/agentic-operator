@@ -42,7 +42,7 @@ function nodePos(id) {
   return { x: PAD_X + p.stage * COL_W, y: PAD_Y + p.lane * ROW_H };
 }
 
-function Workflows({ navigate, liveStream }) {
+function Workflows({ navigate, liveStream, tenant }) {
   const agents = window.RAAS_AGENTS;
   const events = window.RAAS_EVENTS;
   const stages = window.RAAS_STAGES;
@@ -335,7 +335,7 @@ function Workflows({ navigate, liveStream }) {
         </aside>
       </div>
       {showNewModal && <NewWorkflowModal onClose={() => setShowNewModal(false)} navigate={navigate} />}
-      {showImport && <window.ImportManifestModal onClose={() => setShowImport(false)} mode="workflow" />}
+      {showImport && <window.ImportManifestModal onClose={() => setShowImport(false)} mode="workflow" tenantSlug={tenant && tenant.id} />}
     </div>
   );
 }

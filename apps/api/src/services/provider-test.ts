@@ -1,0 +1,278 @@
+/**
+ * Provider connectivity probe — verifies a candidate key against the upstream
+ * vendor without persisting anything. Hits the provider's "list models"
+ * endpoint when one exists; that's cheap, doesn't consume tokens, and proves
+ * the key is valid + the network is reachable.
+ *
+ * Returns a normalized result; callers don't need to know provider-specific
+ * shapes. Errors are caught and folded into `{ ok: false, ... }` so the
+ * frontend can render one consistent UI.
+ */
+import type { ProviderId } from "@agentic/contracts";
+
+export interface ProviderTestResult {
+  ok: boolean;
+  statusCode: number | null;
+  latencyMs: number;
+  modelCount: number | null;
+  message: string;
+}
+
+const TEST_TIMEOUT_MS = 8_000;
+
+async function fetchJson(
+  url: string,
+  init: RequestInit,
+): Promise<{ status: number; body: unknown }> {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), TEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...init, signal: ac.signal });
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      // ignore — some providers return non-JSON on error pages
+    }
+    return { status: res.status, body };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function countModels(body: unknown): number | null {
+  if (!body || typeof body !== "object") return null;
+  const obj = body as Record<string, unknown>;
+  if (Array.isArray(obj.data)) return obj.data.length;
+  if (Array.isArray(obj.models)) return obj.models.length;
+  return null;
+}
+
+interface OpenAICompatibleConfig {
+  baseURL: string;
+  /** Probe path appended to baseURL. Defaults to `/models`. Some providers
+   *  (OpenRouter) expose a public model list, so we hit an auth-required
+   *  endpoint instead to actually validate the key. */
+  probePath?: string;
+  extraHeaders?: Record<string, string>;
+}
+
+const OPENAI_COMPATIBLE: Partial<Record<ProviderId, OpenAICompatibleConfig>> = {
+  openai: { baseURL: "https://api.openai.com/v1" },
+  // OpenRouter's /models is public; /auth/key requires the bearer.
+  openrouter: { baseURL: "https://openrouter.ai/api/v1", probePath: "/auth/key" },
+  groq: { baseURL: "https://api.groq.com/openai/v1" },
+  together: { baseURL: "https://api.together.xyz/v1" },
+  mistral: { baseURL: "https://api.mistral.ai/v1" },
+  deepseek: { baseURL: "https://api.deepseek.com/v1" },
+  qwen: { baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+};
+
+async function testOpenAICompatible(
+  apiKey: string,
+  cfg: OpenAICompatibleConfig,
+): Promise<ProviderTestResult> {
+  const start = Date.now();
+  const path = cfg.probePath ?? "/models";
+  try {
+    const { status, body } = await fetchJson(`${cfg.baseURL}${path}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+        ...(cfg.extraHeaders ?? {}),
+      },
+    });
+    const latencyMs = Date.now() - start;
+    if (status >= 200 && status < 300) {
+      const modelCount = countModels(body);
+      const detail =
+        modelCount !== null
+          ? `returned ${modelCount} models`
+          : describeAuthResponse(body) ?? "key accepted";
+      return {
+        ok: true,
+        statusCode: status,
+        latencyMs,
+        modelCount,
+        message: `200 OK · ${latencyMs} ms · ${detail}`,
+      };
+    }
+    return {
+      ok: false,
+      statusCode: status,
+      latencyMs,
+      modelCount: null,
+      message: errorMessageFromStatus(status, body),
+    };
+  } catch (err) {
+    return networkError(err, Date.now() - start);
+  }
+}
+
+/** OpenRouter's /auth/key returns `{ data: { label, usage, limit, ... } }`. */
+function describeAuthResponse(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const data = (body as Record<string, unknown>).data;
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (typeof d.label === "string") return `key "${d.label}" accepted`;
+  return null;
+}
+
+async function testAnthropic(apiKey: string): Promise<ProviderTestResult> {
+  const start = Date.now();
+  try {
+    const { status, body } = await fetchJson("https://api.anthropic.com/v1/models", {
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        Accept: "application/json",
+      },
+    });
+    const latencyMs = Date.now() - start;
+    if (status >= 200 && status < 300) {
+      const modelCount = countModels(body);
+      return {
+        ok: true,
+        statusCode: status,
+        latencyMs,
+        modelCount,
+        message: modelCount !== null
+          ? `200 OK · ${latencyMs} ms · returned ${modelCount} models`
+          : `200 OK · ${latencyMs} ms`,
+      };
+    }
+    return {
+      ok: false,
+      statusCode: status,
+      latencyMs,
+      modelCount: null,
+      message: errorMessageFromStatus(status, body),
+    };
+  } catch (err) {
+    return networkError(err, Date.now() - start);
+  }
+}
+
+async function testGemini(apiKey: string): Promise<ProviderTestResult> {
+  const start = Date.now();
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
+    const { status, body } = await fetchJson(url, { headers: { Accept: "application/json" } });
+    const latencyMs = Date.now() - start;
+    if (status >= 200 && status < 300) {
+      const modelCount = countModels(body);
+      return {
+        ok: true,
+        statusCode: status,
+        latencyMs,
+        modelCount,
+        message: modelCount !== null
+          ? `200 OK · ${latencyMs} ms · returned ${modelCount} models`
+          : `200 OK · ${latencyMs} ms`,
+      };
+    }
+    return {
+      ok: false,
+      statusCode: status,
+      latencyMs,
+      modelCount: null,
+      message: errorMessageFromStatus(status, body),
+    };
+  } catch (err) {
+    return networkError(err, Date.now() - start);
+  }
+}
+
+function errorMessageFromStatus(status: number, body: unknown): string {
+  const fromBody = extractErrorText(body);
+  const label = httpStatusLabel(status);
+  if (fromBody) return `${status} ${label} — ${fromBody}`;
+  if (status === 401 || status === 403) return `${status} ${label} — key rejected by provider`;
+  if (status === 429) return `${status} ${label} — rate limited`;
+  return `${status} ${label}`;
+}
+
+function extractErrorText(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const obj = body as Record<string, unknown>;
+  const errField = obj.error;
+  if (typeof errField === "string") return errField;
+  if (errField && typeof errField === "object") {
+    const msg = (errField as Record<string, unknown>).message;
+    if (typeof msg === "string") return msg;
+  }
+  if (typeof obj.message === "string") return obj.message;
+  return null;
+}
+
+function httpStatusLabel(status: number): string {
+  if (status === 400) return "Bad Request";
+  if (status === 401) return "Unauthorized";
+  if (status === 403) return "Forbidden";
+  if (status === 404) return "Not Found";
+  if (status === 429) return "Too Many Requests";
+  if (status >= 500) return "Server Error";
+  return "Error";
+}
+
+function networkError(err: unknown, latencyMs: number): ProviderTestResult {
+  const name = (err as { name?: string })?.name;
+  const message = (err as { message?: string })?.message ?? String(err);
+  if (name === "AbortError") {
+    return {
+      ok: false,
+      statusCode: null,
+      latencyMs,
+      modelCount: null,
+      message: `Timed out after ${TEST_TIMEOUT_MS} ms — provider unreachable`,
+    };
+  }
+  return {
+    ok: false,
+    statusCode: null,
+    latencyMs,
+    modelCount: null,
+    message: `Network error — ${message}`,
+  };
+}
+
+export async function testProviderKey(
+  provider: ProviderId,
+  apiKey: string,
+): Promise<ProviderTestResult> {
+  const trimmed = (apiKey ?? "").trim();
+  if (trimmed.length < 8) {
+    return {
+      ok: false,
+      statusCode: null,
+      latencyMs: 0,
+      modelCount: null,
+      message: "Key is empty or too short",
+    };
+  }
+
+  if (provider === "mock") {
+    return {
+      ok: true,
+      statusCode: 200,
+      latencyMs: 1,
+      modelCount: 1,
+      message: "Mock provider — always reachable",
+    };
+  }
+
+  if (provider === "anthropic") return testAnthropic(trimmed);
+  if (provider === "gemini") return testGemini(trimmed);
+
+  const oai = OPENAI_COMPATIBLE[provider];
+  if (oai) return testOpenAICompatible(trimmed, oai);
+
+  return {
+    ok: false,
+    statusCode: null,
+    latencyMs: 0,
+    modelCount: null,
+    message: `Provider ${provider} cannot be tested over the public API (requires SDK-specific auth)`,
+  };
+}

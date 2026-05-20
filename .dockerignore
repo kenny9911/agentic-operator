@@ -1,0 +1,63 @@
+# Repo-level .dockerignore
+#
+# Docker build contexts must EXCLUDE source-of-truth state that the runtime
+# mounts as a volume (data/, models/, tenants/ when authored on the host),
+# any IDE / OS state, and especially `node_modules` which is reinstalled
+# during the build to bind native modules to the in-container glibc/musl
+# variant (better-sqlite3).
+#
+# Keep this list in sync with `.gitignore` where reasonable; the two have
+# subtly different purposes (`.gitignore` keeps state out of git;
+# `.dockerignore` keeps state out of the image to keep it small + cacheable).
+
+# Node / pnpm
+**/node_modules
+**/.pnpm-store
+**/.npmrc.local
+
+# Turbo + build outputs
+**/.turbo
+**/dist
+**/.next
+**/.nyc_output
+**/coverage
+**/*.tsbuildinfo
+
+# Local state (mounted as volumes at runtime)
+data
+!data/system-agents
+**/agentic.db
+**/agentic.db-shm
+**/agentic.db-wal
+**/test-logs
+**/test-artifacts
+
+# Local env (`.env` carries secrets; provide via docker run -e or compose env_file)
+.env
+.env.*
+!.env.example
+!.env.production.example
+**/.env.local
+
+# Editor / OS / git
+.git
+.gitignore
+**/.DS_Store
+**/.vscode
+**/.idea
+**/*.swp
+
+# Old handoff archives
+agentic-operator-handoff
+agentic-operator_v1_1
+agentic-operator_v1_1.zip
+agentic*operator*handoff.zip
+agentic*operator-add-settings*
+
+# Docs are not needed at runtime
+docs
+
+# Test outputs
+**/playwright-report
+**/test-results
+**/visual-snapshots

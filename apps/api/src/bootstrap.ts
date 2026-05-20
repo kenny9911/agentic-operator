@@ -31,6 +31,9 @@ import {
 } from "@agentic/agents";
 import "@agentic/agents/system";
 import { getLLMGateway } from "./services/llm";
+import { reconcileImports } from "./services/reconcile-imports";
+import { getDb } from "@agentic/db";
+import { reregisterInngest } from "./services/inngest-registry";
 
 /**
  * v4 typing: TS2742 surfaces because `InngestFunction` references internal
@@ -72,5 +75,38 @@ export async function bootstrapRuntime(): Promise<BootstrapResult> {
   console.log(
     `[bootstrap] api serving ${allFns.length} Inngest function(s) (${tenantFns.length} from tenant manifests)`,
   );
+
+  // 4. Crash recovery for the manifest-import wizard (per review C1).
+  //    `reconcileImports` does three things:
+  //      a. Drop expired `status='pending'` rows + their staging dirs.
+  //      b. Complete crashed renames: rows where `file_path` still points at
+  //         `data/imports/...` (phase 4 didn't finish) get renamed into
+  //         `models/<slug>-vN/workflow_v<N+1>.json` and the row updated.
+  //         If the rename causes a live agent set change, re-register that
+  //         tenant's Inngest functions.
+  //      c. Re-emit on-disk manifests that were manually deleted, using
+  //         `workflow_versions.manifest_json` as the source of truth.
+  //    Idempotent; safe to run every boot. Failures are logged but never
+  //    block startup.
+  try {
+    const swept = await reconcileImports(getDb(), {
+      reregister: async (tenantSlug) => {
+        await reregisterInngest({ tenantSlug, scope: "tenant" });
+      },
+    });
+    if (
+      swept.expired_pruned > 0 ||
+      swept.rename_completed > 0 ||
+      swept.missing_file_repaired > 0 ||
+      swept.failures > 0
+    ) {
+      console.log(
+        `[bootstrap] import reconcile — pruned ${swept.expired_pruned}, repaired ${swept.rename_completed} crashed rename(s), re-emitted ${swept.missing_file_repaired} missing file(s), ${swept.failures} failure(s)`,
+      );
+    }
+  } catch (err) {
+    console.warn("[bootstrap] reconcileImports failed", err);
+  }
+
   return { inngest, functions: allFns };
 }

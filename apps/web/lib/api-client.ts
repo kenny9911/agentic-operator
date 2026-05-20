@@ -220,3 +220,114 @@ export const ontology = {
   eventTypes: () => call(z.array(EventTypeRow), "/v1/event-types"),
   entityTypes: () => call(z.array(EntityTypeRow), "/v1/entity-types"),
 };
+
+// ─── Manifest import wizard ──────────────────────────────────────────────
+// TODO: swap to @agentic/contracts ManifestImport* once exported. The shapes
+// below are defined inline because backend Zod is still in flight; the SPA
+// uses raw fetch() and these helpers exist purely so any future
+// Next-side caller has a typed entrypoint (matches the file-map promise in
+// docs/impl/import-workflow-manifest.md).
+
+const ManifestIssue = z.object({
+  path: z.string(),
+  message: z.string(),
+  severity: z.enum(["error", "warning", "info"]),
+  code: z.string(),
+});
+
+const ManifestConflictResolution = z.object({
+  path: z.string(),
+  action: z.enum(["accept_suggestion", "skip", "override"]),
+  override_value: z.unknown().optional(),
+});
+
+const ManifestConflict = z.object({
+  path: z.string(),
+  type: z.string(),
+  severity: z.enum(["block", "warn"]),
+  detail: z.string(),
+  suggestion: z.string().optional(),
+  auto_fix: ManifestConflictResolution.optional(),
+});
+
+const ManifestImportDiff = z.object({
+  added: z.array(z.string()).default([]),
+  removed: z.array(z.string()).default([]),
+  modified: z.array(z.string()).default([]),
+  prior_version: z.string().nullable().optional(),
+});
+
+const ManifestImportPreview = z.object({
+  ok: z.boolean(),
+  schema_version: z.number(),
+  parsed: z.object({
+    agents: z.number(),
+    events: z.number(),
+    actions: z.number(),
+  }),
+  issues: z.array(ManifestIssue).default([]),
+  conflicts: z.array(ManifestConflict).default([]),
+  diff: ManifestImportDiff,
+  prior: z
+    .object({
+      version: z.string().nullable(),
+      version_label: z.string().nullable(),
+      deployed_at: z.number().nullable(),
+      agents: z.number(),
+      live_deployment_id: z.string().nullable(),
+    })
+    .optional(),
+  deployment_id: z.string(),
+  elapsed_ms: z.number(),
+});
+
+const ManifestImportCommit = z.object({
+  ok: z.literal(true),
+  workflow_version_id: z.string(),
+  version: z.string(),
+  deployment_id: z.string(),
+  target: z.enum(["staging", "production"]),
+  inngest_fns_registered: z.number(),
+  file_written: z.string(),
+  prior_deployment_id: z.string().nullable(),
+  note: z.string(),
+  elapsed_ms: z.number(),
+});
+
+const ManifestFetchUrlPayload = z.object({
+  workflow: z.unknown(),
+  actions: z.array(z.unknown()).optional(),
+});
+
+const ManifestImportResponse = z.union([ManifestImportPreview, ManifestImportCommit]);
+
+type ManifestImportBody =
+  | {
+      mode: "validate";
+      workflow: unknown;
+      actions?: unknown[];
+    }
+  | {
+      mode: "commit";
+      workflow: unknown;
+      actions?: unknown[];
+      target: "staging" | "production";
+      deployment_id: string;
+      conflict_resolutions: z.infer<typeof ManifestConflictResolution>[];
+      confirm_overwrite: boolean;
+      note?: string;
+    };
+
+export const manifest = {
+  import: (slug: string, body: ManifestImportBody) =>
+    call(ManifestImportResponse, `/v1/tenants/${encodeURIComponent(slug)}/manifest-import`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  fetchUrl: (slug: string, url: string) =>
+    call(
+      ManifestFetchUrlPayload,
+      `/v1/tenants/${encodeURIComponent(slug)}/manifest-import/fetch-url`,
+      { method: "POST", body: JSON.stringify({ url }) },
+    ),
+};

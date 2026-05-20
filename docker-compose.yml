@@ -1,0 +1,130 @@
+# docker-compose.yml — local + production preview stack (P4-OPS-04).
+#
+# Three services:
+#
+#   * `api`     — the Fastify API + in-process Inngest functions.
+#                 Bind-mounts `data/` so SQLite + logs + artifacts persist
+#                 across `docker compose down/up`. Bind-mounts `models/`
+#                 so an operator can hot-swap manifests with the
+#                 NODE_ENV=production watcher disabled (the live update
+#                 path is `POST /v1/agents/...` rather than file watch).
+#   * `web`     — the Next.js standalone server. Reads `AGENTIC_API_URL`
+#                 to know where to send `/v1/*` rewrites. No DB access.
+#   * `inngest` — the Inngest broker that queues events fired by
+#                 `inngest.send()` and POSTs them at `api:3501/inngest`.
+#                 Persists its own state under a named volume.
+#
+# Volumes are named so they survive `docker compose down` (but not
+# `down --volumes` — that's the explicit nuke option). Healthchecks
+# inherit from the per-service Dockerfile HEALTHCHECK directives.
+#
+# Network: a single bridge network. The API is the only service that
+# reads tenant code/secrets, so it's also the only one that needs the
+# bind mount of `data/`. The web service has no need to share state
+# beyond the HTTP edge.
+#
+# To run locally:
+#   docker compose --env-file .env.production up --build
+#
+# To validate without building:
+#   docker compose --env-file .env.production.example config
+
+name: agentic-operator
+
+services:
+  api:
+    image: agentic-api:dev
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: agentic-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3501}:3501"
+    env_file:
+      # `docker compose` errors if the file is missing — guard by listing
+      # multiple candidates; the first present wins. Operators copy
+      # `.env.production.example` to `.env.production` before first boot.
+      - path: .env.production
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3501"
+      HOST: "0.0.0.0"
+      AGENTIC_DATA_DIR: /app/data
+      AGENTIC_MODELS_DIR: /app/models
+      AGENTIC_LOGS_DIR: /app/data/logs
+      AGENTIC_ARTIFACTS_DIR: /app/data/artifacts
+      AGENTIC_TENANTS_DIR: /app/data/tenants
+      DATABASE_URL: file:/app/data/agentic.db
+      INNGEST_BASE_URL: http://inngest:8288
+      WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3500}"
+    volumes:
+      - agentic-data:/app/data
+      - ./models:/app/models:ro
+    depends_on:
+      inngest:
+        condition: service_started
+    networks:
+      - agentic
+    # Per-Dockerfile healthcheck handles readiness; compose just inherits
+    # so `depends_on: { condition: service_healthy }` works upstream.
+
+  web:
+    image: agentic-web:dev
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Compile-time API URL — Next embeds this into rewrites at build
+        # time. The runtime env override applies to server-side fetches.
+        AGENTIC_API_URL: http://api:3501
+    container_name: agentic-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3500}:3500"
+    environment:
+      NODE_ENV: production
+      AGENTIC_API_URL: http://api:3501
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - agentic
+
+  inngest:
+    image: agentic-inngest:dev
+    build:
+      context: .
+      dockerfile: apps/inngest-worker/Dockerfile
+    container_name: agentic-inngest
+    restart: unless-stopped
+    ports:
+      - "${INNGEST_PORT:-8288}:8288"
+    environment:
+      INNGEST_EVENT_KEY: "${INNGEST_EVENT_KEY:-local-dev-event-key}"
+      INNGEST_SIGNING_KEY: "${INNGEST_SIGNING_KEY:-local-dev-signing-key}"
+    # The broker auto-discovers our `/inngest` serve() endpoint on first
+    # connection; passing `-u` makes it explicit so a fresh boot doesn't
+    # depend on discovery races.
+    command:
+      - dev
+      - -u
+      - http://api:3501/inngest
+      - --no-discovery
+    volumes:
+      - agentic-inngest:/var/lib/inngest
+    networks:
+      - agentic
+    depends_on: []
+
+volumes:
+  agentic-data:
+    # Persistent SQLite + logs + artifacts. Use a host bind by setting
+    # `device:` if you'd rather keep these under git-ignored ./data/.
+  agentic-inngest:
+
+networks:
+  agentic:
+    driver: bridge

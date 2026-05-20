@@ -1,0 +1,167 @@
+/**
+ * Tests for useStream's cache dispatch logic (P1-FE-02).
+ *
+ * Verifies that each SSE `RunStreamEvent` variant invalidates the right
+ * TanStack Query keys so consumers (`useRuns`, `useEvents`, `useTasks`,
+ * `useAgents`, `useCounts`) automatically refetch.
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import {
+  dispatch,
+  AGENT_KEYS,
+  COUNT_KEYS,
+  EVENT_KEYS,
+  RUN_KEYS,
+  TASK_KEYS,
+} from "./useStream";
+
+function makeClient() {
+  const client = new QueryClient();
+  const spy = vi.spyOn(client, "invalidateQueries");
+  return { client, spy };
+}
+
+function invalidatedKeys(spy: ReturnType<typeof vi.spyOn>): unknown[] {
+  return spy.mock.calls.map((call) => {
+    const arg = call[0] as { queryKey: unknown } | undefined;
+    return arg?.queryKey;
+  });
+}
+
+describe("dispatch — SSE events → query cache invalidations", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("run.started invalidates runs.all, counts, and the run detail", () => {
+    const { client, spy } = makeClient();
+    dispatch(
+      {
+        type: "run.started",
+        tenantId: "t1",
+        at: 1,
+        runId: "run-001",
+        agentName: "matchResume",
+        triggerEvent: "RESUME_PROCESSED",
+        subject: "CAN-1",
+        correlationId: "corr-1",
+        testRun: false,
+      },
+      client,
+    );
+    const keys = invalidatedKeys(spy as never);
+    expect(keys).toContainEqual(RUN_KEYS.all);
+    expect(keys).toContainEqual(COUNT_KEYS.tenant);
+    expect(keys).toContainEqual(RUN_KEYS.detail("run-001"));
+  });
+
+  it("run.step.completed invalidates the run detail + list", () => {
+    const { client, spy } = makeClient();
+    dispatch(
+      {
+        type: "run.step.completed",
+        tenantId: "t1",
+        at: 2,
+        runId: "run-001",
+        stepId: "stp-1",
+        ord: 2,
+        name: "matchHardRequirements",
+        stepType: "logic",
+        status: "ok",
+        durationMs: 2103,
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        tokensIn: 4128,
+        tokensOut: 612,
+        error: null,
+      },
+      client,
+    );
+    const keys = invalidatedKeys(spy as never);
+    expect(keys).toContainEqual(RUN_KEYS.detail("run-001"));
+    expect(keys).toContainEqual(RUN_KEYS.all);
+  });
+
+  it("event.emitted invalidates events.all + counts", () => {
+    const { client, spy } = makeClient();
+    dispatch(
+      {
+        type: "event.emitted",
+        tenantId: "t1",
+        at: 3,
+        eventId: "evt-1",
+        name: "MATCH_PASSED_NEED_INTERVIEW",
+        subject: "CAN-1",
+        sourceRunId: "run-001",
+      },
+      client,
+    );
+    const keys = invalidatedKeys(spy as never);
+    expect(keys).toContainEqual(EVENT_KEYS.all);
+    expect(keys).toContainEqual(COUNT_KEYS.tenant);
+  });
+
+  it("task.created and task.resolved invalidate tasks + counts", () => {
+    {
+      const { client, spy } = makeClient();
+      dispatch(
+        {
+          type: "task.created",
+          tenantId: "t1",
+          at: 4,
+          taskId: "TASK-1",
+          runId: "run-001",
+          taskType: "jdReview",
+          title: "Review JD",
+        },
+        client,
+      );
+      const keys = invalidatedKeys(spy as never);
+      expect(keys).toContainEqual(TASK_KEYS.all);
+      expect(keys).toContainEqual(COUNT_KEYS.tenant);
+    }
+    {
+      const { client, spy } = makeClient();
+      dispatch(
+        {
+          type: "task.resolved",
+          tenantId: "t1",
+          at: 5,
+          taskId: "TASK-1",
+          decision: "approve",
+        },
+        client,
+      );
+      const keys = invalidatedKeys(spy as never);
+      expect(keys).toContainEqual(TASK_KEYS.all);
+      expect(keys).toContainEqual(COUNT_KEYS.tenant);
+    }
+  });
+
+  it("run.failed bumps both the list and the specific detail key", () => {
+    const { client, spy } = makeClient();
+    dispatch(
+      {
+        type: "run.failed",
+        tenantId: "t1",
+        at: 6,
+        runId: "run-002",
+        errorMessage: "tool timeout",
+      },
+      client,
+    );
+    const keys = invalidatedKeys(spy as never);
+    expect(keys).toContainEqual(RUN_KEYS.detail("run-002"));
+    expect(keys).toContainEqual(RUN_KEYS.all);
+    expect(keys).toContainEqual(COUNT_KEYS.tenant);
+  });
+
+  it("AGENT_KEYS export is available for invalidation by mutations", () => {
+    // Sanity — useInvokeAgent / useUploadManifest will key off this.
+    expect(AGENT_KEYS.list).toEqual(["agents", "list"]);
+    expect(AGENT_KEYS.detail("match-resume")).toEqual([
+      "agents",
+      "detail",
+      "match-resume",
+    ]);
+  });
+});

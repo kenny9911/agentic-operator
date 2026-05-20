@@ -37,10 +37,15 @@ export async function tasksRoutes(app: FastifyInstance) {
       if (row.status !== "open")
         return reply.fail("already_resolved", `task already ${row.status}`, 409);
 
+      // P5-TEN-01 — include tenantId in the resolve event so the waiting
+      // agent's `step.waitForEvent` can pin the predicate to the issuing
+      // tenant. Without this, a leaked taskId in tenant A would let an
+      // attacker resume tenant B's HITL flow.
       await inngest.send({
         name: "task.resolved",
         data: {
           taskId: req.params.id,
+          tenantId: auth.tenantId,
           decision: body.decision,
           payload: body.payload ?? null,
         },

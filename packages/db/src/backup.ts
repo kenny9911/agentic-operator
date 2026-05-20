@@ -1,0 +1,131 @@
+/**
+ * Online SQLite backup (P4-OPS-07).
+ *
+ * The shell wrapper at `scripts/db-backup.sh` is the canonical entry
+ * point for cron; this module exists so `pnpm db:backup` can run the
+ * same operation without depending on the system `sqlite3` CLI being
+ * installed — useful inside the slim Docker runtime image.
+ *
+ * Strategy: open the live DB read/write, run `VACUUM INTO 'target'`,
+ * verify the snapshot contains schema rows, then sweep old backups
+ * past the retention window. `VACUUM INTO` is the canonical SQLite
+ * online-backup primitive — it writes a consistent point-in-time
+ * snapshot under the shared lock, leaving readers + writers unblocked
+ * (writes queue briefly while the snapshot is sequenced).
+ *
+ * Restore drill is documented in `docs/RUNBOOK.md §7`.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { getRawSqlite, closeDb } from "./client";
+
+export interface BackupOptions {
+  /** Directory to write backups into. Created if absent. */
+  backupDir?: string;
+  /** Delete backups older than this many days. Default 14. */
+  retentionDays?: number;
+  /** Optional explicit timestamp for the filename (mostly for tests). */
+  timestamp?: string;
+}
+
+export interface BackupResult {
+  /** Absolute path of the new backup file. */
+  target: string;
+  /** Size in bytes. */
+  sizeBytes: number;
+  /** Backup files removed by the retention sweep. */
+  removed: string[];
+}
+
+const DEFAULT_RETENTION_DAYS = 14;
+
+function defaultBackupDir(): string {
+  const dataDir = process.env.AGENTIC_DATA_DIR ?? "./data";
+  return path.join(dataDir, "backups");
+}
+
+function timestampUtc(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
+    `-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`
+  );
+}
+
+export function backupDatabase(opts: BackupOptions = {}): BackupResult {
+  const backupDir = opts.backupDir ?? defaultBackupDir();
+  const retentionDays = opts.retentionDays ?? DEFAULT_RETENTION_DAYS;
+  const ts = opts.timestamp ?? timestampUtc();
+
+  fs.mkdirSync(backupDir, { recursive: true });
+  const target = path.join(backupDir, `agentic-${ts}.db`);
+
+  const sqlite = getRawSqlite();
+  // `VACUUM INTO` requires the target file NOT to exist. Allow caller to
+  // pre-position it by deleting first (idempotent on retries within the
+  // same second).
+  if (fs.existsSync(target)) fs.unlinkSync(target);
+
+  // VACUUM INTO with a string literal — sqlite doesn't accept parameters
+  // here; escape single quotes to be safe.
+  const literal = target.replace(/'/g, "''");
+  sqlite.exec(`VACUUM INTO '${literal}'`);
+
+  // Verify the snapshot has rows in sqlite_master.
+  const Database = sqlite.constructor as new (p: string, opts?: object) => typeof sqlite;
+  const probe = new Database(target, { readonly: true });
+  try {
+    const row = probe.prepare("SELECT COUNT(*) AS c FROM sqlite_master").get() as
+      | { c: number }
+      | undefined;
+    if (!row || row.c === 0) {
+      probe.close();
+      fs.unlinkSync(target);
+      throw new Error("backup verification failed: 0 schema rows in snapshot");
+    }
+  } finally {
+    probe.close();
+  }
+
+  const stat = fs.statSync(target);
+
+  // Retention sweep — delete files older than retentionDays.
+  const cutoff = Date.now() - retentionDays * 86_400_000;
+  const removed: string[] = [];
+  for (const name of fs.readdirSync(backupDir)) {
+    if (!name.startsWith("agentic-") || !name.endsWith(".db")) continue;
+    const p = path.join(backupDir, name);
+    try {
+      const s = fs.statSync(p);
+      if (s.mtimeMs < cutoff) {
+        fs.unlinkSync(p);
+        removed.push(p);
+      }
+    } catch {
+      /* race with concurrent prune — ignore */
+    }
+  }
+
+  return { target, sizeBytes: stat.size, removed };
+}
+
+// CLI entrypoint — `pnpm --filter @agentic/db exec tsx src/backup.ts`.
+const isMain =
+  typeof process !== "undefined" &&
+  typeof process.argv[1] === "string" &&
+  process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  try {
+    const res = backupDatabase();
+    console.log(
+      `[db:backup] ok target=${res.target} size=${res.sizeBytes} pruned=${res.removed.length}`,
+    );
+    closeDb();
+  } catch (err) {
+    console.error("[db:backup] FAILED", err);
+    process.exit(1);
+  }
+}

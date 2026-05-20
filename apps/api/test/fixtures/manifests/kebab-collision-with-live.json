@@ -1,0 +1,19 @@
+[
+  {
+    "id": "intake",
+    "name": "intakeWithSameKebabButDifferentName",
+    "title": "Collision Intake",
+    "description": "Same kebab id as a live agent but different name.",
+    "actor": ["Agent"],
+    "trigger": ["REQUEST_RECEIVED"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "logRequest",
+        "description": "Log the inbound payload.",
+        "type": "tool"
+      }
+    ],
+    "triggered_event": ["REQUEST_PARSED"]
+  }
+]

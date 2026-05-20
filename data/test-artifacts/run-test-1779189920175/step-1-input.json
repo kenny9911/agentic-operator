@@ -1,0 +1,18 @@
+{
+  "agent": "agentD",
+  "action": "compute",
+  "type": "logic",
+  "ctx": {
+    "correlationId": "cor-4",
+    "tenantSlug": "raas",
+    "event": {
+      "name": "X",
+      "data": {
+        "hello": "world"
+      }
+    },
+    "lastResult": {
+      "prior": 1
+    }
+  }
+}

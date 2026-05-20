@@ -1,0 +1,88 @@
+/**
+ * Capture screenshots of the *current* App Router portal under
+ * `./current-snapshots/`, useful for ad-hoc visual review without
+ * running the full Playwright pixel-diff suite.
+ *
+ * For the canonical pixel-diff pipeline use `pnpm test:visual` (which
+ * reads from `./portal.spec.ts-snapshots/v1_1-reference/` and writes
+ * diff artifacts to `./test-results/`).
+ *
+ * Each new-portal route is `/portal/raas/<view>`. Pre-auth happens
+ * through `/sign-in?return=...` which auto-mints a dev session.
+ */
+
+import { chromium } from "@playwright/test";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUT_DIR = path.join(__dirname, "current-snapshots");
+fs.mkdirSync(OUT_DIR, { recursive: true });
+const BASE_URL = process.env.PW_BASE_URL ?? "http://localhost:3500";
+
+const VIEWS = [
+  "dashboard",
+  "workflows",
+  "agents",
+  "runs",
+  "events",
+  "tasks",
+  "logs",
+  "deployments",
+  "settings",
+] as const;
+
+const FREEZE_CSS = `
+  *, *::before, *::after {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
+  animateMotion, animate, animateTransform { begin: 999999s !important; }
+`;
+
+async function capture(): Promise<void> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const ctx = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      reducedMotion: "reduce",
+      deviceScaleFactor: 1,
+    });
+    const page = await ctx.newPage();
+
+    // Pre-auth: hit /sign-in which forwards into the portal with the
+    // dev cookie set.
+    await page.goto(`${BASE_URL}/sign-in?return=/portal/raas/dashboard`);
+    await page.waitForURL(/\/portal\//, { timeout: 30_000 });
+
+    for (const v of VIEWS) {
+      console.log(`[current] capturing ${v}`);
+      await page.goto(`${BASE_URL}/portal/raas/${v}`, {
+        waitUntil: "domcontentloaded",
+      });
+      await page.waitForTimeout(1500);
+      await page.addStyleTag({ content: FREEZE_CSS });
+      await page.waitForTimeout(200);
+      await page.screenshot({
+        path: path.join(OUT_DIR, `${v}.png`),
+        fullPage: false,
+      });
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+capture()
+  .then(() => {
+    console.log("[current] done");
+    process.exit(0);
+  })
+  .catch((e) => {
+    console.error("[current] failed:", e);
+    process.exit(1);
+  });
