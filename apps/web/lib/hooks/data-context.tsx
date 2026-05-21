@@ -19,6 +19,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 import type {
   SpaAgent,
   SpaBootstrap,
@@ -31,6 +32,18 @@ import type {
   SpaTask,
   SpaTenant,
 } from "@/lib/spa/types";
+
+/**
+ * Pure helper exposed for unit tests: extract the tenant slug from the
+ * portal URL (`/portal/<slug>/...`). Returns null for top-level routes
+ * (sign-in, the static-SPA fallback, the legacy `index.html` route).
+ */
+export function tenantFromPathname(pathname: string | null): string | null {
+  if (!pathname) return null;
+  if (pathname.endsWith("index.html")) return null;
+  const m = pathname.match(/^\/portal\/([^/?#]+)/);
+  return m ? (m[1] ?? null) : null;
+}
 
 /**
  * `SpaRun` is a `Record<string, unknown>` in the contract types but views
@@ -116,16 +129,24 @@ const DataContext = createContext<RaasData>(EMPTY);
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<RaasData>(EMPTY);
+  // Re-fetch the bootstrap payload whenever the tenant segment in the URL
+  // changes. Previously this had `[]` deps which left every tenant
+  // showing the first-loaded tenant's snapshot (QA blocker #3).
+  const pathname = usePathname();
+  const tenantSlug = tenantFromPathname(pathname) ?? "raas";
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        const res = await fetch("/api/spa/bootstrap?source=json", {
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-        });
+        const res = await fetch(
+          `/api/spa/bootstrap?source=json&tenant=${encodeURIComponent(tenantSlug)}`,
+          {
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+          },
+        );
         if (!res.ok) return;
         const json = (await res.json()) as SpaBootstrap | { ok: false };
         if (cancelled) return;
@@ -140,7 +161,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tenantSlug]);
 
   const value = useMemo(() => data, [data]);
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

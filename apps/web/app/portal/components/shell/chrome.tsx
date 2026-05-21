@@ -10,9 +10,10 @@
  *   - Cmd-K palette host (P2-FE-23)
  *   - useStream SSE hook (Phase 1)
  *
- * Tenants list is the same display fixture used by the legacy SPA, in
- * `apps/web/lib/tenants.ts`. Adding a tenant: drop a `models/<slug>/`
- * folder and an entry there.
+ * Tenants list is fetched live via `useTenants()` (TanStack Query against
+ * `GET /v1/tenants`). When the api hasn't responded yet, falls back to the
+ * static `TENANTS` fixture in `apps/web/lib/tenants.ts` so the sidebar
+ * still renders during the initial paint.
  */
 
 import type { ReactNode } from "react";
@@ -20,6 +21,7 @@ import { useCallback } from "react";
 import type { RunStreamEvent } from "@agentic/contracts";
 import { TENANTS } from "@/lib/tenants";
 import { useStream } from "@/lib/hooks/useStream";
+import { useTenants } from "@/lib/hooks/useTenants";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./topbar";
 import { TweaksPanel } from "../tweaks/panel";
@@ -60,14 +62,31 @@ export function PortalChrome({
   // updates without re-subscribing.
   useStream({ onEvent: onStreamEvent });
 
-  const tenants: TenantOption[] = TENANTS.map((t) => ({
-    id: t.id,
-    name: t.name,
-    subtitle: t.subtitle,
-    color: t.color,
-    agentCount: t.agentCount,
-    runs24h: t.runs24h,
-  }));
+  // Live tenant list. Fall back to the static fixture so we render
+  // something during the first paint and on api failure (the sidebar is
+  // not allowed to be empty).
+  const tenantsQuery = useTenants();
+  const liveItems = tenantsQuery.data?.items;
+  const tenants: TenantOption[] =
+    liveItems && liveItems.length > 0
+      ? liveItems
+          .filter((t) => t.archivedAt == null)
+          .map((t) => ({
+            id: t.slug,
+            name: t.name,
+            subtitle: t.subtitle ?? undefined,
+            color: t.color ?? "#d0ff00",
+            agentCount: t.agentCount,
+            runs24h: t.runs24h,
+          }))
+      : TENANTS.map((t) => ({
+          id: t.id,
+          name: t.name,
+          subtitle: t.subtitle,
+          color: t.color,
+          agentCount: t.agentCount,
+          runs24h: t.runs24h,
+        }));
 
   return (
     <SessionProvider value={user}>

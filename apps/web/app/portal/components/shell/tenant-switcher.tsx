@@ -6,13 +6,25 @@
  * Ported from v1_1 app.jsx:181-238. Behaviour:
  *   - Tenant is in the URL (P2-FE-25); selecting one calls `useTenantNavigate`
  *     to push `/portal/<new-slug>/<rest>`.
- *   - "New tenant" row is wired to a stub onClick (toast for now).
+ *   - "New tenant" opens the 4-step `TenantCreateModal`, then optionally
+ *     shows the bootstrap token reveal, then auto-launches the
+ *     `ImportManifestModal` so the operator can populate the new tenant.
  */
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import type { TenantCreateResponse } from "@agentic/contracts";
 import { Icon } from "../Icon";
 import { useTenant, useTenantNavigate } from "../../lib/use-tenant";
 import { toast } from "../toast";
+import { TENANTS_KEYS } from "@/lib/hooks/useTenants";
+import { TenantCreateModal } from "./TenantCreateModal";
+import {
+  TenantTokenRevealModal,
+  type TenantTokenRevealPayload,
+} from "./TenantTokenRevealModal";
+import { ImportManifestModal } from "../import-manifest/ImportManifestModal";
 
 export interface TenantOption {
   id: string;
@@ -25,10 +37,73 @@ export interface TenantOption {
 
 export function TenantSwitcher({ tenants }: { tenants: TenantOption[] }) {
   const [open, setOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [tokenReveal, setTokenReveal] =
+    useState<TenantTokenRevealPayload | null>(null);
+  const [importForSlug, setImportForSlug] = useState<string | null>(null);
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const activeId = useTenant();
   const navigate = useTenantNavigate();
   const active = tenants.find((t) => t.id === activeId) ?? tenants[0];
-  if (!active) return null;
+
+  function handleCreated(created: TenantCreateResponse) {
+    setCreateOpen(false);
+    queryClient.invalidateQueries({ queryKey: TENANTS_KEYS.all });
+    router.refresh();
+    const slug = created.tenant.slug;
+    const name = created.tenant.name;
+    toast({
+      tone: "green",
+      title: "Tenant provisioned",
+      description: `${name} (${slug}) is ready`,
+    });
+    navigate(slug);
+    if (created.token?.plaintext) {
+      setTokenReveal({
+        slug,
+        name,
+        token: created.token.plaintext,
+        scopes: created.token.scopes ?? [],
+      });
+    } else {
+      setImportForSlug(slug);
+    }
+  }
+
+  if (!active) {
+    // Even without an active tenant we still need to render the create modal
+    // host so an empty-state UI can mount the switcher.
+    return (
+      <>
+        {createOpen && (
+          <TenantCreateModal
+            onClose={() => setCreateOpen(false)}
+            onCreated={handleCreated}
+            existingSlugs={new Set(tenants.map((t) => t.id))}
+            existingTenants={tenants}
+          />
+        )}
+        {tokenReveal && (
+          <TenantTokenRevealModal
+            payload={tokenReveal}
+            onClose={() => {
+              const slug = tokenReveal.slug;
+              setTokenReveal(null);
+              setImportForSlug(slug);
+            }}
+          />
+        )}
+        {importForSlug && (
+          <ImportManifestModal
+            onClose={() => setImportForSlug(null)}
+            mode="workflow"
+            tenantSlug={importForSlug}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <div
@@ -165,12 +240,8 @@ export function TenantSwitcher({ tenants }: { tenants: TenantOption[] }) {
           ))}
           <button
             onClick={() => {
-              toast({
-                tone: "amber",
-                title: "Not yet implemented",
-                description: "Tenant provisioning is post-v1.",
-              });
               setOpen(false);
+              setCreateOpen(true);
             }}
             style={{
               display: "flex",
@@ -185,6 +256,31 @@ export function TenantSwitcher({ tenants }: { tenants: TenantOption[] }) {
             <Icon name="plus" size={11} /> New tenant
           </button>
         </div>
+      )}
+      {createOpen && (
+        <TenantCreateModal
+          onClose={() => setCreateOpen(false)}
+          onCreated={handleCreated}
+          existingSlugs={new Set(tenants.map((t) => t.id))}
+          existingTenants={tenants}
+        />
+      )}
+      {tokenReveal && (
+        <TenantTokenRevealModal
+          payload={tokenReveal}
+          onClose={() => {
+            const slug = tokenReveal.slug;
+            setTokenReveal(null);
+            setImportForSlug(slug);
+          }}
+        />
+      )}
+      {importForSlug && (
+        <ImportManifestModal
+          onClose={() => setImportForSlug(null)}
+          mode="workflow"
+          tenantSlug={importForSlug}
+        />
       )}
     </div>
   );
