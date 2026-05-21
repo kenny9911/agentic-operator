@@ -79,6 +79,7 @@ import {
   migrate,
   tenantSlugFromFolder,
   lint,
+  publishStreamEvent,
   type LintConflict,
   type LintIssue,
   type LiveWorkflowSnapshot,
@@ -1293,6 +1294,7 @@ export async function commit(
           .all()[0];
         if (!agentRow) {
           const aid = makeId("agt");
+          const now = new Date();
           db.insert(agents)
             .values({
               id: aid,
@@ -1302,6 +1304,8 @@ export async function commit(
               title: a.title ?? a.name,
               actor: a.actor[0] === "Human" ? "Human" : "Agent",
               enabled: true,
+              createdAt: now,
+              updatedAt: now,
             })
             .run();
           agentRow = db.select().from(agents).where(eq(agents.id, aid)).all()[0]!;
@@ -1311,6 +1315,7 @@ export async function commit(
               name: a.name,
               title: a.title ?? a.name,
               actor: a.actor[0] === "Human" ? "Human" : "Agent",
+              updatedAt: new Date(),
               enabled: true,
             })
             .where(eq(agents.id, agentRow.id))
@@ -1477,6 +1482,30 @@ export async function commit(
         tenant_slug: ctx.tenantSlug,
       },
     });
+  }
+
+  // UC-V11-06 — emit `deployment.created` so connected portal sessions
+  // refresh the deployments table without a manual reload. Manifest deploys
+  // already get an explicit "Manifest deployed" toast at save time, so the
+  // chrome only fires a hot-reload toast for `kind: 'tenant_code'`; this
+  // event is mainly here for the TanStack query invalidation in
+  // `apps/web/lib/hooks/useStream.ts`. Best-effort: a publish failure does
+  // not roll back the commit.
+  try {
+    publishStreamEvent({
+      type: "deployment.created",
+      tenantId: ctx.tenantId,
+      at: Date.now(),
+      deploymentId: txOut.deploymentId,
+      kind: "manifest",
+      version: desiredVersion,
+      workflowSlug: ctx.tenantSlug,
+    });
+  } catch (err) {
+    auditCtx?.log?.info?.(
+      { err: (err as Error).message, deployment_id: txOut.deploymentId },
+      "manifest-import: deployment.created publish failed (non-fatal)",
+    );
   }
 
   const elapsedMs = Date.now() - started;

@@ -24,18 +24,24 @@
 import path from "node:path";
 import { mkdir, cp, rm, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
-// MUST run before any import that reads env at module load. The api's
-// build() doesn't reread these on each request — only the route bodies do.
+// REG-S2-02: vitest singleFork shares one process across files, so mutating
+// `process.env.AGENTIC_MODELS_DIR` at module-top-level poisoned every test
+// that ran after this one (tc-7, tc-11, tc-33 cascade-failed). Use vi.stubEnv
+// inside beforeAll + vi.unstubAllEnvs in afterAll so the override is scoped to
+// this file's lifecycle. The workflow route reads env per-request, so the
+// stub takes effect before the first fetch — no need to set it before
+// `import()` of the server module.
 const TMP_ROOT = path.join(tmpdir(), `tc34-workflow-${process.pid}`);
-process.env.AGENTIC_MODELS_DIR = TMP_ROOT;
-process.env.AGENTIC_DEV_TENANT = "raas";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let env: any;
 
 beforeAll(async () => {
+  vi.stubEnv("AGENTIC_MODELS_DIR", TMP_ROOT);
+  vi.stubEnv("AGENTIC_DEV_TENANT", "raas");
+
   // Copy the real RAAS-v1 folder into the temp models dir so the route's
   // findTenantDirs() finds something to read/write.
   const REAL_RAAS = path.resolve(
@@ -55,6 +61,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 describe("TC-34: workflow route", () => {

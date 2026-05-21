@@ -28,6 +28,7 @@ import {
   ViewHeader,
 } from "@/app/portal/components";
 import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useSession } from "@/app/portal/lib/session-context";
 import {
   SETTINGS_SECTIONS,
   type SettingsSectionId,
@@ -51,12 +52,20 @@ const ROUTED_SECTIONS: Record<string, string> = {
   audit: "audit",
 };
 
+// FE-P0-4 sub-fix 4c: region comes from a public env var so dev/prod can
+// differ; defaults to the prior literal so existing dashboards keep showing
+// "cn-shenzhen-1" until ops override it.
+const REGION =
+  process.env.NEXT_PUBLIC_AGENTIC_REGION ?? "cn-shenzhen-1";
+
 export default function SettingsPage() {
   const [section, setSection] = useState<SettingsSectionId>("workspace");
   const sec =
     SETTINGS_SECTIONS.find((s) => s.id === section) ?? SETTINGS_SECTIONS[0];
   const router = useRouter();
   const tenant = useTenant();
+  const session = useSession();
+  const operatorName = session?.name ?? "—";
 
   function pick(id: SettingsSectionId) {
     const sub = ROUTED_SECTIONS[id];
@@ -73,9 +82,16 @@ export default function SettingsPage() {
         title="Settings"
         subtitle={
           <>
-            Workspace <span className="mono" style={{ color: "var(--text)" }}>agentic-operator</span> · region{" "}
-            <span className="mono" style={{ color: "var(--text)" }}>cn-shenzhen-1</span> · operator{" "}
-            <span style={{ color: "var(--text)" }}>Liu Wei</span> (Owner)
+            Workspace{" "}
+            <span className="mono" style={{ color: "var(--text)" }}>
+              {tenant}
+            </span>{" "}
+            · region{" "}
+            <span className="mono" style={{ color: "var(--text)" }}>
+              {REGION}
+            </span>{" "}
+            · operator{" "}
+            <span style={{ color: "var(--text)" }}>{operatorName}</span>
           </>
         }
         badge={<Badge tone="muted">v0.6.2</Badge>}

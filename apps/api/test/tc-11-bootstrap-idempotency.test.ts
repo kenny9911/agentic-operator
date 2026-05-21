@@ -8,9 +8,14 @@
  *   - P0-MIG-02: rebooting back-to-back doesn't crash on uniqueness conflicts.
  */
 
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { bootstrapTenant } from "@agentic/runtime";
+import {
+  bootstrapTenant,
+  __resetPromptRegistry,
+  assertTenantRegistryComplete,
+} from "@agentic/runtime";
+import raasTenant from "@tenants/raas";
 import {
   agents,
   agentVersions,
@@ -22,11 +27,65 @@ import {
 
 const MODEL_DIR = (process.env.AGENTIC_MODELS_DIR ?? "./models") + "/RAAS-v1";
 
+/**
+ * Sprint 4 — F-S3-1 follow-up: lock down the raas registry contract so a
+ * future test that mutates the shared `raasTenant` object (e.g. by deleting
+ * a prompt key in a partial cleanup) trips a clear failure HERE instead of
+ * surfacing as the cryptic "27 logic action(s) have no tenant definePrompt"
+ * boot error inside `bootstrapTenant`. Keep this list in sync with the
+ * `logic` actions in `models/RAAS-v1/workflow_v1.json`; the boot validator
+ * itself re-derives this list at runtime, so a manifest edit forces this
+ * test to update too.
+ */
+const REQUIRED_RAAS_PROMPTS: readonly string[] = [
+  "checkDeduplicatedRequisition",
+  "persistRequisitionData",
+  "assessFeasibilityAndDifficulty",
+  "generateClarificationAndStrategy",
+  "prepareClarificationMaterial",
+  "recordAndValidateResult",
+  "generateJDContent",
+  "handleRequisitionMapping",
+  "assignRecruitTasks",
+  "validateCompleteness",
+  "validateCandidacy",
+  "检查客户规则",
+  "validateRedlineAndBlacklist",
+  "matchHardRequirements",
+  "evaluateBonusAndCheckReflux",
+  "generateInterviewInvitation",
+  "notifyRecruiter",
+  "receiveInterviewResult",
+  "analyzeInterviewResult",
+  "generateEvaluationReport",
+  "selectTemplateAndFormat",
+  "generateRefinedResume",
+  "checkCompleteness",
+  "requestMissingInfo",
+  "generateFinalPackage",
+  "prepareSubmissionData",
+  "handleSubmissionResult",
+];
+
 describe("TC-11: bootstrap idempotency (P0-RT-07 + P0-MIG-02)", () => {
   beforeAll(async () => {
     // Make sure the api/server has run (which seeds the __system tenant etc.).
     const { buildTestEnv } = await import("./harness");
     await buildTestEnv();
+  });
+
+  beforeEach(() => {
+    // Sprint 4 — defend against the registry-pollution failure mode Sprint 3
+    // verifier filed as F-S3-1. The reset hook is a no-op today (there is
+    // no module-level prompt cache; see tenant-loader.ts:__resetPromptRegistry
+    // for the architectural invariant). Calling it explicitly makes this
+    // test forward-compatible: if a future contributor wires a cache and
+    // forgets to invalidate it, the symptom surfaces here, not 18 tests
+    // later. Then assert that the in-memory raas registry is intact — a
+    // partially-mutated `raasTenant.prompts` map would otherwise show up
+    // as a confusing boot failure inside `bootstrapTenant` below.
+    __resetPromptRegistry();
+    assertTenantRegistryComplete("raas", raasTenant, REQUIRED_RAAS_PROMPTS);
   });
 
   afterEach(() => {
@@ -39,10 +98,12 @@ describe("TC-11: bootstrap idempotency (P0-RT-07 + P0-MIG-02)", () => {
     const a = await bootstrapTenant({
       tenantSlug: "raas",
       modelDir: MODEL_DIR,
+      tenantRegistry: raasTenant,
     });
     const b = await bootstrapTenant({
       tenantSlug: "raas",
       modelDir: MODEL_DIR,
+      tenantRegistry: raasTenant,
     });
     expect(a.workflowVersion.id).toBe(b.workflowVersion.id);
     expect(a.deploymentInserted).toBe(false);
@@ -63,7 +124,7 @@ describe("TC-11: bootstrap idempotency (P0-RT-07 + P0-MIG-02)", () => {
         ),
       )
       .all();
-    await bootstrapTenant({ tenantSlug: "raas", modelDir: MODEL_DIR });
+    await bootstrapTenant({ tenantSlug: "raas", modelDir: MODEL_DIR, tenantRegistry: raasTenant });
     const afterLive = db
       .select()
       .from(deployments)
@@ -98,7 +159,7 @@ describe("TC-11: bootstrap idempotency (P0-RT-07 + P0-MIG-02)", () => {
       .all();
     const beforeLiveCount = before.filter((d) => d.status === "live").length;
 
-    const result = await bootstrapTenant({ tenantSlug: "raas", modelDir: MODEL_DIR });
+    const result = await bootstrapTenant({ tenantSlug: "raas", modelDir: MODEL_DIR, tenantRegistry: raasTenant });
 
     const after = db
       .select()
@@ -132,7 +193,7 @@ describe("TC-11: bootstrap idempotency (P0-RT-07 + P0-MIG-02)", () => {
       .all()
       .length;
     const av1 = db.select().from(agentVersions).all().length;
-    await bootstrapTenant({ tenantSlug: "raas", modelDir: MODEL_DIR });
+    await bootstrapTenant({ tenantSlug: "raas", modelDir: MODEL_DIR, tenantRegistry: raasTenant });
     const a2 = db
       .select()
       .from(agents)

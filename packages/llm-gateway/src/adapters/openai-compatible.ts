@@ -9,7 +9,12 @@
 
 import OpenAI from "openai";
 import type { ProviderId } from "@agentic/contracts";
-import type { ChatRequest, ChatResponse, ProviderAdapter } from "../types";
+import {
+  flattenContentToText,
+  type ChatRequest,
+  type ChatResponse,
+  type ProviderAdapter,
+} from "../types";
 import { LLMError, classifyHttpError } from "../errors";
 
 export interface OpenAICompatibleConfig {
@@ -21,6 +26,22 @@ export interface OpenAICompatibleConfig {
   extraHeaders?: Record<string, string>;
   /** Fallback model when caller omits one. */
   defaultModel: string | null;
+}
+
+/**
+ * Project the gateway's wide ChatMessage shape onto OpenAI's narrower one.
+ * Tool-role messages don't have a 1:1 mapping in the legacy completions API
+ * — we collapse them to assistant-role text so the request stays well-formed
+ * for providers that don't speak the tool-result protocol.
+ */
+function mapToOpenAIMessage(
+  role: "system" | "user" | "assistant" | "tool",
+  content: ChatRequest["messages"][number]["content"],
+): { role: "system" | "user" | "assistant"; content: string } {
+  const text = flattenContentToText(content);
+  const projectedRole: "system" | "user" | "assistant" =
+    role === "tool" ? "assistant" : role;
+  return { role: projectedRole, content: text };
 }
 
 function mapFinishReason(reason: string | null | undefined): ChatResponse["finishReason"] {
@@ -85,7 +106,7 @@ export function createOpenAICompatibleAdapter(
         const completion = await c.chat.completions.create(
           {
             model,
-            messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+            messages: req.messages.map((m) => mapToOpenAIMessage(m.role, m.content)),
             temperature: req.temperature,
             max_tokens: req.maxTokens,
             stop: req.stop,

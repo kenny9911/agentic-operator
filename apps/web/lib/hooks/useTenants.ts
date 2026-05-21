@@ -1,0 +1,84 @@
+/**
+ * useTenants — TanStack Query hook for the sidebar tenant switcher.
+ *
+ * The chrome (`apps/web/app/portal/components/shell/chrome.tsx`) used to
+ * read from a static `TENANTS` constant in `lib/tenants.ts`, which meant
+ * tenants created via `POST /v1/tenants` never showed up until rebuild.
+ * This hook makes the sidebar reflect the live DB state.
+ *
+ * Invalidate via `TENANTS_KEYS.all` after any tenant CRUD mutation:
+ *
+ *   queryClient.invalidateQueries({ queryKey: TENANTS_KEYS.all });
+ */
+
+"use client";
+
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+
+interface ApiOk<T> {
+  ok: true;
+  data: T;
+}
+interface ApiErr {
+  ok: false;
+  error: { code: string; message: string };
+}
+
+async function callV1<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, {
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+      ...(init.headers as Record<string, string> | undefined),
+    },
+    ...init,
+  });
+  const body = (await res.json()) as ApiOk<T> | ApiErr;
+  if (!body.ok) {
+    throw new Error(`${path}: ${body.error.code} — ${body.error.message}`);
+  }
+  return body.data;
+}
+
+export interface TenantListItem {
+  id: string;
+  slug: string;
+  name: string;
+  subtitle: string | null;
+  color: string | null;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+  agentCount: number;
+  runs24h: number;
+  openTasks: number;
+  membership: "admin" | "editor" | "viewer" | null;
+}
+
+interface TenantsListResponse {
+  items: TenantListItem[];
+  count: number;
+  viewer?: { userId: string | null; isPlatformAdmin: boolean };
+}
+
+export const TENANTS_KEYS = {
+  all: ["tenants"] as const,
+  list: (includeArchived: boolean) =>
+    ["tenants", { includeArchived }] as const,
+};
+
+export function useTenants(opts?: {
+  includeArchived?: boolean;
+}): UseQueryResult<TenantsListResponse> {
+  const includeArchived = opts?.includeArchived ?? false;
+  return useQuery({
+    queryKey: TENANTS_KEYS.list(includeArchived),
+    queryFn: () =>
+      callV1<TenantsListResponse>(
+        `/v1/tenants${includeArchived ? "?include_archived=1" : ""}`,
+      ),
+    // Tenants change rarely; 30s stale time is enough for the sidebar to
+    // feel live without hammering the api. Mutations explicitly invalidate.
+    staleTime: 30_000,
+  });
+}

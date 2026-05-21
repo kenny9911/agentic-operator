@@ -6,7 +6,7 @@
     "dev": "next dev --port 3500",
     "build": "next build",
     "start": "next start --port 3500",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .next .turbo node_modules"
   },
@@ -27,6 +27,7 @@
     "@types/node": "^25.8.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/parser": "8.59.3",
     "eslint": "^10.4.0",
     "eslint-config-next": "16.2.6",
     "typescript": "^6.0.3",

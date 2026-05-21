@@ -19,6 +19,12 @@ export interface AgentContext {
   /** Optional override of provider/model for this invocation. */
   provider?: ProviderId;
   model?: string;
+  /**
+   * P2-FE-18: test-run flag. When true the run engine sets `runs.is_test=true`
+   * and the broadcast `run.started` event carries `testRun: true` so SSE
+   * subscribers can paint the badge without a follow-up DB read.
+   */
+  testRun?: boolean;
 }
 
 export interface AgentResult<TOutput> {
@@ -31,4 +37,6 @@ export interface AgentResult<TOutput> {
   tokensOut: number | null;
   durationMs: number;
   error?: string;
+  /** P2-FE-18: surfaced so the invoke route can echo it back in the envelope. */
+  testRun?: boolean;
 }

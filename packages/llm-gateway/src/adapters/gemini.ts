@@ -6,7 +6,13 @@
  */
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import type { ChatMessage, ChatRequest, ChatResponse, ProviderAdapter } from "../types";
+import {
+  flattenContentToText,
+  type ChatMessage,
+  type ChatRequest,
+  type ChatResponse,
+  type ProviderAdapter,
+} from "../types";
 import { LLMError, classifyHttpError } from "../errors";
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -23,12 +29,13 @@ function partitionForGemini(messages: ChatMessage[]): {
   const systemParts: string[] = [];
   const contents: { role: "user" | "model"; parts: { text: string }[] }[] = [];
   for (const m of messages) {
+    const flat = flattenContentToText(m.content);
     if (m.role === "system") {
-      systemParts.push(m.content);
+      systemParts.push(flat);
     } else {
       contents.push({
         role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
+        parts: [{ text: flat }],
       });
     }
   }

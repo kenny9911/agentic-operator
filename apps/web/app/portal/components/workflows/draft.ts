@@ -155,3 +155,64 @@ export function countDraftChanges(draft: WorkflowDraft): DraftCounts {
     removed: draft.removed.size,
   };
 }
+
+// ─── localStorage persistence (UC-V11-13) ───────────────────────────────────
+// Sets don't survive JSON.stringify natively; serialize to arrays + a small
+// envelope that records when the draft was saved so the restore banner can
+// show "from 2 hours ago". The key is namespaced by tenant + workflow slug
+// (tenants share the same dev DB; we don't want a cross-tenant collision).
+
+export interface SerializedDraft {
+  v: 1;
+  savedAt: number;
+  agents: Record<string, DraftAgent>;
+  added: string[];
+  removed: string[];
+}
+
+export function serializeDraft(draft: WorkflowDraft): SerializedDraft {
+  return {
+    v: 1,
+    savedAt: Date.now(),
+    agents: draft.agents,
+    added: Array.from(draft.added),
+    removed: Array.from(draft.removed),
+  };
+}
+
+export function deserializeDraft(serialized: SerializedDraft): WorkflowDraft {
+  return {
+    agents: serialized.agents,
+    added: new Set(serialized.added),
+    removed: new Set(serialized.removed),
+  };
+}
+
+/**
+ * Best-effort JSON parse + shape check. Returns `null` on any parse / shape
+ * error so callers can treat invalid stored data as "no saved draft".
+ */
+export function tryReadSerializedDraft(raw: string): SerializedDraft | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      (parsed as { v?: unknown }).v === 1 &&
+      typeof (parsed as { savedAt?: unknown }).savedAt === "number" &&
+      typeof (parsed as { agents?: unknown }).agents === "object" &&
+      Array.isArray((parsed as { added?: unknown }).added) &&
+      Array.isArray((parsed as { removed?: unknown }).removed)
+    ) {
+      return parsed as SerializedDraft;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Build the localStorage key for a given (tenant, workflow) pair. */
+export function draftStorageKey(tenant: string, workflowId: string): string {
+  return `workflow-draft:${tenant}:${workflowId}`;
+}

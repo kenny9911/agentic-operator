@@ -22,7 +22,7 @@
  * to disable.
  */
 
-import { events, runs, tasks, getDb } from "@agentic/db";
+import { events, idempotencyKeys, runs, tasks, getDb } from "@agentic/db";
 import { and, isNull, lt, sql } from "drizzle-orm";
 import { inngest } from "./client";
 
@@ -30,6 +30,14 @@ export interface RetentionResult {
   events: { tombstoned: number };
   runs: { tombstoned: number };
   tasks: { tombstoned: number };
+  /**
+   * UC-V11-32 / PF-GAP-10 — idempotency cache purge. Reports how many
+   * expired `idempotency_keys` rows were deleted on this run. Always
+   * runs (does not respect `AGENTIC_RETENTION_DAYS=0`) because the
+   * 24h TTL is intrinsic to the idempotency contract, not a tenant
+   * retention policy.
+   */
+  idempotencyKeys: { purged: number };
   ranAt: number;
   cutoffAt: number;
   retentionDays: number;
@@ -47,12 +55,15 @@ export async function runRetentionSweep(): Promise<RetentionResult> {
   const ranAt = Date.now();
   const cutoffAt = ranAt - days * 24 * 60 * 60 * 1000;
 
-  // Disabled: just report 0 rows touched.
+  // Disabled: just report 0 rows touched. We still run the idempotency
+  // purge so the cache table doesn't grow without bound when retention is
+  // turned off for tenant tables.
   if (days === 0) {
     return {
       events: { tombstoned: 0 },
       runs: { tombstoned: 0 },
       tasks: { tombstoned: 0 },
+      idempotencyKeys: { purged: purgeExpiredIdempotency(ranAt) },
       ranAt,
       cutoffAt,
       retentionDays: 0,
@@ -108,10 +119,28 @@ export async function runRetentionSweep(): Promise<RetentionResult> {
     events: { tombstoned: Number(eventsResult.changes ?? 0) },
     runs: { tombstoned: Number(runsResult.changes ?? 0) },
     tasks: { tombstoned: Number(tasksResult.changes ?? 0) },
+    idempotencyKeys: { purged: purgeExpiredIdempotency(ranAt) },
     ranAt,
     cutoffAt,
     retentionDays: days,
   };
+}
+
+/**
+ * Hard-delete `idempotency_keys` rows whose 24h TTL has expired.
+ *
+ * Unlike the tenant tables we don't tombstone — the cache is by
+ * construction transient and a 25h-old row would just be a missed-cache
+ * lookup anyway. We DELETE outright so the table stays small. Returns
+ * the row count for the retention log line.
+ */
+function purgeExpiredIdempotency(nowMs: number): number {
+  const db = getDb();
+  const result = db
+    .delete(idempotencyKeys)
+    .where(lt(idempotencyKeys.expiresAt, new Date(nowMs)))
+    .run();
+  return Number((result as unknown as { changes?: number }).changes ?? 0);
 }
 
 /**
@@ -132,7 +161,7 @@ export const retentionSweepFn: InngestFunction.Any = inngest.createFunction(
   async () => {
     const result = await runRetentionSweep();
     console.log(
-      `[retention] sweep: events=${result.events.tombstoned} runs=${result.runs.tombstoned} tasks=${result.tasks.tombstoned} (cutoff ${result.retentionDays}d)`,
+      `[retention] sweep: events=${result.events.tombstoned} runs=${result.runs.tombstoned} tasks=${result.tasks.tombstoned} idempotency_keys=${result.idempotencyKeys.purged} (cutoff ${result.retentionDays}d)`,
     );
     return result;
   },

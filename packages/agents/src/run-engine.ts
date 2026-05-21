@@ -24,7 +24,7 @@ import { and, eq } from "drizzle-orm";
 import { agents, agentVersions, getDb, runs, steps, tenants } from "@agentic/db";
 import type { DB } from "@agentic/db";
 import { makeId } from "@agentic/shared";
-import { writeRunLog } from "@agentic/runtime";
+import { publishStreamEvent, writeRunLog } from "@agentic/runtime";
 import type { ProviderId } from "@agentic/contracts";
 import {
   LLMError,
@@ -114,6 +114,11 @@ export async function executeAgentRun<TInput, TOutput>(
   const correlationId = ctx.correlationId ?? makeId("cor");
   const startedAt = Date.now();
   const logCtx = { tenantSlug, runId, correlationId };
+  // P2-FE-18 — propagate the test-run flag from the API layer (set when the
+  // caller hit `POST /v1/agents/:name/invoke?testRun=1`). Drives both the
+  // `runs.is_test` column and the broadcast `run.started` event payload so
+  // operator SSE clients can paint the TEST badge without an extra DB read.
+  const isTest = ctx.testRun === true;
 
   // Initial run row
   db.insert(runs)
@@ -127,14 +132,35 @@ export async function executeAgentRun<TInput, TOutput>(
       startedAt: new Date(startedAt),
       correlationId,
       subject: null,
+      isTest,
       logPath: null,
     })
     .run();
+
+  // P2-FE-18 — emit the SSE `run.started` event so the operator portal can
+  // render the new row (and TEST badge) without polling. Best-effort: a
+  // broadcast failure must not abort the synchronous invoke path.
+  try {
+    publishStreamEvent({
+      type: "run.started",
+      tenantId,
+      at: startedAt,
+      runId,
+      agentName: agent.name,
+      triggerEvent: null,
+      subject: null,
+      correlationId,
+      testRun: isTest,
+    });
+  } catch {
+    /* broadcast best-effort */
+  }
 
   await writeRunLog(logCtx, "INFO", "run.start", {
     agent: agent.name,
     kind: "code",
     invocation_id: ctx.invocationId ?? "—",
+    test_run: isTest,
   });
 
   // Initial step row
@@ -227,6 +253,9 @@ export async function executeAgentRun<TInput, TOutput>(
       tokensIn: response.tokensIn,
       tokensOut: response.tokensOut,
       durationMs: runEndedAt - startedAt,
+      // P2-FE-18 — echo back so the API can put it in the envelope without
+      // re-reading the runs row.
+      testRun: isTest,
     };
   } catch (err) {
     const llm = isLLMError(err)

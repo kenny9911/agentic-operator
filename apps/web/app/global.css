@@ -3,68 +3,19 @@
  *
  * Per design decision: all component styling is inline style={{}} on JSX
  * (preserves prototype fidelity, works with React 19 Server Components).
- * This file ONLY contains things inline styles can't do:
- *   - CSS custom properties (theme tokens)
- *   - @keyframes
+ * This file contains ONLY things inline styles can't do AND that aren't
+ * already declared in styles/tokens.css:
+ *   - body-level reset
+ *   - @keyframes (the v1_1 set; tokens.css owns the same animations + fadein)
  *   - Pseudo-selectors (::selection, ::-webkit-scrollbar*)
- *   - Reset / body-level rules
+ *   - A handful of utility classes (.mono / .display / .muted / …)
  *
- * Ported verbatim from prototype index.html <style> block.
+ * `apps/web/styles/tokens.css` is the canonical source of truth for design
+ * tokens (theme colors, font stacks, --r-* radii, --density-mult, the
+ * --z-* ladder, focus ring). It's imported once in app/layout.tsx alongside
+ * this file. Do NOT redeclare any token in this file — drift between the
+ * two files is what caused the FE-P0-1 punch item.
  */
-
-:root {
-  --bg: #0a0a0b;
-  --bg-2: #0f0f11;
-  --panel: #131317;
-  --panel-2: #18181d;
-  --panel-3: #1d1d23;
-  --border: #232329;
-  --border-2: #2c2c34;
-  --border-3: #393942;
-  --text: #ebebef;
-  --text-2: #a8aab1;
-  --text-3: #6f7178;
-  --text-4: #46474d;
-
-  --signal: #d0ff00;          /* electric lime — live/active */
-  --signal-dim: #5a6e00;
-  --blue: #84a9ff;
-  --green: #65e0a3;
-  --amber: #ffb547;
-  --red: #ff6470;
-  --violet: #b594ff;
-
-  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-  --display: "Instrument Serif", "IBM Plex Serif", Georgia, serif;
-
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 10px;
-
-  --density: 1;
-}
-
-/* Light theme override (cookie-driven, applied via html[data-theme]) */
-html[data-theme="light"] {
-  --bg: #f6f6f4;
-  --bg-2: #efefec;
-  --panel: #ffffff;
-  --panel-2: #f8f8f6;
-  --panel-3: #f1f1ee;
-  --border: #e3e3df;
-  --border-2: #d4d4cf;
-  --border-3: #b8b8b2;
-  --text: #1a1a1d;
-  --text-2: #5a5b62;
-  --text-3: #8c8d94;
-  --text-4: #b8b9be;
-  --signal: #4d5e00;
-  --signal-dim: #c8d985;
-}
-
-html[data-density="comfortable"] { --density: 1.18; }
-html[data-density="compact"] { --density: 0.88; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }

@@ -8,7 +8,12 @@
  */
 
 import { AzureOpenAI } from "openai";
-import type { ChatRequest, ChatResponse, ProviderAdapter } from "../types";
+import {
+  flattenContentToText,
+  type ChatRequest,
+  type ChatResponse,
+  type ProviderAdapter,
+} from "../types";
 import { LLMError, classifyHttpError } from "../errors";
 
 export interface AzureAdapterConfig {
@@ -73,7 +78,10 @@ export function createAzureAdapter(config: AzureAdapterConfig): ProviderAdapter 
         const completion = await c.chat.completions.create(
           {
             model: deployment,
-            messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+            messages: req.messages.map((m) => ({
+              role: m.role === "tool" ? "assistant" : m.role,
+              content: flattenContentToText(m.content),
+            })),
             temperature: req.temperature,
             max_tokens: req.maxTokens,
             stop: req.stop,

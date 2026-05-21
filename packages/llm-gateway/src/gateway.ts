@@ -20,6 +20,7 @@ import type {
   ProviderInfo,
 } from "./types";
 import { LLMError, isLLMError } from "./errors";
+import { assertBudgetAvailable, recordActualSpend } from "./budget";
 
 export class LLMGateway {
   private readonly providers = new Map<ProviderId, ProviderAdapter>();
@@ -75,6 +76,13 @@ export class LLMGateway {
     const resolvedModel = req.model ?? this.config.defaultModel ?? undefined;
     let lastError: unknown = null;
 
+    // P1-LLM-05: per-tenant budget hook. Throws cost_limit_exceeded BEFORE
+    // we run any adapter when the tenant is already over either cap. The
+    // post-call deduction uses the adapter's actual token usage.
+    if (req.tenantId) {
+      assertBudgetAvailable(req.tenantId, providers[0] ?? this.config.defaultProvider);
+    }
+
     for (const id of providers) {
       const adapter = this.providers.get(id);
       if (!adapter) {
@@ -95,8 +103,20 @@ export class LLMGateway {
         provider: id,
       };
 
+      const finish = (response: ChatResponse): ChatResponse => {
+        if (req.tenantId) {
+          recordActualSpend({
+            tenantId: req.tenantId,
+            provider: id,
+            tokensIn: response.tokensIn ?? 0,
+            tokensOut: response.tokensOut ?? 0,
+          });
+        }
+        return response;
+      };
+
       try {
-        return await adapter.chat(subReq);
+        return finish(await adapter.chat(subReq));
       } catch (err1) {
         const e1 = toLLMError(err1, id);
         if (!e1.transient) throw e1;
@@ -104,7 +124,7 @@ export class LLMGateway {
         await delay(250);
         try {
           const signal2 = combineSignals(req.signal, timeoutMs);
-          return await adapter.chat({ ...subReq, signal: signal2 });
+          return finish(await adapter.chat({ ...subReq, signal: signal2 }));
         } catch (err2) {
           const e2 = toLLMError(err2, id);
           lastError = e2;

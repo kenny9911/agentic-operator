@@ -12,6 +12,7 @@
 import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DataProvider } from "@/lib/hooks/data-context";
+import { DirtyProvider } from "../../lib/dirty-context";
 
 export function PortalProviders({ children }: { children: ReactNode }) {
   const [client] = useState(
@@ -27,7 +28,9 @@ export function PortalProviders({ children }: { children: ReactNode }) {
   );
   return (
     <QueryClientProvider client={client}>
-      <DataProvider>{children}</DataProvider>
+      <DataProvider>
+        <DirtyProvider>{children}</DirtyProvider>
+      </DataProvider>
     </QueryClientProvider>
   );
 }

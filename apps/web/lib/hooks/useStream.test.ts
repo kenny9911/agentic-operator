@@ -23,7 +23,7 @@ function makeClient() {
 }
 
 function invalidatedKeys(spy: ReturnType<typeof vi.spyOn>): unknown[] {
-  return spy.mock.calls.map((call) => {
+  return spy.mock.calls.map((call: unknown[]) => {
     const arg = call[0] as { queryKey: unknown } | undefined;
     return arg?.queryKey;
   });

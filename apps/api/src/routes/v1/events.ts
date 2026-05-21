@@ -12,6 +12,11 @@ import {
   fetchEventsSince,
   listEventCatalog,
 } from "../../queries/events";
+import {
+  lookupIdempotency,
+  readIdempotencyKey,
+  storeIdempotency,
+} from "../../services/idempotency";
 
 /**
  * SSE limits for `GET /v1/events/stream` per docs/design/event-tester.md §4.2:
@@ -40,6 +45,18 @@ export async function eventsRoutes(app: FastifyInstance) {
   app.post("/events", async (req, reply) => {
     const auth = requireAuth(req);
     const parsed = IngestEventBody.parse(req.body);
+
+    // UC-V11-32 / PF-GAP-10 — idempotency replay. If the caller supplied
+    // an Idempotency-Key header AND we previously serviced the same
+    // (tenant, key) pair, return the cached body byte-for-byte without
+    // re-emitting the Inngest event or inserting a new `events` row.
+    const idemKey = readIdempotencyKey(req);
+    if (idemKey) {
+      const cached = lookupIdempotency(auth.tenantId, idemKey);
+      if (cached) {
+        return reply.code(cached.status).send(cached.body);
+      }
+    }
 
     const eventId = makeId("evt");
     const tenantNamespacedName = parsed.name.includes("/")
@@ -133,7 +150,21 @@ export async function eventsRoutes(app: FastifyInstance) {
       }
     }
 
-    return reply.ok({ event_id: eventId, name: tenantNamespacedName });
+    const okBody = { event_id: eventId, name: tenantNamespacedName };
+    if (idemKey) {
+      // Cache the envelope-wrapped body so a retry replays the same shape
+      // the client originally received (the error plugin wraps `reply.ok`
+      // responses as `{ ok: true, data: ... }`).
+      try {
+        storeIdempotency(auth.tenantId, idemKey, {
+          status: 200,
+          body: { ok: true, data: okBody },
+        });
+      } catch (err) {
+        req.log.warn({ err }, "idempotency: cache write failed (event)");
+      }
+    }
+    return reply.ok(okBody);
   });
 
   // POST /v1/events/:id/replay

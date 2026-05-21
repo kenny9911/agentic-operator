@@ -17,7 +17,7 @@
  * flow through useStream() at the layout root.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ActorTag,
@@ -30,6 +30,7 @@ import {
 } from "@/app/portal/components";
 import { useRaasData } from "@/lib/hooks/data-context";
 import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useDirty } from "@/app/portal/lib/dirty-context";
 import {
   CANVAS_H,
   CANVAS_W,
@@ -55,8 +56,12 @@ import { AgentEditor } from "@/app/portal/components/workflows/AgentEditor";
 import {
   applyDraft,
   countDraftChanges,
+  deserializeDraft,
+  draftStorageKey,
   emptyDraft,
+  serializeDraft,
   toManifest,
+  tryReadSerializedDraft,
   type WorkflowDraft,
 } from "@/app/portal/components/workflows/draft";
 import { useDeployManifest } from "@/lib/hooks/useManifest";
@@ -93,6 +98,83 @@ export default function WorkflowsPage() {
   );
   const draftCounts = countDraftChanges(draft);
   const dirty = draftCounts.added + draftCounts.modified + draftCounts.removed > 0;
+  const dirtyApi = useDirty();
+  // UC-V11-15: register the draft with the global Dirty context so
+  // useTenantNavigate() and other guards can prompt before navigating away.
+  useEffect(() => {
+    const label = dirty
+      ? `workflow draft · +${draftCounts.added} ~${draftCounts.modified} −${draftCounts.removed}`
+      : null;
+    dirtyApi.setDirty("workflow-draft", label);
+    return () => dirtyApi.setDirty("workflow-draft", null);
+  }, [
+    dirty,
+    draftCounts.added,
+    draftCounts.modified,
+    draftCounts.removed,
+    dirtyApi,
+  ]);
+
+  // UC-V11-13: persist edit-mode draft to localStorage so refreshing the
+  // page or closing the tab without deploying preserves work-in-progress.
+  // The key is namespaced by tenant; multiple workflows per tenant would
+  // need a deeper key — today there's one workflow per tenant.
+  const storageKey = useMemo(() => draftStorageKey(tenant, tenant), [tenant]);
+  // `restoredAt` non-null means we restored a saved draft on mount; show
+  // a small banner with a Discard action so the operator can opt out.
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  // First mount: restore any saved draft for this (tenant, workflow). Wrap
+  // in a Boolean ref-effect so a Next dev re-mount (StrictMode) doesn't
+  // double-trigger the restore.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    if (hydrated) return;
+    setHydrated(true);
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) return;
+      const parsed = tryReadSerializedDraft(raw);
+      if (!parsed) {
+        window.localStorage.removeItem(storageKey);
+        return;
+      }
+      // Restored — drop into edit mode so the user notices.
+      setDraft(deserializeDraft(parsed));
+      setEditing(true);
+      setRestoredAt(parsed.savedAt);
+    } catch {
+      // localStorage unavailable (private mode, quota) — silently skip.
+    }
+  }, [hydrated, storageKey]);
+  // Save on every change while dirty; clear on clean state.
+  useEffect(() => {
+    if (!hydrated || typeof window === "undefined") return;
+    try {
+      if (dirty) {
+        window.localStorage.setItem(
+          storageKey,
+          JSON.stringify(serializeDraft(draft)),
+        );
+      } else {
+        window.localStorage.removeItem(storageKey);
+      }
+    } catch {
+      // Persistence failure is best-effort; don't break the UI.
+    }
+  }, [hydrated, dirty, draft, storageKey]);
+  function discardRestored() {
+    setDraft(emptyDraft());
+    setEditing(false);
+    setRestoredAt(null);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(storageKey);
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   // Build edges: for each agent's emitted event, find listeners.
   const edges = useMemo<EdgeMeta[]>(() => {
@@ -242,6 +324,38 @@ export default function WorkflowsPage() {
 
       {editing && <EditDraftBanner />}
 
+      {restoredAt && (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "8px 24px",
+            background: "var(--panel-2)",
+            borderBottom: "1px solid var(--border)",
+            fontSize: 12,
+            color: "var(--text-2)",
+          }}
+        >
+          <Icon name="alert" size={11} style={{ color: "var(--amber)" }} />
+          <span>
+            Restored unsaved draft from{" "}
+            <span className="mono" style={{ color: "var(--text)" }}>
+              {new Date(restoredAt).toLocaleString()}
+            </span>
+          </span>
+          <Button
+            small
+            tone="ghost"
+            onClick={discardRestored}
+            style={{ marginLeft: "auto" }}
+          >
+            Discard
+          </Button>
+        </div>
+      )}
+
       <div
         style={{
           flex: 1,
@@ -321,6 +435,8 @@ export default function WorkflowsPage() {
             <svg
               width={CANVAS_W}
               height={CANVAS_H}
+              role="img"
+              aria-label={`Workflow DAG: ${agents.length} agents wired by ${edges.length} event edges`}
               style={{ position: "absolute", top: 30, left: 0, pointerEvents: "none" }}
             >
               <defs>
@@ -353,7 +469,19 @@ export default function WorkflowsPage() {
                 const isHi = highlighted.edges.has(i) || hoveredEdge === i;
                 const opacity = dim ? (isHi ? 1 : 0.1) : isHi ? 1 : 0.55;
                 return (
-                  <g key={i} style={{ pointerEvents: "auto" }}>
+                  <g
+                    key={i}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Event edge: ${e.event} from ${e.src} to ${e.dst}`}
+                    style={{ pointerEvents: "auto" }}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter" || ev.key === " ") {
+                        ev.preventDefault();
+                        setSelectedEvent(e.event);
+                      }
+                    }}
+                  >
                     <path
                       d={path}
                       stroke={color}
@@ -370,7 +498,7 @@ export default function WorkflowsPage() {
                       onClick={() => setSelectedEvent(e.event)}
                     />
                     {liveStream && (isHi || (!dim && Math.abs((i * 37) % 7) === 0)) && (
-                      <circle r="3" fill={color} opacity={isHi ? 1 : 0.85}>
+                      <circle r="3" fill={color} opacity={isHi ? 1 : 0.85} aria-hidden="true">
                         <animateMotion
                           dur={`${2.5 + (i % 5) * 0.4}s`}
                           repeatCount="indefinite"
@@ -403,9 +531,17 @@ export default function WorkflowsPage() {
                         ? "var(--border-3)"
                         : "var(--border-2)";
                 const dashed = editing ? "dashed" : "solid";
+                const stateSuffix = isAdded
+                  ? ", draft addition"
+                  : isModified
+                    ? ", draft modification"
+                    : "";
+                const nodeLabel = `${a.actor} node: ${a.title}, id ${a.id}${stateSuffix}`;
                 return (
                   <button
                     key={a.id}
+                    aria-label={nodeLabel}
+                    aria-pressed={isSel}
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedAgent(isSel ? null : a.id);

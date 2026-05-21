@@ -41,3 +41,6 @@ yarn-error.log*
 coverage
 playwright-report
 test-results
+
+# manifest-import test fixtures — random-slug model dirs leaked by e2e runs
+models/mi*-v*/

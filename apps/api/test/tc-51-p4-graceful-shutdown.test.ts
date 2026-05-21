@@ -55,7 +55,16 @@ describe("TC-51: P4-API-01 graceful shutdown", () => {
       const port = await findFreePort();
       const env: NodeJS.ProcessEnv = {
         ...process.env,
-        NODE_ENV: "production", // skip dev-only hot-reload watcher
+        // Use NODE_ENV=test (not "production") so the AUTH_MODE=dev safety
+        // guard introduced in P5-AUTH-01 (apps/api/src/plugins/auth.ts —
+        // `assertAuthModeSafe`) doesn't refuse to boot. The shutdown test
+        // only hits the unauthenticated /health endpoint so the auth mode
+        // is irrelevant; we still need `AUTH_MODE=dev` because the boot
+        // path otherwise tries to enforce bearer auth against an empty
+        // api_tokens table and the request would 401 (still survivable —
+        // the test asserts on exit code, not the GET — but explicit-dev
+        // keeps the test deterministic across the auth-guard's evolution).
+        NODE_ENV: "test",
         AUTH_MODE: "dev",
         AGENTIC_DEV_TENANT: "__system",
         LOG_LEVEL: "error",

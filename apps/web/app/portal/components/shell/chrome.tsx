@@ -16,26 +16,49 @@
  */
 
 import type { ReactNode } from "react";
+import { useCallback } from "react";
+import type { RunStreamEvent } from "@agentic/contracts";
 import { TENANTS } from "@/lib/tenants";
 import { useStream } from "@/lib/hooks/useStream";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./topbar";
 import { TweaksPanel } from "../tweaks/panel";
-import { ToastRegion } from "../toast";
+import { ToastRegion, toast } from "../toast";
 import { CommandPalette } from "../cmd-k";
 import type { TenantOption } from "./tenant-switcher";
+import {
+  SessionProvider,
+  type SessionUser,
+} from "../../lib/session-context";
 
 export function PortalChrome({
   children,
   user,
 }: {
   children: ReactNode;
-  user: { name: string; initials: string };
+  user: SessionUser;
 }) {
+  // UC-V11-06 — when the SSE stream surfaces a `deployment.created` event
+  // for tenant code, fire a hot-reload toast so engineers see their CLI
+  // deploy land without a manual refresh. Manifest deploys already get an
+  // explicit "Manifest deployed" toast at save time, so we only fire here
+  // for `kind: 'tenant_code'`.
+  const onStreamEvent = useCallback((event: RunStreamEvent) => {
+    if (event.type === "deployment.created" && event.kind === "tenant_code") {
+      toast({
+        tone: "signal",
+        title: `Tenant code ${event.version} active`,
+        description: event.workflowSlug
+          ? `Hot-reloaded for ${event.workflowSlug}`
+          : "Hot-reloaded",
+      });
+    }
+  }, []);
+
   // useStream owns the SSE subscription that invalidates the TanStack Query
   // caches; mount it once at the chrome level so every view inherits live
   // updates without re-subscribing.
-  useStream();
+  useStream({ onEvent: onStreamEvent });
 
   const tenants: TenantOption[] = TENANTS.map((t) => ({
     id: t.id,
@@ -47,49 +70,51 @@ export function PortalChrome({
   }));
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "232px 1fr",
-        gridTemplateAreas: '"side main"',
-        height: "100vh",
-        background: "var(--bg)",
-        overflow: "hidden",
-      }}
-    >
-      {/* P2-FE-24 — skip-link is the first focusable element so keyboard
-        * users can jump past the sidebar straight to the view body.
-        * Styled in tokens.css `.skip-link`. */}
-      <a href="#portal-view-content" className="skip-link">
-        Skip to content
-      </a>
-      <Sidebar tenants={tenants} />
-      <main
+    <SessionProvider value={user}>
+      <div
         style={{
-          display: "flex",
-          flexDirection: "column",
+          display: "grid",
+          gridTemplateColumns: "232px 1fr",
+          gridTemplateAreas: '"side main"',
+          height: "100vh",
+          background: "var(--bg)",
           overflow: "hidden",
-          minWidth: 0,
-          gridArea: "main",
         }}
       >
-        <TopBar user={user} />
-        <div
-          id="portal-view-content"
-          tabIndex={-1}
+        {/* P2-FE-24 — skip-link is the first focusable element so keyboard
+          * users can jump past the sidebar straight to the view body.
+          * Styled in tokens.css `.skip-link`. */}
+        <a href="#portal-view-content" className="skip-link">
+          Skip to content
+        </a>
+        <Sidebar tenants={tenants} />
+        <main
           style={{
-            flex: 1,
+            display: "flex",
+            flexDirection: "column",
             overflow: "hidden",
-            minHeight: 0,
-            position: "relative",
+            minWidth: 0,
+            gridArea: "main",
           }}
         >
-          {children}
-        </div>
-      </main>
-      <TweaksPanel tenants={tenants.map((t) => ({ id: t.id, name: t.name }))} />
-      <ToastRegion />
-      <CommandPalette />
-    </div>
+          <TopBar user={{ name: user.name, initials: user.initials }} />
+          <div
+            id="portal-view-content"
+            tabIndex={-1}
+            style={{
+              flex: 1,
+              overflow: "hidden",
+              minHeight: 0,
+              position: "relative",
+            }}
+          >
+            {children}
+          </div>
+        </main>
+        <TweaksPanel tenants={tenants.map((t) => ({ id: t.id, name: t.name }))} />
+        <ToastRegion />
+        <CommandPalette />
+      </div>
+    </SessionProvider>
   );
 }

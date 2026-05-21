@@ -33,7 +33,11 @@ import {
   type LoadedModels,
   type WorkflowManifest,
 } from "./manifest";
-import { registerAgent } from "./register";
+import {
+  findMissingTenantPrompts,
+  formatMissingPromptsError,
+  registerAgent,
+} from "./register";
 import type { TenantRegistry } from "@agentic/agent-kit";
 import type { InngestFunction } from "inngest";
 
@@ -53,6 +57,12 @@ export interface BootstrapTenantResult {
   tenantTools: number;
   tenantPrompts: number;
   hasTenantPackage: boolean;
+  /**
+   * True when this call wrote a new `deployments` row (either because no live
+   * row existed for this tenant/workflow_version, or `AGENTIC_REBOOTSTRAP=force`
+   * forced a fresh insert). P0-RT-07: must be false for no-op reboots.
+   */
+  deploymentInserted: boolean;
 }
 
 /**
@@ -108,6 +118,21 @@ export async function bootstrapTenant(spec: {
   const loaded = await loadModelsFromDisk(spec.modelDir);
   const { manifest } = loaded;
 
+  // UC-V11-25 / AR-GAP-13 — refuse-to-boot when any `logic` action lacks
+  // a tenant `definePrompt`. The legacy fallback shipped
+  // `${action.name}: ${action.description}` as the LLM user message —
+  // for RAAS that streams a Chinese description to the model. Strict
+  // validation per `docs/tech-design/ar-tool.md` § Option B. The throw
+  // bubbles to `bootstrapAll`'s per-tenant try/catch so OTHER tenants
+  // still boot.
+  const missingPrompts = findMissingTenantPrompts({
+    manifest,
+    tenantRegistry: spec.tenantRegistry,
+  });
+  if (missingPrompts.length > 0) {
+    throw new Error(formatMissingPromptsError(spec.tenantSlug, missingPrompts));
+  }
+
   const tenant = db
     .select()
     .from(tenants)
@@ -144,6 +169,8 @@ export async function bootstrapTenant(spec: {
   }
 
   const versionStr = `auto-${hashManifest(manifest)}`;
+  const forceRebootstrap = process.env.AGENTIC_REBOOTSTRAP === "force";
+  let deploymentInserted = false;
   let workflowVersion = db
     .select()
     .from(workflowVersions)
@@ -154,6 +181,7 @@ export async function bootstrapTenant(spec: {
       ),
     )
     .all()[0];
+  const isNewVersion = !workflowVersion;
   if (!workflowVersion) {
     const wfvId = makeId("wfv");
     db.insert(workflowVersions)
@@ -170,13 +198,18 @@ export async function bootstrapTenant(spec: {
       .from(workflowVersions)
       .where(eq(workflowVersions.id, wfvId))
       .all()[0]!;
+  }
 
-    // Mark as live (replace any prior live for this tenant).
+  // P0-RT-07: insert a fresh deployment row only when (a) we just made a new
+  // version, OR (b) the operator explicitly forced a re-bootstrap. A no-op
+  // reboot must leave the existing live row in place — never tombstone it.
+  if (isNewVersion || forceRebootstrap) {
     db.update(deployments)
       .set({ status: "rolled_back" })
       .where(
         and(
           eq(deployments.tenantId, tenant.id),
+          eq(deployments.target, "workflow"),
           eq(deployments.status, "live"),
         ),
       )
@@ -186,11 +219,14 @@ export async function bootstrapTenant(spec: {
         id: makeId("dpl"),
         tenantId: tenant.id,
         target: "workflow",
-        versionId: wfvId,
+        versionId: workflowVersion.id,
         status: "live",
-        note: `auto-bootstrapped from ${path.basename(spec.modelDir)}`,
+        note: `auto-bootstrapped from ${path.basename(spec.modelDir)}${
+          forceRebootstrap ? " (forced)" : ""
+        }`,
       })
       .run();
+    deploymentInserted = true;
   }
 
   // Tenant code registry comes from the caller (api server). Pure-declarative
@@ -211,6 +247,7 @@ export async function bootstrapTenant(spec: {
       .all()[0];
     if (!agentRow) {
       const agentId = makeId("agt");
+      const now = new Date();
       db.insert(agents)
         .values({
           id: agentId,
@@ -219,6 +256,8 @@ export async function bootstrapTenant(spec: {
           name: a.name,
           title: a.title ?? a.name,
           actor: a.actor[0] === "Human" ? "Human" : "Agent",
+          createdAt: now,
+          updatedAt: now,
         })
         .run();
       agentRow = db
@@ -292,6 +331,7 @@ export async function bootstrapTenant(spec: {
     tenantTools: toolCount,
     tenantPrompts: promptCount,
     hasTenantPackage: tenantRegistry !== null,
+    deploymentInserted,
   };
 }
 

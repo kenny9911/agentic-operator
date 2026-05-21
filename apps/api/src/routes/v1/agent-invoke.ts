@@ -27,8 +27,14 @@ import { inngest } from "@agentic/runtime";
 import { InvokeAgentBody } from "@agentic/contracts";
 import { makeId } from "@agentic/shared";
 import { getLLMGateway } from "../../services/llm";
+import { metrics } from "../../services/metrics";
 import { requireAuth } from "../../plugins/auth";
 import { findManifestAgentTrigger } from "../../queries/agents";
+import {
+  lookupIdempotency,
+  readIdempotencyKey,
+  storeIdempotency,
+} from "../../services/idempotency";
 
 function isProviderId(s: string): s is ProviderId {
   return (PROVIDER_IDS as readonly string[]).includes(s);
@@ -49,6 +55,18 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
       // the param is absent or any other value.
       const testRunQuery =
         req.query.testRun === "1" || req.query.testRun === "true";
+
+      // UC-V11-32 / PF-GAP-10 — idempotency replay. Authenticate first so
+      // the cache lookup is correctly scoped per-tenant; missing/invalid
+      // auth still returns the same 401 it always did.
+      const auth = requireAuth(req);
+      const idemKey = readIdempotencyKey(req);
+      if (idemKey) {
+        const cached = lookupIdempotency(auth.tenantId, idemKey);
+        if (cached) {
+          return reply.code(cached.status).send(cached.body);
+        }
+      }
 
       // Validate provider exists in the gateway registry
       if (body.provider !== undefined) {
@@ -77,7 +95,8 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
         // they ARE invocable: emit their first declared trigger event into
         // Inngest and the manifest engine picks it up. This makes the
         // portal's "Test run" button work uniformly for both AgentKinds.
-        const auth = requireAuth(req);
+        // `auth` was already resolved at the top of the handler for the
+        // idempotency lookup.
         const manifestAgent = await findManifestAgentTrigger(
           auth.tenantSlug,
           agentName,
@@ -147,21 +166,33 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
           );
         }
 
-        return reply
-          .code(202)
-          .send({
-            ok: true,
-            data: {
-              kind: "manifest",
-              status: "queued",
-              eventId,
-              eventName: triggerEvent,
-              subject,
-              correlationId,
-              note:
-                "Manifest agent dispatched via Inngest. Watch /v1/runs (SSE) for the resulting run.",
-            },
-          });
+        const manifestBody = {
+          ok: true,
+          data: {
+            kind: "manifest",
+            status: "queued",
+            eventId,
+            eventName: triggerEvent,
+            subject,
+            correlationId,
+            note:
+              "Manifest agent dispatched via Inngest. Watch /v1/runs (SSE) for the resulting run.",
+          },
+        };
+        if (idemKey) {
+          try {
+            storeIdempotency(auth.tenantId, idemKey, {
+              status: 202,
+              body: manifestBody,
+            });
+          } catch (err) {
+            req.log.warn(
+              { err },
+              "idempotency: cache write failed (agent-invoke manifest)",
+            );
+          }
+        }
+        return reply.code(202).send(manifestBody);
       }
 
       if (!agent.enabled) {
@@ -195,9 +226,40 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
           invocationId,
           provider: body.provider as ProviderId | undefined,
           model: body.model,
+          // P2-FE-18 — propagate `?testRun=1` into the run engine so it can
+          // flip `runs.is_test` and tag the broadcast `run.started` event.
+          testRun: testRunQuery,
         });
 
-        return reply.ok({
+        // Prometheus metrics — single sample per finished run. Labelled by
+        // tenant/agent/model/status so the Grafana panels can break down by
+        // any of those dimensions. tokens_total carries direction=in|out so
+        // total consumption can be aggregated across providers.
+        const tenantLabel = req.auth?.tenantSlug ?? "__system";
+        metrics.runs.inc({
+          tenant: tenantLabel,
+          agent: agentName,
+          model: result.model,
+          status: result.status,
+        });
+        if (typeof result.tokensIn === "number") {
+          metrics.tokens.inc(
+            { tenant: tenantLabel, agent: agentName, model: result.model, direction: "in" },
+            result.tokensIn,
+          );
+        }
+        if (typeof result.tokensOut === "number") {
+          metrics.tokens.inc(
+            { tenant: tenantLabel, agent: agentName, model: result.model, direction: "out" },
+            result.tokensOut,
+          );
+        }
+        metrics.runDuration.observe(result.durationMs, {
+          tenant: tenantLabel,
+          agent: agentName,
+        });
+
+        const okData = {
           runId: result.runId,
           status: result.status,
           output: result.output,
@@ -206,9 +268,39 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
           tokensIn: result.tokensIn,
           tokensOut: result.tokensOut,
           durationMs: result.durationMs,
-        });
+          // P2-FE-18 — echo the test-run flag back so SPA callers don't have
+          // to re-read the runs row to render the badge in their toast.
+          testRun: result.testRun ?? testRunQuery,
+        };
+        if (idemKey) {
+          try {
+            storeIdempotency(auth.tenantId, idemKey, {
+              status: 200,
+              body: { ok: true, data: okData },
+            });
+          } catch (err) {
+            req.log.warn(
+              { err },
+              "idempotency: cache write failed (agent-invoke code)",
+            );
+          }
+        }
+        return reply.ok(okData);
       } catch (err) {
+        const tenantLabel = req.auth?.tenantSlug ?? "__system";
+        metrics.runs.inc({
+          tenant: tenantLabel,
+          agent: agentName,
+          model: body.model ?? "unknown",
+          status: "failed",
+        });
         if (isLLMError(err)) {
+          metrics.llmErrors.inc({
+            tenant: tenantLabel,
+            provider: err.provider,
+            model: body.model ?? "unknown",
+            code: err.code,
+          });
           const status = mapErrorStatus(err.code);
           return reply.fail(err.code, err.message, status);
         }

@@ -34,7 +34,14 @@ export default async function PortalLayout({
 
   return (
     <PortalProviders>
-      <PortalChrome user={{ name: session.name, initials: session.initials }}>
+      <PortalChrome
+        user={{
+          sub: session.sub,
+          name: session.name,
+          initials: session.initials,
+          tenant: session.tenant,
+        }}
+      >
         {children}
       </PortalChrome>
     </PortalProviders>

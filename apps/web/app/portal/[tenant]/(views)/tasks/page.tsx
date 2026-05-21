@@ -234,9 +234,11 @@ function TaskRow({
       >
         {task.title}
       </div>
-      <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-        {task.awaitingFrom ?? "operator"}
-      </div>
+      {task.awaitingFrom ? (
+        <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+          {task.awaitingFrom}
+        </div>
+      ) : null}
     </button>
   );
 }

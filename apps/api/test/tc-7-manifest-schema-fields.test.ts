@@ -173,9 +173,12 @@ describe("TC-7: manifest schema preserves the 4 new fields (P0-RT-01)", () => {
     const tmpRoot = await mkdtemp(path.join(tmpdir(), "p0rt01-"));
     const modelDir = path.join(tmpRoot, "synthetic");
     await fs.mkdir(modelDir, { recursive: true });
+    // Use a unique kebabId per run so we don't read a stale row left behind
+    // by a previous test invocation (the DB is shared across runs).
+    const kebabId = `p0rt01-roundtrip-${Date.now().toString(36)}`;
     const syntheticAgent = {
-      id: "p0rt01-roundtrip",
-      name: "p0rt01-roundtrip",
+      id: kebabId,
+      name: kebabId,
       title: "Round-trip",
       description: "synthetic for TC-7",
       actor: ["Agent"],
@@ -202,11 +205,27 @@ describe("TC-7: manifest schema preserves the 4 new fields (P0-RT-01)", () => {
       "utf8",
     );
 
-    await bootstrapTenant({ tenantSlug: "__system", modelDir });
+    // UC-V11-25: bootstrapTenant now refuses to boot when a `logic` action
+    // has no matching tenant definePrompt. Provide a stub registry so the
+    // synthetic action passes the validation gate.
+    const { definePrompt } = await import("@agentic/agent-kit");
+    const stubPrompt = definePrompt({
+      name: "x",
+      system: "stub",
+      template: () => "stub",
+    });
+    await bootstrapTenant({
+      tenantSlug: "__system",
+      modelDir,
+      tenantRegistry: {
+        tools: {},
+        prompts: { x: stubPrompt },
+      },
+    });
     const agentRow = db
       .select()
       .from(agents)
-      .where(eq(agents.kebabId, "p0rt01-roundtrip"))
+      .where(eq(agents.kebabId, kebabId))
       .all()[0];
     expect(agentRow).toBeDefined();
     const av = db

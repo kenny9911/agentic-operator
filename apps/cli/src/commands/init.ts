@@ -369,25 +369,29 @@ function eventsV1(): string {
 }
 
 function actionsV1(): string {
-  return (
-    JSON.stringify(
-      {
-        metadata: { version: "v1" },
-        actions: {
-          exampleTool: {
-            owner: "intakeEvent",
-            type: "tool",
-            description: "Smoke-test tool — proves the tenant resolver path is live.",
-          },
-          examplePrompt: {
-            owner: "summarize",
-            type: "logic",
-            description: "Pass-through prompt that invokes the LLM gateway.",
-          },
-        },
-      },
-      null,
-      2,
-    ) + "\n"
-  );
+  // UC-V11-19 / AR-GAP-03 — ActionsManifestSchema in
+  // packages/runtime/src/manifest.ts is
+  // `z.array(z.record(z.string(), z.unknown()))` — an ARRAY of action
+  // objects, NOT an object keyed by action id. Canonical reference:
+  // `models/RAAS-v1/actions_v1.json`. The legacy shape made the
+  // server-side validation on `agentic deploy` blow up with a confusing
+  // schema error; tenants worked around it by hand-replacing the file
+  // with the RAAS sample.
+  const actions = [
+    {
+      id: "1-1",
+      name: "exampleTool",
+      owner: "intakeEvent",
+      type: "tool",
+      description: "Smoke-test tool — proves the tenant resolver path is live.",
+    },
+    {
+      id: "2-1",
+      name: "examplePrompt",
+      owner: "summarize",
+      type: "logic",
+      description: "Pass-through prompt that invokes the LLM gateway.",
+    },
+  ];
+  return JSON.stringify(actions, null, 2) + "\n";
 }

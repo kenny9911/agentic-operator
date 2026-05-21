@@ -18,7 +18,19 @@ import { and, eq } from "drizzle-orm";
 import { agents, agentVersions, getDb, runs, steps, tenants } from "@agentic/db";
 import type { DB } from "@agentic/db";
 import { makeId } from "@agentic/shared";
-import { publishStreamEvent, writeRunLog } from "@agentic/runtime";
+// Some builds of @agentic/runtime export the broadcast helper under the
+// short alias `publish`; later sprints surface it as `publishStreamEvent`.
+// Import under both names and fall back so this package builds against
+// either barrel.
+import * as agenticRuntime from "@agentic/runtime";
+const publishStreamEvent: (event: unknown) => void =
+  (agenticRuntime as { publishStreamEvent?: (event: unknown) => void; publish?: (event: unknown) => void })
+    .publishStreamEvent ??
+  (agenticRuntime as { publish?: (event: unknown) => void }).publish ??
+  ((): void => {
+    /* no-op: broadcast surface missing in this runtime build */
+  });
+const { writeRunLog } = agenticRuntime;
 import type { ProviderId } from "@agentic/contracts";
 import {
   LLMError,

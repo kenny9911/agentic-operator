@@ -109,6 +109,29 @@ export const TaskResolvedEvent = z.object({
   decision: z.string(),
 });
 
+/**
+ * `deployment.created` — emitted when a workflow manifest or tenant-code
+ * deployment goes live. UC-V11-06: the operator portal fires a toast on
+ * `kind: 'tenant_code'` so engineers see hot-reload land without manual
+ * refresh.
+ *
+ * `kind` distinguishes:
+ *   - "manifest"    → workflow manifest deploy (importer / editor save)
+ *   - "tenant_code" → custom tenant code deploy (CLI `agentic deploy`)
+ *
+ * Backend emits via the broadcast channel after the file rename + Inngest
+ * re-register completes (apps/api/src/services/reconcile-imports.ts +
+ * apps/api/src/routes/v1/tenant-code.ts).
+ */
+export const DeploymentCreatedEvent = z.object({
+  type: z.literal("deployment.created"),
+  ...Base,
+  deploymentId: z.string(),
+  kind: z.enum(["manifest", "tenant_code"]),
+  version: z.string(),
+  workflowSlug: z.string().nullable(),
+});
+
 export const RunStreamEvent = z.discriminatedUnion("type", [
   RunStartedEvent,
   RunStepStartedEvent,
@@ -118,5 +141,6 @@ export const RunStreamEvent = z.discriminatedUnion("type", [
   EventEmittedEvent,
   TaskCreatedEvent,
   TaskResolvedEvent,
+  DeploymentCreatedEvent,
 ]);
 export type RunStreamEvent = z.infer<typeof RunStreamEvent>;

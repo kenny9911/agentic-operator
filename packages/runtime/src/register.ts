@@ -37,6 +37,7 @@ import { eq, and } from "drizzle-orm";
 
 import type { TenantRegistry } from "@agentic/agent-kit";
 import type { InngestFunction } from "inngest";
+import { getRuntimeMetrics } from "./llm-host";
 
 export interface RegisterContext {
   tenantId: string;
@@ -48,6 +49,73 @@ export interface RegisterContext {
    * manifest action.name → tenant impl when present, generic when absent.
    */
   tenantRegistry?: TenantRegistry;
+}
+
+/**
+ * AR-GAP-13 / UC-V11-25 — boot-time validation that every `logic` action
+ * in a manifest has a matching tenant `definePrompt`.
+ *
+ * Tech-design (`docs/tech-design/ar-tool.md` § "Option B — strict") chose
+ * refuse-to-boot over runtime graceful-degradation: without a tenant
+ * prompt the step engine used to ship the bare
+ * `${action.name}: ${action.description}` line as the LLM user message.
+ * For RAAS that means streaming a Chinese description to whatever model
+ * is fronting the gateway — almost never what the workflow author
+ * intended. Better to fail loud at boot.
+ */
+export interface MissingPromptRef {
+  agentName: string;
+  actionName: string;
+  description: string;
+}
+
+export function findMissingTenantPrompts(args: {
+  manifest: ReadonlyArray<AgentSpec>;
+  tenantRegistry?: TenantRegistry;
+}): MissingPromptRef[] {
+  const prompts = args.tenantRegistry?.prompts ?? {};
+  const missing: MissingPromptRef[] = [];
+  for (const agent of args.manifest) {
+    for (const action of agent.actions) {
+      if (action.type !== "logic") continue;
+      if (prompts[action.name]) continue;
+      missing.push({
+        agentName: agent.name,
+        actionName: action.name,
+        description: action.description,
+      });
+    }
+  }
+  return missing;
+}
+
+/**
+ * Format `findMissingTenantPrompts` output for the boot log. The shape is
+ * deliberately operator-readable (not stack-trace style) — engineers
+ * paste it straight into a follow-up "implement these prompts" ticket.
+ */
+export function formatMissingPromptsError(
+  tenantSlug: string,
+  missing: MissingPromptRef[],
+): string {
+  if (missing.length === 0) return `[tenant ${tenantSlug}] no missing prompts`;
+  const lines = [
+    `[tenant ${tenantSlug}] boot failed — ${missing.length} logic action(s) have no tenant definePrompt:`,
+    ...missing.map(
+      (m) =>
+        `  - ${m.agentName} · ${m.actionName}: ${truncateForLog(m.description)}`,
+    ),
+    "",
+    `To fix: add tenant prompts under tenants/${tenantSlug}/prompts/ and re-export them from`,
+    `the TenantRegistry.prompts map. Until then, this tenant's Inngest functions WILL NOT register;`,
+    `other tenants continue to boot.`,
+  ];
+  return lines.join("\n");
+}
+
+function truncateForLog(s: string, max = 100): string {
+  const trimmed = s.replace(/\s+/g, " ").trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
 export function registerAgent(
@@ -444,6 +512,27 @@ export function registerAgent(
           })
           .where(eq(runs.id, runId))
           .run();
+
+        // UC-V11-22 / AR-GAP-07 / PF-GAP-08 — Prometheus `runs_total`
+        // bump for the manifest engine. Lives inside this `step.run`
+        // block so Inngest replays don't double-count: step results are
+        // memoized, so the .inc only fires on the actual execution.
+        // The metrics registry is injected at api boot via
+        // `setRuntimeMetrics()`; missing in tests/standalone callers, in
+        // which case we silently skip.
+        const m = getRuntimeMetrics();
+        if (m) {
+          m.runs.inc({
+            tenant: tenantSlug,
+            agent: agent.name,
+            model: "mock-model-v1",
+            status: "ok",
+          });
+          m.runDuration?.observe(endedAtMs - startedAtMs, {
+            tenant: tenantSlug,
+            agent: agent.name,
+          });
+        }
         return { emittedEventId, endedAtMs };
       });
 
@@ -480,16 +569,37 @@ export function registerAgent(
         message: string,
         started: Date,
       ): Promise<void> {
-        const ended = new Date();
-        db.update(runs)
-          .set({
-            status: "failed",
-            endedAt: ended,
-            durationMs: ended.getTime() - started.getTime(),
-            errorMessage: message,
-          })
-          .where(eq(runs.id, rid))
-          .run();
+        // UC-V11-35 / PF-GAP-15 — wrap the run-status flip in `step.run`
+        // so Inngest's exactly-once contract serializes it with any
+        // concurrent retry. Without the wrapper, a flake between the
+        // failure detection and the DB write could fire `failRun` twice
+        // (once per replay), tombstoning a run that the retry actually
+        // recovered.
+        await step.run(`finalize-fail-${rid}`, async () => {
+          const ended = new Date();
+          db.update(runs)
+            .set({
+              status: "failed",
+              endedAt: ended,
+              durationMs: ended.getTime() - started.getTime(),
+              errorMessage: message,
+            })
+            .where(eq(runs.id, rid))
+            .run();
+
+          // UC-V11-22 / AR-GAP-07 — `runs_total{status="failed"}` so the
+          // dashboards see manifest-engine failures, not just code-agent
+          // failures (which already bump from BaseAgent.run).
+          const m = getRuntimeMetrics();
+          if (m) {
+            m.runs.inc({
+              tenant: tenantSlug,
+              agent: agent.name,
+              model: "mock-model-v1",
+              status: "failed",
+            });
+          }
+        });
         await writeRunLog(logCtx, "ERROR", "run.end", {
           status: "failed",
           error: message,

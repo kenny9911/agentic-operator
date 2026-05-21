@@ -20,6 +20,7 @@
 
 import type { TenantRegistry } from "@agentic/agent-kit";
 import { pingProbe } from "./tools/ping-probe";
+import { raasPrompts } from "./prompts";
 
 const tools: TenantRegistry["tools"] = {
   // The action.name in workflow_v1.json maps here. pingProbe targets the
@@ -28,9 +29,10 @@ const tools: TenantRegistry["tools"] = {
   monitorAndFetchRequirement: pingProbe,
 };
 
-const prompts: TenantRegistry["prompts"] = {
-  // Slot for definePrompt() entries.
-};
+// Wave 4.5 — every `logic` action in models/RAAS-v1/workflow_v1.json must
+// have a matching definePrompt or the tenant refuses to boot
+// (`findMissingTenantPrompts` in packages/runtime/src/register.ts).
+const prompts: TenantRegistry["prompts"] = raasPrompts;
 
 const registry: TenantRegistry = { tools, prompts };
 export default registry;

@@ -13,6 +13,7 @@
 
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback } from "react";
+import { useDirty } from "./dirty-context";
 
 const DEFAULT_TENANT = "raas";
 
@@ -55,11 +56,24 @@ export function useTenant(): string {
 export function useTenantNavigate(): (nextTenant: string) => void {
   const router = useRouter();
   const pathname = usePathname() ?? "/portal";
+  const dirty = useDirty();
   return useCallback(
     (nextTenant: string) => {
+      // UC-V11-15: when an editor has unsaved changes, require explicit
+      // confirmation before tearing down the tenant scope (which discards
+      // every in-flight draft because the URL drives the data context).
+      if (dirty.isDirty()) {
+        const detail = dirty.describe();
+        const ok =
+          typeof window !== "undefined" &&
+          window.confirm(
+            `You have unsaved changes${detail ? ` (${detail})` : ""}. Switch tenants anyway? Your draft will be lost.`,
+          );
+        if (!ok) return;
+      }
       router.push(rewriteTenantInPath(pathname, nextTenant) as never);
     },
-    [pathname, router],
+    [pathname, router, dirty],
   );
 }
 

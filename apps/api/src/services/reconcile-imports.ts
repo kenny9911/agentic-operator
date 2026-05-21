@@ -34,7 +34,7 @@ import {
   getDb,
 } from "@agentic/db";
 import { and, eq, isNotNull, like, lt } from "drizzle-orm";
-import { tenantSlugFromFolder } from "@agentic/runtime";
+import { tenantSlugFromFolder, publishStreamEvent } from "@agentic/runtime";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -248,6 +248,29 @@ export async function reconcileImports(
       }
       if (opts.reregister) {
         await opts.reregister(tenantRow.slug);
+      }
+      // UC-V11-06 — emit `deployment.created` so any portal session that
+      // re-establishes its SSE stream after the crash sees the recovered
+      // deployment in its toast / list. Best-effort: a publish failure does
+      // not roll back the rename. (`workflow_versions.version` is the
+      // canonical version label; fall back to the row id if absent.)
+      try {
+        const wfv = db
+          .select({ version: workflowVersions.version })
+          .from(workflowVersions)
+          .where(eq(workflowVersions.id, row.versionId))
+          .all()[0];
+        publishStreamEvent({
+          type: "deployment.created",
+          tenantId: tenantRow.tenantId,
+          at: Date.now(),
+          deploymentId: row.id,
+          kind: "manifest",
+          version: wfv?.version ?? row.id,
+          workflowSlug: tenantRow.slug,
+        });
+      } catch {
+        /* publish best-effort */
       }
       summary.rename_completed += 1;
     } catch {

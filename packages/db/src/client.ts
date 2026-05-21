@@ -14,6 +14,7 @@ import path from "node:path";
 import fs from "node:fs";
 import Database, { type Database as DatabaseInstance } from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { migrate as drizzleMigrate } from "drizzle-orm/better-sqlite3/migrator";
 import { schema } from "./schema";
 
 // Pre-resolve the .node file path. better-sqlite3's `bindings` loader walks
@@ -135,4 +136,19 @@ export function closeDb() {
 export function getRawSqlite(): DatabaseInstance {
   if (!_sqlite) getDb();
   return _sqlite!;
+}
+
+/**
+ * Apply drizzle migrations from the given folder against the singleton DB.
+ *
+ * Used by tests that bootstrap the DB without going through the full api boot
+ * sequence (tc-16, tc-17, tc-30). Production code applies migrations via the
+ * dedicated `pnpm db:migrate` script (`migrate.ts`); this helper just exposes
+ * the same operation as a callable function for in-process callers.
+ *
+ * Idempotent: drizzle's migrator tracks applied migrations in
+ * `__drizzle_migrations` so re-running is a no-op.
+ */
+export function runMigrations(migrationsFolder: string): void {
+  drizzleMigrate(getDb(), { migrationsFolder });
 }

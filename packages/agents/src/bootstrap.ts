@@ -129,6 +129,7 @@ export async function bootstrapCodeAgents(): Promise<BootstrapSummary> {
       .all()[0];
     if (!agentRow) {
       const aid = makeId("agt");
+      const now = new Date();
       db.insert(agents)
         .values({
           id: aid,
@@ -139,6 +140,8 @@ export async function bootstrapCodeAgents(): Promise<BootstrapSummary> {
           actor: "Agent",
           kind: "code",
           enabled: a.enabled,
+          createdAt: now,
+          updatedAt: now,
         })
         .run();
       agentRow = db.select().from(agents).where(eq(agents.id, aid)).all()[0]!;

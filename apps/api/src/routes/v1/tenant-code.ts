@@ -51,7 +51,7 @@ import {
   workflowVersions,
 } from "@agentic/db";
 import { makeId } from "@agentic/shared";
-import { dataTenantsRoot } from "@agentic/runtime";
+import { dataTenantsRoot, publishStreamEvent } from "@agentic/runtime";
 import { requireAuth } from "../../plugins/auth";
 import { writeAudit } from "../../plugins/audit";
 import { reregisterInngest } from "../../services/inngest-registry";
@@ -274,6 +274,21 @@ export async function tenantCodeRoutes(app: FastifyInstance) {
 
       // ── 4. Hot-swap Inngest functions for this tenant ────────────────
       const reregister = await reregisterInngest({ tenantSlug: slug });
+
+      // UC-V11-06 — emit `deployment.created` so connected portal sessions
+      // fire the "Tenant code <version> active" hot-reload toast without
+      // waiting for a manual refresh. Additive — the audit + reply.ok still
+      // run identically. Per `packages/contracts/src/stream.ts`
+      // DeploymentCreatedEvent.
+      publishStreamEvent({
+        type: "deployment.created",
+        tenantId: tenant.id,
+        at: Date.now(),
+        deploymentId: dplId,
+        kind: "tenant_code",
+        version: parsed.version,
+        workflowSlug: slug,
+      });
 
       writeAudit({
         tenantId: tenant.id,

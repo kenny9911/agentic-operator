@@ -42,6 +42,7 @@ import { useTenant } from "@/app/portal/lib/use-tenant";
 import { useRaasData } from "@/lib/hooks/data-context";
 import type { SpaAgent } from "@/lib/spa/types";
 import { useRuns, type RunListRow } from "@/lib/hooks/useRuns";
+import { useHealth, fmtBytes } from "@/lib/hooks/useHealth";
 
 /** Narrowed view of an event-stream item (the context types it loosely). */
 interface EventItem {
@@ -904,9 +905,11 @@ function PendingTasksList({
           >
             {t.title}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-            awaiting · {t.awaitingFrom ?? "operator"}
-          </div>
+          {t.awaitingFrom ? (
+            <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+              awaiting · {t.awaitingFrom}
+            </div>
+          ) : null}
         </Link>
       ))}
     </div>
@@ -916,22 +919,56 @@ function PendingTasksList({
 // ─── System health ───────────────────────────────────────────────────────────
 
 function SystemHealth() {
+  // FE-P0-4 sub-fix 4b: wired to `/health` (apps/api/src/routes/health.ts)
+  // via `useHealth()`. The endpoint exposes three sub-components — inngest,
+  // sqlite, disk — and polls every 15s. When the api is unreachable we
+  // render fallback rows tagged "fail · unreachable" so the operator still
+  // sees a panel rather than a blank.
+  const { data: health, isError } = useHealth();
   const items: Array<{
     label: string;
     status: "ok" | "warn" | "fail";
     note: string;
-  }> = [
-    { label: "Inngest worker", status: "ok", note: "3 workers · 0 lag" },
-    { label: "SQLite", status: "ok", note: "8.4 MB · 0 wal" },
-    { label: "Log volume", status: "ok", note: "1.2 GB / 50 GB" },
-    { label: "RMS adapter · Tencent", status: "ok", note: "last sync 2m ago" },
-    {
-      label: "Channel · BOSS Zhipin",
-      status: "warn",
-      note: "rate-limited, 3 retries",
-    },
-    { label: "Channel · Zhilian", status: "ok", note: "240 reqs/hr" },
-  ];
+  }> = [];
+  if (health) {
+    items.push({
+      label: "Inngest worker",
+      status: health.inngest.ok ? "ok" : "fail",
+      note:
+        health.inngest.note ??
+        (health.inngest.reachable === false
+          ? "unreachable"
+          : health.inngest.ok
+            ? "reachable"
+            : "degraded"),
+    });
+    items.push({
+      label: "SQLite",
+      status: health.sqlite.ok ? "ok" : "fail",
+      note: health.sqlite.ok
+        ? `${fmtBytes(health.sqlite.sizeBytes)} · ${health.sqlite.journalMode ?? "—"}`
+        : "unreachable",
+    });
+    items.push({
+      label: "Log volume",
+      status: health.disk.ok ? "ok" : "fail",
+      note: health.disk.ok
+        ? `${fmtBytes(health.disk.freeBytes)} free · ${health.disk.logsDir ?? ""}`
+        : "stat failed",
+    });
+  } else if (isError) {
+    items.push({
+      label: "Inngest worker",
+      status: "fail",
+      note: "api unreachable",
+    });
+    items.push({ label: "SQLite", status: "fail", note: "api unreachable" });
+    items.push({ label: "Log volume", status: "fail", note: "api unreachable" });
+  } else {
+    items.push({ label: "Inngest worker", status: "ok", note: "checking…" });
+    items.push({ label: "SQLite", status: "ok", note: "checking…" });
+    items.push({ label: "Log volume", status: "ok", note: "checking…" });
+  }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {items.map((i) => (
@@ -973,10 +1010,12 @@ function SystemHealth() {
 // ─── Stage funnel ────────────────────────────────────────────────────────────
 
 function StageFunnel({ stages }: { stages: { id: number; label: string }[] }) {
-  // Hardcoded funnel counts — v1_1 dashboard.jsx:364. Real counts will come
-  // from a forthcoming /v1/funnel endpoint.
-  const counts = [1842, 1731, 1612, 1598, 1480, 1109, 743, 412];
-  const max = counts[0] ?? 1;
+  // FE-P0-4 sub-fix 4a: removed hardcoded `[1842, 1731, …]` magic numbers.
+  // Render 0 per stage until the forthcoming /v1/funnel endpoint ships.
+  // `useRaasData()` does not currently expose funnel counts (see
+  // lib/hooks/data-context.tsx — RaasData has no `funnel` field).
+  const counts = stages.map(() => 0);
+  const max = 1;
   if (stages.length === 0) {
     return <Empty title="No stages defined" hint="Workflow not yet loaded" />;
   }

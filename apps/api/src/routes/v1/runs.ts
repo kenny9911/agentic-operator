@@ -22,13 +22,17 @@ export async function runsRoutes(app: FastifyInstance) {
     return reply.ok(rows);
   });
 
-  // GET /v1/runs/:id — single. Falls back to __system tenant so code-agent
-  // runs (which live cross-tenant) are visible to any authed caller.
+  // GET /v1/runs/:id — single, strictly tenant-scoped.
+  //
+  // Previously this handler fell back to `getRun("__system", id)` if the
+  // caller's tenant didn't own the run, which leaked __system-tenant code-
+  // agent runs (token usage, prompts, outputs) to every authed tenant.
+  // P0-AUTH-02. Code-agent runs that need to be visible to the invoking
+  // tenant are now stored under that tenant; cross-tenant __system runs are
+  // an operator/platform-admin surface and require a dedicated route + grant.
   app.get<{ Params: { id: string } }>("/runs/:id", async (req, reply) => {
     const auth = requireAuth(req);
-    const run =
-      (await getRun(auth.tenantSlug, req.params.id)) ??
-      (await getRun("__system", req.params.id));
+    const run = await getRun(auth.tenantSlug, req.params.id);
     if (!run) return reply.fail("not_found", "run not found", 404);
     const steps = await listSteps(run.id);
     return reply.ok({ run, steps });

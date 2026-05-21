@@ -1,0 +1,145 @@
+"use client";
+
+/**
+ * Portal-level error boundary (Next 16 App Router `error.tsx`).
+ *
+ * Catches uncaught render / data-fetch errors inside `/portal/*` so the
+ * whole app doesn't whitescreen. Mirrors the `Empty` aesthetic from
+ * `apps/web/app/portal/components/atoms.tsx` — same panel chrome, same
+ * typography — so it doesn't feel like a foreign-protocol page.
+ *
+ * Why this exists (audit `02-ui-audit.md` §A.2): without an error.tsx
+ * boundary, an exception thrown during e.g. a hook destructure (which
+ * happens when `useRaasData()` returns undefined during a transient
+ * bootstrap failure) propagates to Next's default error overlay in dev
+ * and a stack-trace-free white screen in prod.
+ *
+ * `reset` is provided by Next; it re-renders the segment so an operator
+ * can retry without a full page reload (e.g. transient api 502).
+ */
+
+import { useEffect } from "react";
+
+export default function PortalError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  useEffect(() => {
+    // Surface the error to the browser console so devs can debug. In
+    // production the digest is the only identifier — server-side logs
+    // attach the matching digest.
+    // eslint-disable-next-line no-console
+    console.error("[portal/error.tsx]", error);
+  }, [error]);
+
+  return (
+    <div
+      role="alert"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "100%",
+        minHeight: 320,
+        padding: 24,
+        textAlign: "center",
+        background: "var(--bg)",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 480,
+          background: "var(--panel)",
+          border: "1px solid var(--border-2)",
+          borderRadius: 8,
+          padding: "28px 32px",
+          boxShadow: "0 12px 32px -16px rgba(0,0,0,0.5)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10.5,
+            fontFamily: "var(--mono)",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            color: "var(--red)",
+            marginBottom: 8,
+          }}
+        >
+          Portal error
+        </div>
+        <h2
+          style={{
+            margin: "0 0 10px 0",
+            fontFamily: "var(--display)",
+            fontSize: 26,
+            fontWeight: 400,
+            color: "var(--text)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          Something broke while rendering this view.
+        </h2>
+        <p
+          style={{
+            margin: "0 0 20px 0",
+            fontSize: 12.5,
+            color: "var(--text-2)",
+            lineHeight: 1.6,
+          }}
+        >
+          The control plane recovered but couldn&rsquo;t complete the page.
+          Retry the segment below, or hit refresh if it persists.
+        </p>
+        {error.message && (
+          <div
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              color: "var(--text-3)",
+              background: "var(--panel-2)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              padding: "8px 10px",
+              marginBottom: 14,
+              wordBreak: "break-word",
+              textAlign: "left",
+              lineHeight: 1.5,
+              maxHeight: 120,
+              overflow: "auto",
+            }}
+          >
+            {error.message}
+            {error.digest && (
+              <div style={{ marginTop: 6, color: "var(--text-4)" }}>
+                digest: {error.digest}
+              </div>
+            )}
+          </div>
+        )}
+        <button
+          onClick={reset}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 14px",
+            fontSize: 12.5,
+            fontWeight: 500,
+            color: "#000",
+            background: "var(--signal)",
+            border: "1px solid var(--signal)",
+            borderRadius: 5,
+            cursor: "pointer",
+          }}
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}

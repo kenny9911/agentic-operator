@@ -16,6 +16,7 @@ import { ManifestUploadBody } from "@agentic/contracts";
 import { requireAuth } from "../../plugins/auth";
 import { writeAudit } from "../../plugins/audit";
 import { getAgentDetail, listAgentRuns, listAgents } from "../../queries/agents";
+import { resolveTenantCodePath } from "../../services/tenant-code";
 
 function hashManifest(m: unknown): string {
   return crypto
@@ -58,20 +59,23 @@ function computeDiff(prior: unknown[], next: unknown[]): DiffSummary {
 
 export async function agentsRoutes(app: FastifyInstance) {
   // GET /v1/agents?kind=code|manifest|all — list (optional kind filter)
-  app.get<{ Querystring: { kind?: string; tenant?: string } }>(
+  //
+  // The `?tenant=` query param used to override the authed tenant slug and
+  // was a classic IDOR — any authed caller could pass `?tenant=raas` and read
+  // raas's agent catalog from inside __system, etc. P0-AUTH-03 removes the
+  // override entirely; the listed tenant is now exclusively driven by
+  // `auth.tenantSlug`. Code agents still implicitly include the synthetic
+  // `__system` tenant because that's where platform code agents live.
+  app.get<{ Querystring: { kind?: string } }>(
     "/agents",
     async (req, reply) => {
       const auth = requireAuth(req);
-      const rawKind = req.query.kind;
+      const rawKind = (req.query as { kind?: string }).kind;
       const kind: "code" | "manifest" | "all" =
         rawKind === "code" || rawKind === "manifest" ? rawKind : "all";
-      // Optional explicit tenant slug override — used for cross-tenant queries
-      // against the synthetic __system tenant. Falls back to the auth tenant.
-      const tenantSlug = req.query.tenant ?? auth.tenantSlug;
+      const tenantSlug = auth.tenantSlug;
       const tenantsToQuery =
-        kind === "code" && !req.query.tenant
-          ? ["__system", tenantSlug]
-          : [tenantSlug];
+        kind === "code" ? ["__system", tenantSlug] : [tenantSlug];
       const lists = await Promise.all(
         Array.from(new Set(tenantsToQuery)).map((t) =>
           listAgents(t, { kind }),
@@ -104,6 +108,28 @@ export async function agentsRoutes(app: FastifyInstance) {
       .where(eq(tenants.id, auth.tenantId))
       .all()[0];
     if (!tenant) return reply.fail("tenant_missing", "tenant missing", 500);
+
+    // AR-GAP-02 / UC-V11-18 / UC-V11-28 — when the tenant has a live
+    // `target='tenant_code'` deployment, the post-upload Inngest
+    // re-register tries to load the tenant bundle. The pre-fix path
+    // forgot the version segment in `data/tenants/<slug>/<version>/`,
+    // surfacing as `Cannot find module '@tenants/<slug>/dist'` 500.
+    // Resolve the path here so any disagreement between the DB row and
+    // on-disk dir is logged before we touch `deployments`. Null = no
+    // live tenant_code (legacy `TENANT_REGISTRIES` path); not an error.
+    const codeLoc = await resolveTenantCodePath(tenant.id);
+    if (codeLoc) {
+      req.log.debug(
+        {
+          tenantSlug: auth.tenantSlug,
+          tenantCodeVersion: codeLoc.version,
+          dir: codeLoc.dir,
+          cjsEntry: codeLoc.cjsEntry,
+          srcEntry: codeLoc.srcEntry,
+        },
+        "live tenant_code resolved for manifest upload",
+      );
+    }
 
     const slug = parsed.workflowSlug ?? `${auth.tenantSlug}-default`;
     let workflow = db
@@ -178,6 +204,7 @@ export async function agentsRoutes(app: FastifyInstance) {
           .all()[0];
         if (!agentRow) {
           const aid = makeId("agt");
+          const now = new Date();
           db.insert(agents)
             .values({
               id: aid,
@@ -186,6 +213,8 @@ export async function agentsRoutes(app: FastifyInstance) {
               name: a.name,
               title: a.title ?? a.name,
               actor: a.actor[0] === "Human" ? "Human" : "Agent",
+              createdAt: now,
+              updatedAt: now,
             })
             .run();
           agentRow = db.select().from(agents).where(eq(agents.id, aid)).all()[0]!;

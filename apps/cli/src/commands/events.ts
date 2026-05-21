@@ -76,6 +76,10 @@ export function formatEvent(ev: StreamEvent, useColor: boolean): string {
       return `${t} ${colorize("task.new", "yellow", useColor)} ${ev.taskId} ${ev.taskType} "${ev.title}"`;
     case "task.resolved":
       return `${t} ${colorize("task.done", "green", useColor)} ${ev.taskId} → ${ev.decision}`;
+    case "deployment.created": {
+      const slug = ev.workflowSlug ?? "—";
+      return `${t} ${colorize("deploy", "magenta", useColor)} ${ev.deploymentId} kind=${ev.kind} version=${ev.version} workflow=${slug}`;
+    }
   }
 }
 

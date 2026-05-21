@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@agentic/agent-kit": "workspace:*",
+    "@agentic/agent-sdk": "workspace:*",
     "@agentic/contracts": "workspace:*",
     "@agentic/db": "workspace:*",
     "@agentic/llm-gateway": "workspace:*",

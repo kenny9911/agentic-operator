@@ -31,13 +31,12 @@ export async function runsLogsRoute(app: FastifyInstance) {
     "/runs/:id/logs",
     async (req, reply) => {
       const auth = requireAuth(req);
-      let runTenantSlug = auth.tenantSlug;
-      let run = await getRun(auth.tenantSlug, req.params.id);
-      if (!run) {
-        run = await getRun("__system", req.params.id);
-        if (run) runTenantSlug = "__system";
-      }
+      // Strictly tenant-scoped. The previous __system fallback (matched the
+      // behavior in /v1/runs/:id) leaked log streams of platform/code-agent
+      // runs to any authed caller. P0-AUTH-02.
+      const run = await getRun(auth.tenantSlug, req.params.id);
       if (!run) return reply.fail("not_found", "run not found", 404);
+      const runTenantSlug = auth.tenantSlug;
 
       const follow = req.query.follow === "1";
       const at = run.startedAt ?? new Date();

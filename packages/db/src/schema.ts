@@ -136,8 +136,14 @@ export const deployments = sqliteTable(
     tenantId: text("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
+    // SQLite stores the column as plain TEXT — the `enum` array is a
+    // type-level constraint only, so widening it requires no SQL
+    // migration. `tenant_code` was added in Phase 3 (V1.1 AR-GAP-02) to
+    // distinguish tenant tarball uploads (see
+    // `apps/api/src/routes/v1/tenant-code.ts`) from the pre-existing
+    // `code_agent` (registry-based code agents under `packages/agents`).
     target: text("target", {
-      enum: ["workflow", "agent", "runtime", "code_agent"],
+      enum: ["workflow", "agent", "runtime", "code_agent", "tenant_code"],
     }).notNull(),
     versionId: text("version_id").notNull(),
     status: text("status", {
@@ -192,6 +198,9 @@ export const agents = sqliteTable(
     enabled: integer("enabled", { mode: "boolean" })
       .notNull()
       .default(true),
+    // P0-DB-01: temporal columns (migration 0003_temporal_columns.sql).
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
   (t) => ({
     workflowKebabUq: uniqueIndex("agents_workflow_kebab_uq").on(
@@ -340,7 +349,9 @@ export const steps = sqliteTable(
       .references(() => runs.id, { onDelete: "cascade" }),
     ord: integer("ord").notNull(),
     name: text("name").notNull(),
-    type: text("type", { enum: ["tool", "logic", "manual"] }).notNull(),
+    type: text("type", {
+      enum: ["tool", "logic", "manual", "condition", "delay", "subflow"],
+    }).notNull(),
     status: text("status", {
       enum: ["pending", "running", "ok", "failed", "skipped"],
     }).notNull(),
@@ -610,6 +621,43 @@ export const agentMemoryLong = sqliteTable(
   }),
 );
 
+/**
+ * UC-V11-32 / PF-GAP-10 — persistent Idempotency-Key cache.
+ *
+ * The api routes that mutate state (`POST /v1/events`,
+ * `POST /v1/agents/:name/invoke`, `POST /v1/tenants`, …) accept an
+ * `Idempotency-Key` header. Before this table the only enforcement was a
+ * per-process in-memory LRU in `apps/api/src/routes/v1/tenants.ts` —
+ * restart the api or run >1 instance and the contract evaporated. This
+ * table makes the cache durable + cross-instance:
+ *
+ *   - PK is (tenant_id, key) — each tenant gets a private keyspace.
+ *   - response_json holds the response body verbatim (JSON-stringified),
+ *     so a retry sees byte-identical output including any mint tokens.
+ *   - status_code lets the route replay the original HTTP status.
+ *   - TTL is 24h from insert; the retention sweep deletes expired rows in
+ *     bulk via the `(expires_at)` index.
+ */
+export const idempotencyKeys = sqliteTable(
+  "idempotency_keys",
+  {
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    responseJson: text("response_json").notNull(),
+    statusCode: integer("status_code").notNull().default(200),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(now),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.tenantId, t.key] }),
+    expiresAtIdx: index("idempotency_keys_expires_at_idx").on(t.expiresAt),
+  }),
+);
+
 // ─── Relations (used by Drizzle's relational queries) ───────────────────────
 
 export const tenantsRelations = relations(tenants, ({ many }) => ({
@@ -706,6 +754,7 @@ export const schema = {
   webhookSubscriptions,
   agentMemoryShort,
   agentMemoryLong,
+  idempotencyKeys,
   tenantsRelations,
   workflowsRelations,
   workflowVersionsRelations,

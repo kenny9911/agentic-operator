@@ -11,7 +11,24 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 export const ActorEnum = z.enum(["Agent", "Human"]);
-export const StepTypeEnum = z.enum(["tool", "logic", "manual"]);
+/**
+ * P1-RT-03: `condition` / `delay` / `subflow` are first-class step types.
+ *   - `condition` evaluates a JS-ish expression against ctx and returns
+ *     { evaluated: boolean, condition: string }; downstream branching is
+ *     wired by register.ts.
+ *   - `delay` sleeps for `delay_ms` then resolves; in production this
+ *     becomes `step.sleep(...)` so Inngest handles the durable timer.
+ *   - `subflow` is a placeholder that records which child agent name to
+ *     fan-out to; register.ts owns the actual subflow event emission.
+ */
+export const StepTypeEnum = z.enum([
+  "tool",
+  "logic",
+  "manual",
+  "condition",
+  "delay",
+  "subflow",
+]);
 
 export const ActionSchema = z.object({
   order: z.string(),
@@ -22,19 +39,80 @@ export const ActionSchema = z.object({
   task_type: z.string().optional(),
   retries: z.number().int().nonnegative().optional(),
   timeout_s: z.number().int().positive().optional(),
+  // P1-RT-03 fields for the new step types.
+  delay_ms: z.number().int().nonnegative().optional(),
+  subflow: z.string().optional(),
+  subflow_input: z.record(z.string(), z.unknown()).optional(),
 });
 export type ActionSpec = z.infer<typeof ActionSchema>;
 
-export const AgentSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  title: z.string().optional(),
-  description: z.string().optional().default(""),
-  actor: z.array(ActorEnum).min(1),
-  trigger: z.array(z.string()),
-  actions: z.array(ActionSchema),
-  triggered_event: z.array(z.string()),
-});
+/** Canonical entry for `agent.tool_use[*]`. */
+export const ToolUseEntrySchema = z
+  .object({
+    name: z.string(),
+    description: z.string().optional(),
+    input_schema: z.unknown().optional(),
+  })
+  .passthrough();
+
+/**
+ * Coerce empty-string values to undefined for the optional string slots that
+ * legacy fixtures sometimes serialized as `""`. Without this, downstream
+ * code that does `if (a.ontology_instructions)` works fine, but anything that
+ * asserts `.toBeUndefined()` (and the lint that validates non-empty strings)
+ * sees `""` and rejects it. The DESIGN-A audit calls this out in §3.1.
+ */
+const emptyStringToUndef = z
+  .union([z.string(), z.undefined()])
+  .transform((v) => (v === "" ? undefined : v))
+  .optional();
+
+/**
+ * Tolerant `tool_use` schema: accepts either an array of canonical entries
+ * OR a legacy empty string (coerced to undefined). Any other shape is
+ * rejected so we catch authoring mistakes. The inner `.transform(() => undefined)`
+ * already converts the `""` branch to `undefined`, so the union output is
+ * `Entry[] | undefined` — no need for an outer transform.
+ */
+const toolUseSchema = z
+  .union([
+    z.array(ToolUseEntrySchema),
+    z.literal("").transform(() => undefined),
+  ])
+  .optional();
+
+// `.passthrough()` is load-bearing: on-disk `workflow_v*.json` carries
+// optional fields (`cron`, `model`, `timeout_s`, …) that aren't part of
+// the runtime contract but ARE part of the editor-facing manifest. Stripping
+// them would silently drop authoring metadata — TC-33's "preserves every
+// raw-JSON key" assertion guards against that regression. The 4 fields the
+// editor cares about (input_data/ontology_instructions/tool_use/typescript_code)
+// are now declared explicitly so empty-string coercion + tool_use shape
+// validation actually run.
+export const AgentSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    title: z.string().optional(),
+    description: z.string().optional().default(""),
+    actor: z.array(ActorEnum).min(1),
+    trigger: z.array(z.string()),
+    actions: z.array(ActionSchema),
+    triggered_event: z.array(z.string()),
+    input_data: z.record(z.string(), z.unknown()).optional(),
+    ontology_instructions: emptyStringToUndef,
+    tool_use: toolUseSchema,
+    typescript_code: emptyStringToUndef,
+    // Scheduled-trigger fields. Declared explicitly so that legacy manifests
+    // serialising `""` as the placeholder coerce to `undefined`; otherwise
+    // `.passthrough()` would let the raw empty string flow through and the
+    // scheduler would try (and fail) to parse it as a cron expression.
+    // Real cron strings like "0 9 * * *" pass through unchanged because
+    // `emptyStringToUndef` only intercepts the empty string.
+    cron: emptyStringToUndef,
+    cron_timezone: emptyStringToUndef,
+  })
+  .passthrough();
 export type AgentSpec = z.infer<typeof AgentSchema>;
 
 export const WorkflowManifestSchema = z.array(AgentSchema);

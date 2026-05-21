@@ -124,6 +124,11 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
 
   const dropRef = useRefIM(null);
 
+  // Tracks whether we've already auto-triggered a self-heal validate on the
+  // current Deploy-step entry. Prevents an infinite loop if the server keeps
+  // returning a 200 body without a deployment_id.
+  const deployHealRef = useRefIM(false);
+
   const blockingUnresolved = useMemoIM(
     () => imBlockingUnresolvedCount(validation, resolutions),
     [validation, resolutions]
@@ -141,6 +146,25 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
     }));
     setResolutions(next);
   }, [validation]);
+
+  // Self-heal: if we land on the Deploy step without a deployment_id but a
+  // manifest is in memory, transparently re-run validate. The server's
+  // one-pending-per-tenant policy reuses any existing pending row, so this is
+  // idempotent. Gated by a ref so we attempt the heal at most once per
+  // "broken session" — if it succeeds we reset; if it fails the operator
+  // sees the actionable error UI inside ImportDeployStep.
+  useEffectIM(() => {
+    if (step !== 5 || (validation && validation.deployment_id)) {
+      deployHealRef.current = false;
+      return;
+    }
+    if (!workflow) return;
+    if (validating) return;
+    if (deployHealRef.current) return;
+    deployHealRef.current = true;
+    revalidateForDeploy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, workflow, validation, validating]);
 
   // ── Source-step handlers ─────────────────────────────────────────────────
 
@@ -340,9 +364,52 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
 
   // ── Commit ────────────────────────────────────────────────────────────────
 
+  // Re-run validate using the in-memory manifest. Used by the Deploy-step
+  // auto-heal effect and as a fallback path inside runCommit. Returns the
+  // fresh validation body on success, or null on failure (the caller decides
+  // how to surface that).
+  async function revalidateForDeploy() {
+    if (!workflow) return null;
+    setValidating(true);
+    try {
+      const res = await fetch(`/v1/tenants/${encodeURIComponent(slug)}/manifest-import`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "validate", workflow, actions: actions || undefined }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 423) {
+        setPendingLock({
+          locked_by: body && body.locked_by,
+          expires_at: body && body.expires_at,
+        });
+        setValidating(false);
+        return null;
+      }
+      if (!res.ok || !body || !body.deployment_id) {
+        setValidating(false);
+        return null;
+      }
+      setValidation(body);
+      setValidating(false);
+      return body;
+    } catch (_e) {
+      setValidating(false);
+      return null;
+    }
+  }
+
   async function runCommit({ confirmOverwrite }) {
-    if (!validation || !validation.deployment_id) {
-      setCommitError("Missing deployment session; re-validate before deploying.");
+    let v = validation;
+    if (!v || !v.deployment_id) {
+      v = await revalidateForDeploy();
+    }
+    if (!v || !v.deployment_id) {
+      setCommitError(
+        workflow
+          ? "Could not establish a deployment session — try Re-validate, or go back to Source and re-upload."
+          : "No manifest in memory — go back to Source to re-upload before deploying."
+      );
       return;
     }
     setCommitError(null);
@@ -356,7 +423,7 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
           workflow,
           actions: actions || undefined,
           target,
-          deployment_id: validation.deployment_id,
+          deployment_id: v.deployment_id,
           conflict_resolutions: resolutions,
           confirm_overwrite: !!confirmOverwrite,
           note: note ? note.slice(0, 500) : undefined,
@@ -533,6 +600,13 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
               committing={committing}
               commitError={commitError}
               slug={slug}
+              validating={validating}
+              onRevalidate={() => {
+                deployHealRef.current = false;
+                setCommitError(null);
+                revalidateForDeploy();
+              }}
+              onBackToSource={resetSource}
             />
           )}
         </div>
@@ -1434,11 +1508,52 @@ function ImportPreviewTabButton({ id, current, setTab, label }) {
 
 // ── Step 5 · DEPLOY ────────────────────────────────────────────────────────
 
-function ImportDeployStep({ validation, target, setTarget, note, setNote, committing, commitError, slug }) {
+function ImportDeployStep({
+  validation, target, setTarget, note, setNote, committing, commitError, slug,
+  validating, onRevalidate, onBackToSource,
+}) {
   const parsed = validation.parsed || { agents: 0, events: 0, actions: 0 };
   const diff = validation.diff || { added: [], removed: [], modified: [] };
+  const sessionMissing = !validation.deployment_id;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 14 }}>
+      {sessionMissing && validating && (
+        <div style={{
+          gridColumn: "1 / -1",
+          padding: "10px 12px",
+          background: "rgba(120, 200, 255, 0.06)",
+          border: "1px solid rgba(120, 200, 255, 0.28)",
+          borderRadius: 4,
+          fontSize: 12, color: "var(--text-2)",
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <window.Icon name="refresh" size={12} style={{ color: "var(--signal)" }} />
+          Re-establishing deployment session…
+        </div>
+      )}
+      {sessionMissing && !validating && (
+        <div style={{
+          gridColumn: "1 / -1",
+          padding: "12px 14px",
+          background: "rgba(255, 180, 70, 0.06)",
+          border: "1px solid rgba(255, 180, 70, 0.3)",
+          borderRadius: 4,
+          display: "flex", flexDirection: "column", gap: 10,
+        }}>
+          <div style={{ fontSize: 12, color: "var(--amber)", lineHeight: 1.5 }}>
+            Deployment session is missing. The wizard tried to re-establish it automatically and failed.
+            Re-validate from the in-memory manifest, or go back to Source to re-upload.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <window.Button tone="primary" icon="refresh" onClick={onRevalidate}>
+              Re-validate
+            </window.Button>
+            <window.Button tone="ghost" icon="chevron-left" onClick={onBackToSource}>
+              Back to Source
+            </window.Button>
+          </div>
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <window.Panel title="Target" padded>
           <ImportDeployTarget

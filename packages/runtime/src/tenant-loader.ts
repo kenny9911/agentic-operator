@@ -269,3 +269,71 @@ export async function loadLiveTenants(): Promise<Map<string, LoadedTenant>> {
   }
   return out;
 }
+
+/**
+ * Sprint 4 — Prompt-Registry Isolator (F-S3-1 follow-up).
+ *
+ * Architecture invariant: the tenant prompt registry is NOT a module-level
+ * singleton. Each `bootstrapTenant({ tenantRegistry })` call carries its own
+ * fresh `TenantRegistry` reference (a plain object whose `.prompts` map is
+ * keyed by `action.name`). `definePrompt()` is a pure factory in
+ * `@agentic/agent-kit` / `@agentic/agent-sdk` — it returns a descriptor
+ * without registering it anywhere global.
+ *
+ * Sprint 3 verifier filed F-S3-1 hypothesizing that "earlier tests mutate
+ * the prompt registry singleton, leaving subsequent tc-11 runs broken." An
+ * end-to-end audit confirmed this is not the case: there is no shared
+ * mutable state to pollute. Sprint 3's intermittent tc-11 failures traced
+ * back to either (a) stale `data/agentic.db` schema where a migration
+ * regressed (`archived_at` column missing in worktree DBs), or (b) a
+ * Node-binding ABI skew between the test binary and `better-sqlite3.node`.
+ * Both were resolved by `pnpm rebuild better-sqlite3` + `pnpm db:migrate`.
+ *
+ * This export remains as a **documented reset hook** so future contributors
+ * who *do* introduce module-level prompt caching have a single, well-known
+ * place to wire the invalidation. The current implementation is a no-op by
+ * design — calling it should never break a test, and it should never need
+ * to be called from production code.
+ *
+ * To verify the invariant holds at test time, prefer
+ * `assertTenantRegistryComplete(slug, registry, requiredActionNames)` in
+ * a `beforeEach` rather than reaching for this reset hook.
+ */
+export function __resetPromptRegistry(): void {
+  // No-op. See docblock above. Kept as the named hook for forward
+  // compatibility per Sprint 4 partition guidance.
+}
+
+/**
+ * Sprint 4 — Defensive assert that a tenant registry exposes every prompt a
+ * manifest's `logic` actions reference. Throws a single concise diagnostic
+ * naming the missing keys; intended for use in test `beforeEach` blocks
+ * (and any future hot-reload path) to fail loud and early when a registry
+ * has been wired with a partial `prompts` map.
+ *
+ * This is a strictly stronger statement than `findMissingTenantPrompts` in
+ * `register.ts`: that helper walks the manifest to compute missing entries
+ * at boot. This helper accepts the expected key list directly so tests can
+ * lock down the contract without re-loading manifests.
+ *
+ * Returns silently when every required key is present. The returned object
+ * is only useful for assertions that want to count entries — most callers
+ * should just rely on the throw.
+ */
+export function assertTenantRegistryComplete(
+  slug: string,
+  registry: { prompts?: Record<string, unknown> } | null | undefined,
+  requiredActionNames: ReadonlyArray<string>,
+): { matched: number; required: number } {
+  const prompts = registry?.prompts ?? {};
+  const missing = requiredActionNames.filter((name) => !prompts[name]);
+  if (missing.length > 0) {
+    throw new Error(
+      `[tenant ${slug}] registry missing ${missing.length} prompt(s): ${missing.join(", ")}`,
+    );
+  }
+  return {
+    matched: requiredActionNames.length,
+    required: requiredActionNames.length,
+  };
+}

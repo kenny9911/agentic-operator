@@ -1,3 +1,4 @@
+import { alias } from "drizzle-orm/sqlite-core";
 import { and, desc, eq, isNull, like, or, sql } from "drizzle-orm";
 import {
   agents,
@@ -9,6 +10,13 @@ import {
   tenants,
 } from "@agentic/db";
 import type { RunRow, StepRow, EventRow } from "@agentic/contracts";
+
+// UC-V11-21 / AR-GAP-06 — two `events` joins on the same query (the
+// trigger event AND the emitted event) need aliases or Drizzle's
+// JOIN-builder collapses them to the same table reference. The trigger
+// join keeps the bare `events` table for backwards compat with the
+// existing `triggerEvent: events.name` selection.
+const emittedEventsAlias = alias(events, "emitted_events");
 
 async function resolveTenantId(slug: string): Promise<string | null> {
   const db = getDb();
@@ -116,6 +124,7 @@ export async function listRecentRuns(
       agentTitle: agents.title,
       subject: runs.subject,
       triggerEvent: events.name,
+      emittedEvent: emittedEventsAlias.name,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       durationMs: runs.durationMs,
@@ -125,16 +134,28 @@ export async function listRecentRuns(
       correlationId: runs.correlationId,
       errorMessage: runs.errorMessage,
       logPath: runs.logPath,
+      // P2-FE-18 — `testRun` lets cold-loaded views render the TEST badge
+      // without a follow-up SSE roundtrip. The column is non-null in the
+      // schema (default false) but we still coerce defensively.
+      isTest: runs.isTest,
     })
     .from(runs)
     .innerJoin(agents, eq(agents.id, runs.agentId))
     .leftJoin(events, eq(events.id, runs.triggerEventId))
+    .leftJoin(
+      emittedEventsAlias,
+      eq(emittedEventsAlias.id, runs.emittedEventId),
+    )
     .where(and(...whereParts))
     .orderBy(desc(runs.startedAt))
     .limit(opts.limit ?? 50)
     .all()
     .map((r) => ({
       ...r,
+      // P2-FE-18 — surface both spellings; `errorMessage` is the legacy field
+      // hit by tc-18 fixtures, `error` is the shorter alias the portal reads.
+      error: r.errorMessage,
+      testRun: r.isTest === true,
       currentStepName: null,
       currentStepOrd: null,
       stepCount: null,
@@ -158,6 +179,7 @@ export async function getRun(
       agentTitle: agents.title,
       subject: runs.subject,
       triggerEvent: events.name,
+      emittedEvent: emittedEventsAlias.name,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       durationMs: runs.durationMs,
@@ -167,16 +189,29 @@ export async function getRun(
       correlationId: runs.correlationId,
       errorMessage: runs.errorMessage,
       logPath: runs.logPath,
+      isTest: runs.isTest,
     })
     .from(runs)
     .innerJoin(agents, eq(agents.id, runs.agentId))
     .leftJoin(events, eq(events.id, runs.triggerEventId))
+    .leftJoin(
+      emittedEventsAlias,
+      eq(emittedEventsAlias.id, runs.emittedEventId),
+    )
     .where(and(eq(runs.tenantId, tenantId), eq(runs.id, runId)))
     .all()[0];
   if (!row) return null;
-  const hydrated = hydrateStepInfo([
-    { ...row, currentStepName: null, currentStepOrd: null, stepCount: null } as RunRow,
-  ]);
+  // P2-FE-18 — mirror errorMessage→error and surface isTest→testRun so the
+  // detail surface matches the list surface and cold-loads paint the badge.
+  const enriched = {
+    ...row,
+    error: row.errorMessage,
+    testRun: row.isTest === true,
+    currentStepName: null,
+    currentStepOrd: null,
+    stepCount: null,
+  } as RunRow;
+  const hydrated = hydrateStepInfo([enriched]);
   return hydrated[0] ?? null;
 }
 

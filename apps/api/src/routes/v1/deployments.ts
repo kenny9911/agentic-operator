@@ -32,11 +32,15 @@ export async function deploymentsRoutes(app: FastifyInstance) {
         return reply.fail("forbidden", "forbidden", 403);
 
       db.transaction(() => {
+        // Demote the current live deployment for the SAME target — other
+        // targets (e.g. workflow vs tenant_code) live independently and must
+        // not be touched by a rollback in a different lane.
         db.update(deployments)
           .set({ status: "rolled_back" })
           .where(
             and(
               eq(deployments.tenantId, target.tenantId),
+              eq(deployments.target, target.target),
               eq(deployments.status, "live"),
             ),
           )
@@ -52,12 +56,13 @@ export async function deploymentsRoutes(app: FastifyInstance) {
         action: "deployment.rollback",
         targetType: "deployment",
         targetId: req.params.id,
-        meta: { version_id: target.versionId },
+        meta: { version_id: target.versionId, target: target.target },
       });
 
       return reply.ok({
         deployment_id: req.params.id,
         status: "live" as const,
+        target: target.target,
         note: "live pointer flipped. Restart api for runtime to pick up the new manifest.",
       });
     },

@@ -128,6 +128,10 @@ export const COUNT_KEYS = {
   tenant: ["counts"] as const,
 };
 
+export const DEPLOYMENT_KEYS = {
+  list: ["deployments", "list"] as const,
+};
+
 import type { QueryClient } from "@tanstack/react-query";
 
 export function dispatch(event: StreamEvent, client: QueryClient): void {
@@ -158,6 +162,13 @@ export function dispatch(event: StreamEvent, client: QueryClient): void {
     case "task.resolved": {
       void client.invalidateQueries({ queryKey: TASK_KEYS.all });
       void client.invalidateQueries({ queryKey: COUNT_KEYS.tenant });
+      break;
+    }
+    case "deployment.created": {
+      // UC-V11-06: refresh the deployments list so a hot-reload lands in
+      // the table immediately. The toast itself is fired by the chrome
+      // (see chrome.tsx onEvent handler), which has access to useToast().
+      void client.invalidateQueries({ queryKey: DEPLOYMENT_KEYS.list });
       break;
     }
   }

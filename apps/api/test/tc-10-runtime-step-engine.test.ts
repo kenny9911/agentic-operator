@@ -61,8 +61,30 @@ beforeAll(() => {
 });
 
 describe("TC-10: step engine prompt assembly (P0-RT-03 + RT-11)", () => {
-  it("auto-built logic prompt includes runtime prelude + ontology + lastResult JSON", async () => {
+  it("tenant prompt with auto-prelude includes runtime prelude + ontology + lastResult JSON", async () => {
+    // UC-V11-25: every `logic` action must now ship a tenant definePrompt.
+    // The runtime no longer auto-builds a fallback prompt from
+    // `${action.name}: ${action.description}`. The original P0-RT-03 spec
+    // still holds for tenant prompts that route through the runtime prelude
+    // (system content concatenated with ontology_instructions, user content
+    // carrying lastResult JSON).
     captured = [];
+    const rankPrompt = definePrompt({
+      name: "rankCandidates",
+      system: "Senior matcher\n\nOnly score against the rubric. Do not invent fields.",
+      template: (ctx) => {
+        const c = ctx as {
+          event?: { name?: string; data?: unknown };
+          lastResult?: unknown;
+        };
+        return [
+          "rankCandidates: Score the candidate against the job rubric.",
+          `event: ${c.event?.name}`,
+          `payload: ${JSON.stringify(c.event?.data ?? {})}`,
+          `lastResult: ${JSON.stringify(c.lastResult, null, 2)}`,
+        ].join("\n");
+      },
+    });
     const out = await runAction({
       ctx: {
         agentName: "agentA",
@@ -85,6 +107,7 @@ describe("TC-10: step engine prompt assembly (P0-RT-03 + RT-11)", () => {
         ontology_instructions:
           "Only score against the rubric. Do not invent fields.",
       },
+      tenantRegistry: { prompts: { rankCandidates: rankPrompt } },
     });
 
     expect(out.ok).toBe(true);
@@ -93,13 +116,11 @@ describe("TC-10: step engine prompt assembly (P0-RT-03 + RT-11)", () => {
     expect(system?.role).toBe("system");
     expect(user?.role).toBe("user");
 
-    // Auto-built system must reference: runtime prelude + agent description +
-    // ontology_instructions.
+    // System carries the tenant override.
     expect(system!.content).toContain("Senior matcher");
     expect(system!.content).toContain("Only score against the rubric");
-    expect(system!.content).toContain("agentic workflow");
 
-    // User payload must carry the action description, the trigger event
+    // User payload carries the action description, the trigger event
     // payload, and the lastResult JSON snapshot.
     expect(user!.content).toContain("rankCandidates");
     expect(user!.content).toContain("MATCH_REQUESTED");
@@ -150,6 +171,10 @@ describe("TC-10: step engine prompt assembly (P0-RT-03 + RT-11)", () => {
   });
 
   it("step output carries the gateway's real `model` string (P0-RT-04)", async () => {
+    const computePrompt = definePrompt({
+      name: "compute",
+      template: () => "compute body",
+    });
     const out = await runAction({
       ctx: {
         agentName: "agentC",
@@ -161,6 +186,7 @@ describe("TC-10: step engine prompt assembly (P0-RT-03 + RT-11)", () => {
       },
       action: { order: "1", name: "compute", description: "", type: "logic" },
       agent: { name: "agentC" },
+      tenantRegistry: { prompts: { compute: computePrompt } },
     });
     expect(out.model).toBe("mock-model-v7");
     expect(out.provider).toBe("mock");
@@ -168,6 +194,10 @@ describe("TC-10: step engine prompt assembly (P0-RT-03 + RT-11)", () => {
 
   it("writes input + output artifact sidecars when runId+stepOrd are supplied (P0-RT-09)", async () => {
     const runId = `run-test-${Date.now()}`;
+    const computePrompt = definePrompt({
+      name: "compute",
+      template: () => "compute body",
+    });
     const out = await runAction({
       ctx: {
         agentName: "agentD",
@@ -179,6 +209,7 @@ describe("TC-10: step engine prompt assembly (P0-RT-03 + RT-11)", () => {
       },
       action: { order: "1", name: "compute", description: "", type: "logic" },
       agent: { name: "agentD" },
+      tenantRegistry: { prompts: { compute: computePrompt } },
       runId,
       stepOrd: 1,
     });

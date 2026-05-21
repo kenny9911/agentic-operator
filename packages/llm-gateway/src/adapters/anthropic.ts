@@ -7,7 +7,13 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatMessage, ChatRequest, ChatResponse, ProviderAdapter } from "../types";
+import {
+  flattenContentToText,
+  type ChatMessage,
+  type ChatRequest,
+  type ChatResponse,
+  type ProviderAdapter,
+} from "../types";
 import { LLMError, classifyHttpError } from "../errors";
 
 const DEFAULT_MODEL = "claude-haiku-4-5";
@@ -21,7 +27,7 @@ function partitionSystem(messages: ChatMessage[]): { system: string | undefined;
   const systemParts: string[] = [];
   const rest: ChatMessage[] = [];
   for (const m of messages) {
-    if (m.role === "system") systemParts.push(m.content);
+    if (m.role === "system") systemParts.push(flattenContentToText(m.content));
     else rest.push(m);
   }
   return {
@@ -91,7 +97,7 @@ export function createAnthropicAdapter(config: AnthropicAdapterConfig): Provider
             system,
             messages: rest.map((m) => ({
               role: m.role === "assistant" ? "assistant" : "user",
-              content: m.content,
+              content: flattenContentToText(m.content),
             })),
           },
           {

@@ -11,9 +11,77 @@ import type { ProviderId } from "@agentic/contracts";
 
 export type { ProviderId };
 
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+// ─── P1-CON-01 — Typed content blocks for multi-modal / tool-use ──────────
+//
+// Adapter wire formats converge on three block kinds:
+//   - text       : plain assistant-side text segment
+//   - tool_use   : assistant emits a tool-call request
+//   - tool_result: tool side reports the call's outcome
+//
+// All adapters that don't yet support tool blocks treat `string` content as
+// before; the agent-runtime emits typed arrays only when it actually needs
+// to.
+export interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+export interface ToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  /** JSON-encoded result body; the adapter is free to send as a string or structured object. */
   content: string;
+  is_error?: boolean;
+}
+
+export type ChatContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+
+export interface ChatMessage {
+  /** `tool` is the SDK's role for tool-result messages (a/k/a the "user-side" of a tool call). */
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | ChatContentBlock[];
+}
+
+/**
+ * Adapter helper — flatten typed content blocks into plain text for adapters
+ * that don't yet speak the structured block protocol. Tool-use blocks are
+ * rendered as a JSON sentinel and tool-result blocks as their content body.
+ * Legacy string contents pass through untouched.
+ */
+export function flattenContentToText(
+  content: string | ChatContentBlock[],
+): string {
+  if (typeof content === "string") return content;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === "text") parts.push(block.text);
+    else if (block.type === "tool_use")
+      parts.push(`[tool_use ${block.name} ${JSON.stringify(block.input)}]`);
+    else if (block.type === "tool_result") parts.push(block.content);
+  }
+  return parts.join("\n");
+}
+
+// ─── P1-CON-02 — Tool definitions and structured tool calls ───────────────
+
+export interface ToolDef {
+  name: string;
+  description?: string;
+  /** JSON Schema for the tool's input shape. Validation is the agent's responsibility. */
+  input_schema: Record<string, unknown>;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
 }
 
 export interface ChatRequest {
@@ -34,6 +102,12 @@ export interface ChatRequest {
   signal?: AbortSignal;
   /** Hint the model to return JSON. Each adapter maps this to its native flag. */
   jsonMode?: boolean;
+  /** P1-CON-02 — advertised tools for tool-use models. */
+  tools?: ToolDef[];
+  /** P1-RT-06 — caller-provided tenantId for usage attribution (optional). */
+  tenantId?: string;
+  /** Alias of `tenantId` used by some legacy callers. */
+  tenantSlug?: string;
 }
 
 export interface ChatResponse {
@@ -44,6 +118,8 @@ export interface ChatResponse {
   tokensOut: number | null;
   finishReason: "stop" | "length" | "tool_calls" | "error" | "unknown";
   latencyMs: number;
+  /** P1-LLM-04 — structured tool calls emitted by the model on this turn. */
+  toolCalls?: ToolCall[];
   /** Provider-specific extras (e.g. tool calls). Opaque in v1. */
   raw?: unknown;
 }
