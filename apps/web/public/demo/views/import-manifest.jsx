@@ -89,6 +89,17 @@ function imFormatTime(ms) {
   }
 }
 
+// Backend wraps successful responses as { ok: true, data }. Unwrap so the
+// wizard reads deployment_id, parsed, diff, etc. at the top level. Failure
+// envelopes ({ ok: false, error, ...extras }) are passed through unchanged —
+// callers branch on res.ok / status before reading.
+function imUnwrap(body) {
+  if (body && body.ok === true && body.data !== undefined && body.data !== null) {
+    return body.data;
+  }
+  return body;
+}
+
 // ── Top-level modal ────────────────────────────────────────────────────────
 
 function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
@@ -234,11 +245,12 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const code = body && body.error ? body.error : (body && body.message ? body.message : "fetch_failed");
+        const code = body?.error?.message || body?.error?.code || body?.message || "fetch_failed";
         setValidationError(`URL fetch failed: ${code}`);
         return null;
       }
-      return { workflow: body.workflow, actions: body.actions };
+      const payload = imUnwrap(body);
+      return { workflow: payload && payload.workflow, actions: payload && payload.actions };
     } catch (e) {
       setValidationError(`URL fetch failed: ${e.message || "network"}`);
       return null;
@@ -297,21 +309,22 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
       const body = await res.json().catch(() => ({}));
       if (res.status === 423) {
         setPendingLock({
-          locked_by: body && body.locked_by,
+          locked_by: body && (body.deployment_id || body.in_flight_session_id || body.locked_by),
           expires_at: body && body.expires_at,
         });
         setValidating(false);
         return;
       }
       if (!res.ok) {
-        const detail = body && (body.error || body.message);
+        const detail = body?.error?.message || body?.message || (typeof body?.error === "string" ? body.error : null);
         setValidationError(detail ? String(detail) : `Validation failed (HTTP ${res.status})`);
         setValidating(false);
         return;
       }
-      setValidation(body);
+      const preview = imUnwrap(body);
+      setValidation(preview);
       setValidating(false);
-      if (body.ok) {
+      if (preview && preview.ok) {
         // Auto-advance to Diff step on a clean validate.
         setStep(2);
       }
@@ -380,19 +393,24 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
       const body = await res.json().catch(() => ({}));
       if (res.status === 423) {
         setPendingLock({
-          locked_by: body && body.locked_by,
+          locked_by: body && (body.deployment_id || body.in_flight_session_id || body.locked_by),
           expires_at: body && body.expires_at,
         });
         setValidating(false);
         return null;
       }
-      if (!res.ok || !body || !body.deployment_id) {
+      if (!res.ok) {
         setValidating(false);
         return null;
       }
-      setValidation(body);
+      const preview = imUnwrap(body);
+      if (!preview || !preview.deployment_id) {
+        setValidating(false);
+        return null;
+      }
+      setValidation(preview);
       setValidating(false);
-      return body;
+      return preview;
     } catch (_e) {
       setValidating(false);
       return null;
@@ -436,7 +454,10 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
         return;
       }
       if (!res.ok) {
-        const detail = body && (body.error || body.message || (Array.isArray(body.issues) && body.issues.map((i) => i.message).join("; ")));
+        const detail = body?.error?.message
+          || body?.message
+          || (typeof body?.error === "string" ? body.error : null)
+          || (Array.isArray(body?.issues) && body.issues.map((i) => i.message).join("; "));
         setCommitError(detail ? String(detail) : `Deploy failed (HTTP ${res.status})`);
         setCommitting(false);
         return;
@@ -444,7 +465,8 @@ function ImportManifestModal({ onClose, mode = "workflow", tenantSlug }) {
       // Success
       setCommitting(false);
       setOverwriteRequired(null);
-      const versionLabel = body.version || body.workflow_version_id;
+      const result = imUnwrap(body);
+      const versionLabel = (result && (result.version || result.workflow_version_id)) || "";
       try {
         const toast = window.toast || window.notify;
         if (typeof toast === "function") {
@@ -1527,7 +1549,7 @@ function ImportDeployStep({
           fontSize: 12, color: "var(--text-2)",
           display: "flex", alignItems: "center", gap: 8,
         }}>
-          <window.Icon name="refresh" size={12} style={{ color: "var(--signal)" }} />
+          <window.Icon name="replay" size={12} style={{ color: "var(--signal)" }} />
           Re-establishing deployment session…
         </div>
       )}
@@ -1545,7 +1567,7 @@ function ImportDeployStep({
             Re-validate from the in-memory manifest, or go back to Source to re-upload.
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <window.Button tone="primary" icon="refresh" onClick={onRevalidate}>
+            <window.Button tone="primary" icon="replay" onClick={onRevalidate}>
               Re-validate
             </window.Button>
             <window.Button tone="ghost" icon="chevron-left" onClick={onBackToSource}>
@@ -1596,7 +1618,7 @@ function ImportDeployStep({
           }}>{note.length}/500</div>
         </window.Panel>
 
-        {commitError && (
+        {commitError && !sessionMissing && (
           <div style={{
             padding: "10px 12px",
             background: "rgba(255,100,112,0.08)",
