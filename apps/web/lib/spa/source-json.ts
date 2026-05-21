@@ -44,6 +44,17 @@ import type {
 export interface BootstrapAuthHeaders {
   cookie: string | null;
   authorization: string | null;
+  /**
+   * Optional tenant override. Forwarded as `x-agentic-tenant` so future api
+   * versions can scope the fan-out per request without rotating cookies.
+   * In v1 the apps/api auth plugin still resolves tenant from
+   * cookie/bearer/AGENTIC_DEV_TENANT — this param is advisory and only
+   * triggers a refetch (the DataProvider's deps include it).
+   *
+   * TODO: hook this up once the auth plugin accepts an x-agentic-tenant
+   * header for cookie/bearer requests with admin scope.
+   */
+  tenant?: string | null;
 }
 
 const API_BASE =
@@ -113,6 +124,32 @@ interface CountsRow {
   totalRuns?: number;
 }
 
+// P5-TEN-01 — live tenant list response shape from `GET /v1/tenants`.
+interface TenantRow {
+  id: string;
+  slug: string;
+  name: string;
+  subtitle: string | null;
+  color: string | null;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+  agentCount: number;
+  runs24h: number;
+  openTasks: number;
+  membership: "admin" | "operator" | "viewer" | null;
+}
+
+interface TenantListResponse {
+  items: TenantRow[];
+  count: number;
+  viewer?: {
+    tenantId?: string;
+    tenantSlug?: string;
+    userId?: string | null;
+  };
+}
+
 interface ApiEnvelope<T> {
   ok: boolean;
   data?: T;
@@ -123,6 +160,7 @@ function authHeaders(auth: BootstrapAuthHeaders): Record<string, string> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (auth.authorization) headers["authorization"] = auth.authorization;
   if (auth.cookie) headers["cookie"] = auth.cookie;
+  if (auth.tenant) headers["x-agentic-tenant"] = auth.tenant;
   return headers;
 }
 
@@ -245,6 +283,7 @@ export async function loadBootstrapFromApi(
     dag,
     eventTypes,
     _entityTypes,
+    tenantList,
   ] = await Promise.all([
     fetchJson<CountsRow>("/v1/counts", auth),
     fetchJson<Record<string, unknown>[]>("/v1/runs?limit=100", auth),
@@ -254,6 +293,10 @@ export async function loadBootstrapFromApi(
     fetchJson<DagPayload>("/v1/workflows/dag", auth),
     fetchJson<EventTypeRow[]>("/v1/event-types", auth),
     fetchJson<unknown[]>("/v1/entity-types", auth),
+    // P5-TEN-01 — live tenants list so the sidebar reflects DB state, not
+    // SAMPLE_TENANTS. Falls back to the seed when the endpoint is missing
+    // (degrades gracefully for back-compat).
+    fetchJson<TenantListResponse>("/v1/tenants", auth),
   ]);
 
   const dagAgents = dag?.agents ?? [];
@@ -285,18 +328,35 @@ export async function loadBootstrapFromApi(
   }
   const mappedEvents = mergeEvents(eventTypes ?? [], references);
 
-  // Tenant table: keep the SAMPLE_TENANTS seed (the SPA switcher still
-  // renders the static three-tenant list) and overlay `/v1/counts` aggregates
-  // on the active slot. The live tenant-list endpoint (`/v1/tenants`) is
-  // fetched lazily by the App Router tenant-switcher component (P5-TEN-01),
-  // not from this bootstrap path — keeping the fan-out at exactly eight
-  // endpoints honors the bootstrap test contract.
-  const tenants: SpaTenant[] = SAMPLE_TENANTS.map((t) => ({ ...t }));
-  if (tenants[0]) {
-    if (typeof counts?.agents === "number")
-      tenants[0].agentCount = counts.agents;
-    if (typeof counts?.totalRuns === "number")
-      tenants[0].runs24h = counts.totalRuns;
+  // P5-TEN-01 — live tenant list takes precedence over the static seed.
+  // Hidden-archived tenants are filtered out; archived rows only show when
+  // the operator explicitly opts in via the Tenants management view.
+  // Fall back to SAMPLE_TENANTS only if the /v1/tenants call errored.
+  let tenants: SpaTenant[];
+  if (tenantList && Array.isArray(tenantList.items)) {
+    const active = tenantList.items.filter((t) => !t.archivedAt);
+    const currentSlug = tenantList.viewer?.tenantSlug;
+    tenants = active.map((t) => ({
+      id: t.slug,
+      name: t.name,
+      subtitle: t.subtitle ?? "",
+      color: t.color ?? "#6f7178",
+      active: currentSlug ? t.slug === currentSlug : false,
+      agentCount: t.agentCount,
+      runs24h: t.runs24h,
+    }));
+    if (tenants.length > 0 && !tenants.some((t) => t.active)) {
+      tenants[0]!.active = true;
+    }
+  } else {
+    // /v1/tenants unavailable — preserve the seed so the SPA still mounts.
+    tenants = SAMPLE_TENANTS.map((t) => ({ ...t }));
+    if (tenants[0]) {
+      if (typeof counts?.agents === "number")
+        tenants[0].agentCount = counts.agents;
+      if (typeof counts?.totalRuns === "number")
+        tenants[0].runs24h = counts.totalRuns;
+    }
   }
 
   return {

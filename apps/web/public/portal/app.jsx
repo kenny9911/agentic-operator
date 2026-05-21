@@ -26,6 +26,24 @@ function App() {
   const [params, setParams] = useStateApp({});
   const [models, setModels] = useStateApp(() => window.RAAS_SETTINGS_MODELS || []);
 
+  // P5-TEN-01 — re-fetch bootstrap whenever a tenant mutation broadcasts so
+  // the sidebar TenantSwitcher and the Tenants table both reflect the new
+  // DB state. Listens to BOTH the lifecycle event and the bootstrap-done
+  // event so we always re-render after each refresh cycle.
+  const [, bumpTenantsRev] = useStateApp(0);
+  useEffectApp(() => {
+    const onLifecycle = () => {
+      if (window.RAAS_RELOAD) window.RAAS_RELOAD(window.RAAS_DATA_SOURCE || "json");
+    };
+    const onLoaded = () => bumpTenantsRev((r) => r + 1);
+    window.addEventListener("agentic-tenants-updated", onLifecycle);
+    window.addEventListener("raas-data-loaded", onLoaded);
+    return () => {
+      window.removeEventListener("agentic-tenants-updated", onLifecycle);
+      window.removeEventListener("raas-data-loaded", onLoaded);
+    };
+  }, []);
+
   // Mirror the configured-models list back to the global so any non-React
   // reader (or a view that hasn't been threaded with the prop yet) sees the
   // up-to-date list.
@@ -74,6 +92,7 @@ function App() {
           {view === "tasks" && <Tasks navigate={navigate} params={params} />}
           {view === "logs" && <Logs navigate={navigate} params={params} liveStream={tweaks.liveStream} />}
           {view === "deployments" && <Deployments navigate={navigate} />}
+          {view === "tenants" && <Tenants navigate={navigate} params={params} />}
           {view === "settings" && <Settings navigate={navigate} params={params} tweaks={tweaks} setTweak={setTweak} models={models} setModels={setModels} />}
         </div>
       </main>
@@ -145,7 +164,7 @@ function Sidebar({ view, navigate, tenant, tweaks, setTweak }) {
       </div>
 
       {/* Tenant switcher */}
-      <TenantSwitcher tenant={tenant} setTweak={setTweak} />
+      <TenantSwitcher tenant={tenant} setTweak={setTweak} navigate={navigate} />
 
       {/* Nav */}
       <nav style={{ padding: "10px 8px", flex: 1, overflow: "auto" }}>
@@ -164,6 +183,7 @@ function Sidebar({ view, navigate, tenant, tweaks, setTweak }) {
 
         <NavGroup label="Manage">
           <NavItem id="deployments" view={view} navigate={navigate} icon="deploy" label="Deployments" />
+          <NavItem id="tenants" view={view} navigate={navigate} icon="agent" label="Tenants" count={(window.TENANTS || []).length} />
           <NavItem id="settings" view={view} navigate={navigate} icon="settings" label="Settings" />
         </NavGroup>
       </nav>
@@ -200,8 +220,42 @@ function Logo() {
   );
 }
 
-function TenantSwitcher({ tenant, setTweak }) {
+function TenantSwitcher({ tenant, setTweak, navigate }) {
   const [open, setOpen] = useStateApp(false);
+  // P5-TEN-01 — re-render whenever the SPA broadcasts a tenant mutation OR
+  // the SPA bootstrap completes (which means /v1/tenants was just refetched).
+  const [, forceRender] = useStateApp(0);
+  useEffectApp(() => {
+    const bump = () => forceRender((r) => r + 1);
+    window.addEventListener("agentic-tenants-updated", bump);
+    window.addEventListener("raas-data-loaded", bump);
+    return () => {
+      window.removeEventListener("agentic-tenants-updated", bump);
+      window.removeEventListener("raas-data-loaded", bump);
+    };
+  }, []);
+
+  // Empty-state CTA. Lets the operator reach the create wizard even when
+  // there are zero accessible tenants yet (fresh install, all archived, etc).
+  if (!tenant) {
+    return (
+      <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+        <button
+          onClick={() => navigate && navigate("tenants", { openCreate: true })}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            width: "100%", padding: "8px 10px",
+            background: "var(--panel)",
+            border: "1px dashed var(--border-3)",
+            borderRadius: 5, textAlign: "left",
+            fontSize: 12, color: "var(--text-2)",
+          }}>
+          <Icon name="plus" size={11} /> Create your first tenant
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", position: "relative" }}>
       <button onClick={() => setOpen(!open)} style={{
@@ -232,7 +286,7 @@ function TenantSwitcher({ tenant, setTweak }) {
           boxShadow: "0 8px 20px rgba(0,0,0,0.4)",
           overflow: "hidden",
         }}>
-          {window.TENANTS.map(t => (
+          {(window.TENANTS || []).map(t => (
             <button key={t.id}
               onClick={() => { setTweak("tenant", t.id); setOpen(false); }}
               style={{
@@ -250,8 +304,30 @@ function TenantSwitcher({ tenant, setTweak }) {
               {tenant.id === t.id && <Icon name="check" size={12} style={{ color: "var(--signal)" }} />}
             </button>
           ))}
-          <button style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 10px", fontSize: 12, color: "var(--text-2)" }}>
+          <button
+            onClick={() => {
+              setOpen(false);
+              if (navigate) navigate("tenants", { openCreate: true });
+            }}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              width: "100%", padding: "10px 10px",
+              fontSize: 12, color: "var(--signal)",
+              borderTop: "1px solid var(--border)",
+              background: "var(--panel-2)",
+              cursor: "pointer",
+            }}>
             <Icon name="plus" size={11} /> New tenant
+          </button>
+          <button
+            onClick={() => { setOpen(false); if (navigate) navigate("tenants"); }}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              width: "100%", padding: "8px 10px",
+              fontSize: 11.5, color: "var(--text-3)",
+              borderTop: "1px solid var(--border)",
+            }}>
+            <Icon name="settings" size={11} /> Manage tenants
           </button>
         </div>
       )}
