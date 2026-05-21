@@ -152,6 +152,12 @@ export function Sidebar({ tenants, version = "v0.6.2" }: SidebarProps) {
             label="Deployments"
           />
           <NavItem
+            href={`${base}/tenants`}
+            icon="agent"
+            label="Tenants"
+            matchPrefix
+          />
+          <NavItem
             href={`${base}/settings`}
             icon="settings"
             label="Settings"
