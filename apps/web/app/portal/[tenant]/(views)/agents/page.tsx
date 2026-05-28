@@ -3,11 +3,9 @@
 /**
  * Agents view — list + detail page. P2-FE-09.
  *
- * Ported from `apps/web/public/portal/views/agents.jsx` (1129 LOC).
- * Phase 1 deltas preserved:
- *   - D-5: Splitter between list and detail (min 260, max 720)
- *   - D-8: TEST badge on test runs (AgentsGrid + RunsTab)
- *   - D-11: Latest test-run chip in agent detail header
+ * Live data via canonical TanStack hooks:
+ *   - useAgents() — workflow agent list (tenant-scoped)
+ *   - useRuns({ limit: 200 }) — recent runs used for the per-agent stats
  *
  * Detail is in a separate route at `/portal/[tenant]/agents/[id]` so the
  * browser URL reflects the selected agent. The list page mirrors the v1_1
@@ -21,17 +19,15 @@ import {
   ActorTag,
   Badge,
   Button,
+  Empty,
   FilterChip,
   Panel,
   SearchInput,
   ViewHeader,
 } from "@/app/portal/components";
 import { fmtAgo } from "@/lib/format";
-import {
-  useRaasData,
-  type RaasAgent,
-  type RaasRun,
-} from "@/lib/hooks/data-context";
+import { useAgents, type AgentListRow } from "@/lib/hooks/useAgents";
+import { useRuns, type RunListRow } from "@/lib/hooks/useRuns";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { DeployAgentModal } from "@/app/portal/components/agents/DeployAgentModal";
 import { ImportManifestModal } from "@/app/portal/components/import-manifest/ImportManifestModal";
@@ -52,25 +48,37 @@ function emptyStats(): AgentStats {
 export default function AgentsPage() {
   const router = useRouter();
   const tenant = useTenant();
-  const { agents, runs } = useRaasData();
+  const agentsQuery = useAgents();
+  const runsQuery = useRuns({ limit: 200 });
+  const agents = agentsQuery.data ?? [];
+  const runs = runsQuery.data ?? [];
   const [query, setQuery] = useState("");
   const [actorFilter, setActorFilter] = useState<"all" | "Agent" | "Human">("all");
   const [deployOpen, setDeployOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
   const stats = useMemo(() => {
+    // Stats are bucketed by name (the canonical join key the api uses on
+    // run rows) and additionally by kebabId so older snapshots that key
+    // by id still resolve.
     const m = new Map<string, AgentStats>();
-    agents.forEach((a) => m.set(a.id, emptyStats()));
+    agents.forEach((a) => {
+      const s = emptyStats();
+      m.set(a.kebabId, s);
+      m.set(a.id, s);
+      if (a.name) m.set(a.name, s);
+    });
     runs.forEach((r) => {
-      const s = m.get(r.agentId);
+      const s = m.get(r.agentName ?? "");
       if (!s) return;
+      const startedAt = r.startedAt ? Date.parse(r.startedAt) : 0;
       s.runs += 1;
       if (r.status === "failed") s.errors += 1;
-      if (r.startedAt > s.lastRun) s.lastRun = r.startedAt;
+      if (startedAt > s.lastRun) s.lastRun = startedAt;
       if (r.testRun) {
         s.tests += 1;
-        if (r.startedAt > s.lastTestAt) {
-          s.lastTestAt = r.startedAt;
+        if (startedAt > s.lastTestAt) {
+          s.lastTestAt = startedAt;
           s.lastTestRunId = r.id;
         }
       }
@@ -90,9 +98,13 @@ export default function AgentsPage() {
     return true;
   });
 
-  function openAgent(id: string) {
-    router.push(`/portal/${tenant}/agents/${id}` as never);
+  function openAgent(kebabId: string) {
+    router.push(`/portal/${tenant}/agents/${kebabId}` as never);
   }
+
+  const isLoading = agentsQuery.isLoading;
+  const isError = agentsQuery.isError;
+  const error = agentsQuery.error;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -149,7 +161,25 @@ export default function AgentsPage() {
             </FilterChip>
           </div>
           <div style={{ flex: 1, overflow: "auto" }}>
-            <AgentsGrid agents={filtered} stats={stats} onPick={openAgent} />
+            {isError ? (
+              <Empty
+                title="Failed to load agents"
+                hint={error?.message ?? "api unreachable on :3501"}
+              />
+            ) : isLoading && agents.length === 0 ? (
+              <Empty title="Loading agents…" hint="" />
+            ) : filtered.length === 0 ? (
+              <Empty
+                title="No agents yet"
+                hint={
+                  agents.length === 0
+                    ? "Deploy a manifest or run `agentic deploy` to register agents."
+                    : "No agents match the current filter."
+                }
+              />
+            ) : (
+              <AgentsGrid agents={filtered} stats={stats} onPick={openAgent} />
+            )}
           </div>
         </aside>
       </div>
@@ -168,9 +198,9 @@ function AgentsGrid({
   stats,
   onPick,
 }: {
-  agents: RaasAgent[];
+  agents: AgentListRow[];
   stats: Map<string, AgentStats>;
-  onPick: (id: string) => void;
+  onPick: (kebabId: string) => void;
 }) {
   return (
     <div
@@ -182,11 +212,11 @@ function AgentsGrid({
       }}
     >
       {agents.map((a) => {
-        const s = stats.get(a.id) ?? emptyStats();
+        const s = stats.get(a.kebabId) ?? stats.get(a.name) ?? emptyStats();
         return (
           <button
             key={a.id}
-            onClick={() => onPick(a.id)}
+            onClick={() => onPick(a.kebabId)}
             style={{
               padding: "12px 14px",
               background: "var(--panel)",
@@ -206,7 +236,7 @@ function AgentsGrid({
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
               <ActorTag actor={a.actor} />
-              <Badge tone="muted">{a.id}</Badge>
+              <Badge tone="muted">{a.kebabId}</Badge>
               <span
                 style={{
                   marginLeft: "auto",
@@ -240,7 +270,7 @@ function AgentsGrid({
                 overflow: "hidden",
               }}
             >
-              {a.description}
+              {a.description ?? ""}
             </div>
             <div
               style={{
@@ -256,7 +286,7 @@ function AgentsGrid({
               <span>{s.runs} runs</span>
               {s.errors > 0 && <span style={{ color: "var(--red)" }}>{s.errors} err</span>}
               {s.tests > 0 && <span style={{ color: "var(--signal)" }}>{s.tests} test</span>}
-              {a.model && <span style={{ marginLeft: "auto" }}>{a.model.replace("claude-", "")}</span>}
+              <span style={{ marginLeft: "auto" }}>{a.kind}</span>
             </div>
           </button>
         );
@@ -264,6 +294,3 @@ function AgentsGrid({
     </div>
   );
 }
-
-// Re-export used in the detail page so they share the same shape.
-export type { RaasAgent, RaasRun };

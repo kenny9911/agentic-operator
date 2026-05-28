@@ -11,6 +11,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { RUN_KEYS, COUNT_KEYS } from "./useStream";
+import { tenantHeader } from "./tenant-header";
 
 interface ApiOk<T> {
   ok: true;
@@ -22,13 +23,15 @@ interface ApiErr {
 }
 
 async function callV1<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { headers: initHeaders, ...rest } = init;
   const res = await fetch(path, {
     credentials: "same-origin",
+    ...rest,
     headers: {
       Accept: "application/json",
-      ...(init.headers as Record<string, string> | undefined),
+      ...tenantHeader(),
+      ...(initHeaders as Record<string, string> | undefined),
     },
-    ...init,
   });
   const body = (await res.json()) as ApiOk<T> | ApiErr;
   if (!body.ok) {
@@ -83,6 +86,8 @@ export interface RunListRow {
   testRun?: boolean;
   error?: string | null;
   emittedEvent?: string | null;
+  /** Correlation id linking this run to others in the same workflow chain. */
+  correlationId?: string | null;
 }
 
 export function useRuns(
@@ -137,6 +142,40 @@ export function useReplayRun() {
         { method: "POST" },
       ),
     onSettled: () => {
+      void client.invalidateQueries({ queryKey: RUN_KEYS.all });
+      void client.invalidateQueries({ queryKey: COUNT_KEYS.tenant });
+    },
+  });
+}
+
+export interface CancelRunResult {
+  runId: string;
+  status: string;
+  cancelled: boolean;
+  note: string;
+}
+
+/**
+ * Cancel an in-flight run: `POST /v1/runs/:id/cancel`.
+ *
+ * Idempotent on the server side — re-cancelling a terminal run returns 200
+ * with `cancelled:false` and a no-op note. The hook treats both shapes as
+ * success (the variable shape lets the caller surface the right toast).
+ *
+ * On settle we invalidate both the list and the detail query keys so the
+ * runs index + the detail header repaint to the cancelled state without
+ * an extra reload.
+ */
+export function useCancelRun() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      callV1<CancelRunResult>(
+        `/v1/runs/${encodeURIComponent(id)}/cancel`,
+        { method: "POST" },
+      ),
+    onSettled: (_data, _err, id) => {
+      void client.invalidateQueries({ queryKey: RUN_KEYS.detail(id) });
       void client.invalidateQueries({ queryKey: RUN_KEYS.all });
       void client.invalidateQueries({ queryKey: COUNT_KEYS.tenant });
     },

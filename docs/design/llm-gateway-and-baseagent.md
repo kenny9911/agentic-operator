@@ -26,7 +26,7 @@ To close that gap with minimum scope creep, this design adds:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│  apps/web  (Next.js :3500 — UI only, no DB)                            │
+│  apps/web  (Next.js :3599 — UI only, no DB)                            │
 │   • Settings → reads /v1/llm/providers + /v1/llm/models                │
 │   • Agents → list filtered by ?kind=code (reuses /v1/agents)           │
 │   • Runs → invoke history + SSE log tail (reuses /v1/runs)             │

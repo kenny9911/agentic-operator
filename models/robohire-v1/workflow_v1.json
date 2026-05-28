@@ -1,0 +1,98 @@
+[
+  {
+    "id": "sourcer-agent",
+    "name": "sourcerAgent",
+    "title": "Sourcer Agent",
+    "description": "Translates a fresh NEW_JOB_REQUISITION event into a candidate shortlist by combining the RoboHire mock MCP server (sample candidate database) with the real RoboHire REST API for resume + JD parsing and scoring.",
+    "actor": ["Agent"],
+    "trigger": ["NEW_JOB_REQUISITION"],
+    "tool_use": [
+      { "name": "skills.list_skills", "description": "Discover available skills." },
+      { "name": "skills.load_skill", "description": "Load a skill's body by name." },
+      { "name": "robohireHealthApi", "description": "Real RoboHire GET /api/v1/health — smoke test connectivity." },
+      { "name": "parseJdApi", "description": "Real RoboHire POST /api/v1/parse-jd — structures a job description." },
+      { "name": "parseResumeApi", "description": "Real RoboHire POST /api/v1/parse-resume — structures a resume." },
+      { "name": "matchResumeApi", "description": "Real RoboHire POST /api/v1/match-resume — REQUIRES {resume, jd} strings." },
+      { "name": "robohire-mcp.search_candidates", "description": "Mock candidate-pool search (3 deterministic samples)." },
+      { "name": "robohire-mcp.score_resume", "description": "Mock scoring fallback when matchResumeApi is unavailable." },
+      { "name": "robohire-mcp.get_job_requisition", "description": "Fetch a requisition (jr_001, jr_002 pre-seeded) from the mock pool." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "planCandidateSearch",
+        "description": "Plan + execute the candidate search and emit a shortlist as the final JSON answer.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["CANDIDATES_SOURCED"]
+  },
+  {
+    "id": "screener-agent",
+    "name": "screenerAgent",
+    "title": "Screener Agent",
+    "description": "Re-ranks the sourced shortlist using the real RoboHire match-resume API plus the resume-screening skill, and generates interview invitations for the top hits.",
+    "actor": ["Agent"],
+    "trigger": ["CANDIDATES_SOURCED"],
+    "tool_use": [
+      { "name": "skills.list_skills", "description": "Discover available skills." },
+      { "name": "skills.load_skill", "description": "Load a skill's body by name." },
+      { "name": "matchResumeApi", "description": "Real RoboHire POST /api/v1/match-resume — scores resume against JD." },
+      { "name": "inviteCandidateApi", "description": "Real RoboHire POST /api/v1/invite-candidate — generates interview email." },
+      { "name": "robohire-mcp.score_resume", "description": "Mock scoring fallback." },
+      { "name": "robohire-mcp.get_job_requisition", "description": "Refetch requisition if missing from payload." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "screenCandidates",
+        "description": "Load the resume-screening skill, score every candidate, emit ranked list with optional invite drafts.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["CANDIDATES_SCREENED"]
+  },
+  {
+    "id": "matcher-agent",
+    "name": "matcherAgent",
+    "title": "Matcher Agent",
+    "description": "Subscribes to MATCH_REQUESTED. Loads the resume-screening skill, then calls the live RoboHire matchResumeApi to analyze the resume against the JD. Emits MATCH_COMPLETED with the upstream's structured analysis verbatim so downstream agents can act on it without re-fetching.",
+    "actor": ["Agent"],
+    "trigger": ["MATCH_REQUESTED"],
+    "tool_use": [
+      { "name": "skills.list_skills", "description": "Discover available skills." },
+      { "name": "skills.load_skill", "description": "Load a skill's body by name." },
+      { "name": "robohireHealthApi", "description": "Real RoboHire GET /api/v1/health — smoke test connectivity." },
+      { "name": "matchResumeApi", "description": "Real RoboHire POST /api/v1/match-resume — REQUIRES {resume, jd} strings." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "matchAndAnalyze",
+        "description": "Load the resume-screening skill, then call matchResumeApi against the live RoboHire API.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["MATCH_COMPLETED"]
+  },
+  {
+    "id": "inviter-agent",
+    "name": "inviterAgent",
+    "title": "Inviter Agent",
+    "description": "Subscribes to MATCH_COMPLETED. If the match verdict is Strong Match, calls the live RoboHire inviteCandidateApi to generate an interview-invitation email body. Emits INVITE_GENERATED with the generated email (or a `skipped` envelope when the verdict was below the bar).",
+    "actor": ["Agent"],
+    "trigger": ["MATCH_COMPLETED"],
+    "tool_use": [
+      { "name": "inviteCandidateApi", "description": "Real RoboHire POST /api/v1/invite-candidate — generates interview email." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "generateInvite",
+        "description": "Read the match analysis; if score ≥ 80, call inviteCandidateApi; otherwise emit skipped envelope.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["INVITE_GENERATED"]
+  }
+]

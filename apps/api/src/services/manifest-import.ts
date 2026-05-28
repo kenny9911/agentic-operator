@@ -408,8 +408,20 @@ function resolveJsonPath(
  *   - `accept_suggestion` with `override_value=null` ⇒ drop the leaf (or
  *      delete the array element). The auto-fix encodes the intent.
  *   - `accept_suggestion` with a non-null `override_value` ⇒ set the leaf.
- *   - `skip` ⇒ no-op; the conflict stays unresolved and may block commit.
+ *   - `skip` ⇒ drop the entire agent at the path's `agents[N]` prefix
+ *      (matches the wizard's "Skip agent · don't import" label). For
+ *      structural blockers like `orphan_actor` there is no per-field fix —
+ *      skipping the conflict only makes sense if the agent is removed
+ *      from the import, otherwise the re-lint at commit time reproduces
+ *      the same blocker and the deploy is refused. Resolutions whose path
+ *      doesn't start with `agents[N]` are ignored on skip (no agent to
+ *      drop).
  *   - `override` ⇒ set the leaf to `override_value` (operator-chosen).
+ *
+ * Non-skip mutations are applied first against the cloned manifest so the
+ * `agents[N]` indices in their paths still resolve. Skipped agents are
+ * removed in a second pass, highest-index-first, so the splice doesn't
+ * shift indices the first pass relied on.
  */
 export function applyResolutions(
   manifest: WorkflowManifest,
@@ -419,8 +431,20 @@ export function applyResolutions(
   // is fine here: manifest is plain JSON.
   const cloned = JSON.parse(JSON.stringify(manifest)) as WorkflowManifest;
   const applied: string[] = [];
+
+  // Pass 1 — apply accept_suggestion / override. Skip resolutions are
+  // deferred so the per-field mutations below all see the original
+  // `agents[N]` index space.
+  const skipAgentIndices = new Set<number>();
   for (const r of resolutions) {
-    if (r.action === "skip") continue;
+    if (r.action === "skip") {
+      const m = r.path.match(/^agents\[(\d+)\]/);
+      if (m) {
+        skipAgentIndices.add(Number(m[1]));
+        applied.push(r.path);
+      }
+      continue;
+    }
     const target = resolveJsonPath(cloned, r.path);
     if (!target) continue;
     const value =
@@ -444,6 +468,16 @@ export function applyResolutions(
     }
     applied.push(r.path);
   }
+
+  // Pass 2 — drop skipped agents. High-to-low so earlier splices don't
+  // shift the indices later splices rely on.
+  const sortedDrops = Array.from(skipAgentIndices).sort((a, b) => b - a);
+  for (const idx of sortedDrops) {
+    if (idx >= 0 && idx < cloned.length) {
+      cloned.splice(idx, 1);
+    }
+  }
+
   return { manifest: cloned, appliedPaths: applied };
 }
 
@@ -1217,27 +1251,78 @@ export async function commit(
       // (c) Promote the pending lock or insert a fresh deployment row.
       if (pendingLockRow) {
         isPromotion = true;
-        // Realign the version string to auto-<hash> so the bootstrap
-        // dedup keys cleanly across restarts.
-        db.update(workflowVersions)
-          .set({
-            version: desiredVersion,
-            manifestJson: result.migrated as unknown as object,
-            actionsJson: (result.actions ?? null) as unknown as object,
-          })
-          .where(eq(workflowVersions.id, pendingLockRow.versionId))
-          .run();
-        db.update(deployments)
-          .set({
-            status: "live",
-            deployedAt: new Date(),
-            expiresAt: null,
-            note: input.note ?? pendingLockRow.note ?? null,
-            filePath: tmpWorkflowPath, // updated to final path in phase 4
-          })
-          .where(eq(deployments.id, pendingLockRow.id))
-          .run();
-        workflowVersionId = pendingLockRow.versionId;
+        // If a prior commit already produced a workflow_version with the
+        // same content hash, (workflow_id, desiredVersion) is already
+        // taken by that row. A naive UPDATE on the pending wfv would
+        // fail the `wfv_workflow_version_uq` index. Redirect the pending
+        // deployment at the existing row instead — this mirrors the
+        // cold-commit branch below.
+        const collidingExisting = db
+          .select()
+          .from(workflowVersions)
+          .where(
+            and(
+              eq(workflowVersions.workflowId, wf.id),
+              eq(workflowVersions.version, desiredVersion),
+            ),
+          )
+          .all()[0];
+        if (collidingExisting && collidingExisting.id !== pendingLockRow.versionId) {
+          // Refresh the existing row's content (actionsJson can drift
+          // even when the agent-array hash matches).
+          db.update(workflowVersions)
+            .set({
+              manifestJson: result.migrated as unknown as object,
+              actionsJson: (result.actions ?? null) as unknown as object,
+            })
+            .where(eq(workflowVersions.id, collidingExisting.id))
+            .run();
+          // Redirect the pending deployment at the existing wfv before
+          // dropping the orphan, so nothing observable points at a
+          // soon-to-be-deleted id even mid-transaction.
+          db.update(deployments)
+            .set({
+              status: "live",
+              deployedAt: new Date(),
+              expiresAt: null,
+              note: input.note ?? pendingLockRow.note ?? null,
+              filePath: tmpWorkflowPath, // updated to final path in phase 4
+              versionId: collidingExisting.id,
+            })
+            .where(eq(deployments.id, pendingLockRow.id))
+            .run();
+          // The pending wfv has no agent_versions referencing it yet
+          // (those land in phase 3d below, after this branch). Safe to
+          // drop. The wfv_workflow_version_uq index is freed first so
+          // anything that might reference `pending-<dpl>` no longer can.
+          db.delete(workflowVersions)
+            .where(eq(workflowVersions.id, pendingLockRow.versionId))
+            .run();
+          workflowVersionId = collidingExisting.id;
+        } else {
+          // No collision — realign the pending row's version string to
+          // auto-<hash> so the bootstrap dedup keys cleanly across
+          // restarts.
+          db.update(workflowVersions)
+            .set({
+              version: desiredVersion,
+              manifestJson: result.migrated as unknown as object,
+              actionsJson: (result.actions ?? null) as unknown as object,
+            })
+            .where(eq(workflowVersions.id, pendingLockRow.versionId))
+            .run();
+          db.update(deployments)
+            .set({
+              status: "live",
+              deployedAt: new Date(),
+              expiresAt: null,
+              note: input.note ?? pendingLockRow.note ?? null,
+              filePath: tmpWorkflowPath, // updated to final path in phase 4
+            })
+            .where(eq(deployments.id, pendingLockRow.id))
+            .run();
+          workflowVersionId = pendingLockRow.versionId;
+        }
       } else {
         // Cold commit — reuse an existing workflow_version with the same
         // hash if present (bootstrap-style idempotency).

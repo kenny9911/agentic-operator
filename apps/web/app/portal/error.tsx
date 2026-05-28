@@ -9,10 +9,10 @@
  * typography — so it doesn't feel like a foreign-protocol page.
  *
  * Why this exists (audit `02-ui-audit.md` §A.2): without an error.tsx
- * boundary, an exception thrown during e.g. a hook destructure (which
- * happens when `useRaasData()` returns undefined during a transient
- * bootstrap failure) propagates to Next's default error overlay in dev
- * and a stack-trace-free white screen in prod.
+ * boundary, an exception thrown during e.g. a hook destructure (a
+ * TanStack Query in an error state that the consumer didn't guard)
+ * propagates to Next's default error overlay in dev and a stack-trace-
+ * free white screen in prod.
  *
  * `reset` is provided by Next; it re-renders the segment so an operator
  * can retry without a full page reload (e.g. transient api 502).

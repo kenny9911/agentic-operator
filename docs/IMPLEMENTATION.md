@@ -441,7 +441,7 @@ These are mechanical renames done atomically across the monorepo.
 | ID | Title | File(s) | Effort | Test plan | Acceptance |
 |---|---|---|---|---|---|
 | **P4-OPS-01** | Dockerfile for `apps/api`: Node 26-alpine, install with `--prod`, run `pnpm db:migrate` on container start, `CMD ["tsx", "src/server.ts"]`. Tini for signal forwarding. | new `apps/api/Dockerfile` | M | `docker build` succeeds; `docker run` boots and responds on `:3501/health`. | API ships as a container. |
-| **P4-OPS-02** | Dockerfile for `apps/web`: `next build` + `next start`. | new `apps/web/Dockerfile` | S | As above for `:3500`. | Web ships as a container. |
+| **P4-OPS-02** | Dockerfile for `apps/web`: `next build` + `next start`. | new `apps/web/Dockerfile` | S | As above for `:3599`. | Web ships as a container. |
 | **P4-OPS-03** | Dockerfile for Inngest worker (separate process; runs `serve()` against the API or uses Inngest cloud). | new `apps/inngest-worker/Dockerfile` or compose worker against existing api image | M | Integration: events delivered. | Worker ships as a container. |
 | **P4-OPS-04** | `docker-compose.yml` for local dev (api + web + inngest + optional Postgres replacement of SQLite). | `docker-compose.yml`, `docker-compose.override.yml` | S | `docker compose up` boots the stack. | One-command local stack. |
 

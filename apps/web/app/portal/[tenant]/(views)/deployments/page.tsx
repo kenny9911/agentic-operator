@@ -6,6 +6,17 @@
  * Ported from `apps/web/public/portal/views/deployments.jsx`. The wizard
  * preserves the lime-tinted box-shadow and three method cards (manifest /
  * code / builder). Live versions card list + history table.
+ *
+ * Data path (production-mode wiring):
+ *   - `useDeployments()` → `/v1/deployments` (apps/api/src/routes/v1/deployments.ts)
+ *     tenant-scoped via the `x-agentic-tenant` header that lib/hooks/tenant-header.ts
+ *     injects from `window.location.pathname`. No bootstrap fallback. No mock.
+ *   - `useRollbackDeployment()` → `POST /v1/deployments/:id/rollback`.
+ *   - `useDag()` → workflow version + agent count for the Live-Workflow card.
+ *
+ * Loading + error states are explicit per the production-mode rule:
+ * "no silent mock fallback when api is unreachable" (apps/web/app/portal/components/shell/chrome.tsx
+ * shows the global banner; this view shows a localized Empty/Error state).
  */
 
 import { useMemo, useState } from "react";
@@ -19,9 +30,16 @@ import {
   CodeBlock,
   Th,
   Td,
+  useToast,
 } from "@/app/portal/components";
 import { fmtAgo } from "@/app/portal/lib/format";
-import { useRaasData } from "@/lib/hooks/data-context";
+import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useDag } from "@/lib/hooks/useAgents";
+import {
+  useDeployments,
+  useRollbackDeployment,
+  type DeploymentRow,
+} from "@/lib/hooks/useDeployments";
 
 interface DeploymentItem {
   id: string;
@@ -33,25 +51,47 @@ interface DeploymentItem {
   note: string;
 }
 
-function fromBootstrap(d: Record<string, unknown>): DeploymentItem {
+function fromApi(d: DeploymentRow): DeploymentItem {
   return {
-    id: String(d.id ?? ""),
-    version: String(d.version ?? ""),
-    agent: String(d.agent ?? ""),
-    status: String(d.status ?? ""),
-    by: String(d.by ?? ""),
-    at: typeof d.at === "number" ? d.at : 0,
-    note: String(d.note ?? ""),
+    id: d.id,
+    version: d.versionString,
+    agent: d.workflowSlug,
+    status: d.status,
+    by: d.deployedBy ?? "—",
+    at: d.deployedAt ? new Date(d.deployedAt).getTime() : 0,
+    note: d.note ?? "",
   };
 }
 
 export default function DeploymentsPage() {
-  const { deployments: rawDeployments } = useRaasData();
+  const toast = useToast();
+  const tenant = useTenant();
+  const dagQuery = useDag();
+  const workflowVersion = dagQuery.data?.workflowVersion ?? "";
+  const liveAgentCount = dagQuery.data?.agents.length ?? null;
+
+  const { data, isLoading, isError, error } = useDeployments();
+  const rollback = useRollbackDeployment();
   const dpls = useMemo<DeploymentItem[]>(
-    () => rawDeployments.map((d) => fromBootstrap(d as Record<string, unknown>)),
-    [rawDeployments],
+    () => (data?.list ?? []).map(fromApi),
+    [data?.list],
   );
+  const live = data?.live ?? null;
+  const liveDeployedAt = live?.deployedAt ? new Date(live.deployedAt).getTime() : 0;
   const [showWizard, setShowWizard] = useState(false);
+
+  const onRollback = (deploymentId: string) => {
+    rollback.mutate(deploymentId, {
+      onSuccess: (res) =>
+        toast({ tone: "green", title: "Rolled back", description: res.note }),
+      onError: (e) =>
+        toast({
+          tone: "red",
+          title: "Rollback failed",
+          description: e instanceof Error ? e.message : String(e),
+        }),
+    });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -88,27 +128,27 @@ export default function DeploymentsPage() {
           >
             <LiveCard
               label="Workflow"
-              name="raas"
-              version="2026.05.16-a"
-              agentCount={22}
-              deployedBy="Liu Wei"
-              at={Date.now() - 5 * 60_000}
+              name={live?.workflowSlug ?? tenant}
+              version={live?.versionString ?? workflowVersion ?? "—"}
+              agentCount={live?.agentCount ?? liveAgentCount}
+              deployedBy={live?.deployedBy ?? "—"}
+              at={liveDeployedAt}
             />
             <LiveCard
               label="Runtime"
               name="agentic-operator"
-              version="0.6.2"
+              version={process.env.NEXT_PUBLIC_APP_VERSION ?? "0.6.2"}
               agentCount={null}
-              deployedBy="Ops"
-              at={Date.now() - 4 * 86_400_000}
+              deployedBy="local"
+              at={0}
             />
             <LiveCard
               label="Inngest worker"
-              name="raas-worker"
-              version="prod-08"
+              name="inngest-dev"
+              version="local"
               agentCount={null}
-              deployedBy="Ops"
-              at={Date.now() - 11 * 3_600_000}
+              deployedBy="dev"
+              at={0}
             />
           </div>
         </Panel>
@@ -122,11 +162,26 @@ export default function DeploymentsPage() {
             </Button>
           }
         >
-          {dpls.length === 0 ? (
+          {isLoading ? (
+            <div style={{ padding: 14 }}>
+              <Empty title="Loading deployments…" hint="" />
+            </div>
+          ) : isError ? (
+            <div style={{ padding: 14 }}>
+              <Empty
+                title="Failed to load deployments"
+                hint={
+                  error instanceof Error
+                    ? error.message
+                    : "Check that the api is running on :3501 and the tenant slug is valid."
+                }
+              />
+            </div>
+          ) : dpls.length === 0 ? (
             <div style={{ padding: 14 }}>
               <Empty
                 title="No deployments yet"
-                hint="Push a manifest or run agentic deploy"
+                hint={`Tenant ${tenant} has no deployment history. Push a manifest or run \`agentic deploy\`.`}
               />
             </div>
           ) : (
@@ -164,8 +219,12 @@ export default function DeploymentsPage() {
                     <Td>
                       {d.status === "live" ? (
                         <Badge tone="signal">LIVE</Badge>
-                      ) : d.status === "rolled-back" ? (
+                      ) : d.status === "rolled_back" || d.status === "rolled-back" ? (
                         <Badge tone="muted">ROLLED BACK</Badge>
+                      ) : d.status === "pending" ? (
+                        <Badge tone="amber">PENDING</Badge>
+                      ) : d.status === "superseded" ? (
+                        <Badge tone="muted">SUPERSEDED</Badge>
                       ) : (
                         <Badge tone="muted">{d.status}</Badge>
                       )}
@@ -204,12 +263,23 @@ export default function DeploymentsPage() {
                           Diff
                         </Button>
                         {d.status === "live" ? (
-                          <Button small tone="ghost">
-                            Rollback
+                          <Button small tone="ghost" disabled>
+                            Live
+                          </Button>
+                        ) : d.status === "rolled_back" ||
+                          d.status === "rolled-back" ||
+                          d.status === "superseded" ? (
+                          <Button
+                            small
+                            tone="ghost"
+                            onClick={() => onRollback(d.id)}
+                            disabled={rollback.isPending}
+                          >
+                            {rollback.isPending ? "Restoring…" : "Restore"}
                           </Button>
                         ) : (
-                          <Button small tone="ghost">
-                            Restore
+                          <Button small tone="ghost" disabled>
+                            {d.status}
                           </Button>
                         )}
                       </div>

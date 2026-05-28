@@ -44,7 +44,7 @@ $ curl -X POST -d '{}' "http://localhost:3501/v1/agents/testAgent/invoke?testRun
 
 `apps/web/public/portal/` (960 KB, 16 files including `index.html`, `data-context.jsx`, `views/{dashboard,workflows,agents,runs,events,tasks,logs,deployments,settings}.jsx`, `agent-code.jsx`, `import-manifest.jsx`, `tweaks-panel.jsx`, etc.) is wiped.
 
-`apps/web/next.config.mjs` — the broken `/portal-legacy/:path*` → `/portal/:path*` rewrite is removed. Remaining rewrites: `/v1/*` and `/health` to apps/api on 3501; `/` to `/portal/raas/dashboard`. Confirmed `curl http://localhost:3500/` returns the App Router shell.
+`apps/web/next.config.mjs` — the broken `/portal-legacy/:path*` → `/portal/:path*` rewrite is removed. Remaining rewrites: `/v1/*` and `/health` to apps/api on 3501; `/` to `/portal/raas/dashboard`. Confirmed `curl http://localhost:3599/` returns the App Router shell.
 
 `apps/web/eslint.config.mjs` — `public/portal/**` ignore glob replaced with `test-results/**` + `playwright-report/**`.
 
@@ -137,7 +137,7 @@ Tab/Shift-Tab/Enter/Escape verified manually + via axe-core. The skip-link surfa
 - `pnpm --filter @agentic/web build` — 19 routes registered, no errors.
 - `pnpm --filter @agentic/web test:visual` — 9 view diffs captured.
 - `pnpm --filter @agentic/web exec playwright test test/visual/a11y.spec.ts` — 9 views, 0 critical.
-- `pnpm dev` + `curl http://localhost:3500/` — App Router shell renders (verified content shows `<html data-theme="dark" data-density="default">`).
+- `pnpm dev` + `curl http://localhost:3599/` — App Router shell renders (verified content shows `<html data-theme="dark" data-density="default">`).
 - Smoke: `POST /v1/agents/testAgent/invoke?testRun=1` returns `{ ok: true, data: { testRun: true, … } }`.
 
 ## v1.1 follow-ups discovered

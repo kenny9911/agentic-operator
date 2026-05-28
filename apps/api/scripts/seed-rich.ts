@@ -419,10 +419,57 @@ async function writeSampleLog(fixtures: RaasFixtures) {
   return { path: filePath, written: true };
 }
 
-async function main() {
-  console.log("[seed-rich] loading handoff data.js …");
-  const fixtures = await loadRaasFixtures();
-  console.log(
+export interface SeedRichResult {
+  ok: boolean;
+  reason?: "tenant_not_seeded" | "no_workflow_version" | "data_js_missing" | "failed";
+  parsed?: {
+    agents: number;
+    eventTypes: number;
+    runs: number;
+    events: number;
+    tasks: number;
+    deployments: number;
+  };
+  inserted?: {
+    eventTypes: number;
+    agentMetadata: number;
+    runs: number;
+    runsSkipped: number;
+    events: number;
+    tasks: number;
+    deployments: number;
+  };
+  sampleLog?: { path: string; written: boolean } | null;
+}
+
+/**
+ * Programmatic entry point for both the CLI (`pnpm seed:rich`) and the
+ * boot-time demo-mode hydration (`apps/api/src/services/demo-seed.ts`).
+ *
+ * Idempotent on a per-row basis: every insert helper does an `exists`
+ * check by primary key before writing, so calling this on a partially-
+ * seeded DB is safe.
+ *
+ * Failures bubble as `{ ok:false, reason }` rather than `process.exit`
+ * so the api boot path can degrade cleanly to "demo mode requested but
+ * tenant/workflow not ready" without crashing.
+ */
+export async function runSeedRich(opts: {
+  logger?: { info: (msg: string) => void; warn?: (msg: string) => void };
+} = {}): Promise<SeedRichResult> {
+  const log = opts.logger ?? {
+    info: (msg: string) => console.log(msg),
+    warn: (msg: string) => console.warn(msg),
+  };
+  log.info("[seed-rich] loading handoff data.js …");
+  let fixtures: RaasFixtures;
+  try {
+    fixtures = await loadRaasFixtures();
+  } catch (err) {
+    log.warn?.(`[seed-rich] data.js read failed: ${String(err)}`);
+    return { ok: false, reason: "data_js_missing" };
+  }
+  log.info(
     `[seed-rich] parsed: ${fixtures.RAAS_AGENTS?.length ?? 0} agents · ` +
       `${fixtures.RAAS_EVENTS?.length ?? 0} event types · ` +
       `${fixtures.RAAS_RUNS?.length ?? 0} runs · ` +
@@ -433,16 +480,22 @@ async function main() {
 
   const tenantId = await resolveTenantId(TENANT_SLUG);
   if (!tenantId) {
-    console.error(`[seed-rich] tenant slug=${TENANT_SLUG} not found in DB — run \`pnpm db:seed\` first`);
-    process.exit(1);
+    log.warn?.(
+      `[seed-rich] tenant slug=${TENANT_SLUG} not found in DB — run \`pnpm db:seed\` first`,
+    );
+    return { ok: false, reason: "tenant_not_seeded" };
   }
   const wf = await resolveLiveWorkflowVersion(tenantId);
   if (!wf) {
-    console.error(`[seed-rich] no workflow version for tenant ${TENANT_SLUG} — boot api once first so bootstrap registers the manifest`);
-    process.exit(1);
+    log.warn?.(
+      `[seed-rich] no workflow version for tenant ${TENANT_SLUG} — boot api once first so bootstrap registers the manifest`,
+    );
+    return { ok: false, reason: "no_workflow_version" };
   }
   const agentMap = await buildAgentNameToIdMap(wf.workflowId);
-  console.log(`[seed-rich] tenant ${TENANT_SLUG} → ${tenantId}, ${agentMap.size / 2} agents resolved`);
+  log.info(
+    `[seed-rich] tenant ${TENANT_SLUG} → ${tenantId}, ${agentMap.size / 2} agents resolved`,
+  );
 
   const eventTypeCount = await seedEventTypes(tenantId, fixtures);
   const agentMetaCount = await seedAgentMetadata(wf.workflowId, fixtures);
@@ -456,18 +509,50 @@ async function main() {
   const deploysIns = await seedDeployments(tenantId, fixtures);
   const sampleLog = await writeSampleLog(fixtures);
 
-  console.log(
+  log.info(
     `[seed-rich] inserted: ${eventTypeCount} event types · ${agentMetaCount} agent metadata · ${runsIns} runs (${runsSkip} skipped) · ${eventsIns} events · ${tasksIns} tasks · ${deploysIns} deployments`,
   );
   if (sampleLog) {
-    console.log(
+    log.info(
       `[seed-rich] sample log: ${sampleLog.written ? "wrote" : "exists"} ${sampleLog.path}`,
     );
   }
-  console.log("[seed-rich] done");
+  log.info("[seed-rich] done");
+
+  return {
+    ok: true,
+    parsed: {
+      agents: fixtures.RAAS_AGENTS?.length ?? 0,
+      eventTypes: fixtures.RAAS_EVENTS?.length ?? 0,
+      runs: fixtures.RAAS_RUNS?.length ?? 0,
+      events: fixtures.RAAS_EVENT_STREAM?.length ?? 0,
+      tasks: fixtures.RAAS_TASKS?.length ?? 0,
+      deployments: fixtures.RAAS_DEPLOYMENTS?.length ?? 0,
+    },
+    inserted: {
+      eventTypes: eventTypeCount,
+      agentMetadata: agentMetaCount,
+      runs: runsIns,
+      runsSkipped: runsSkip,
+      events: eventsIns,
+      tasks: tasksIns,
+      deployments: deploysIns,
+    },
+    sampleLog,
+  };
 }
 
-main().catch((err) => {
-  console.error("[seed-rich] failed", err);
-  process.exit(1);
-});
+// Only run when invoked as a CLI (`pnpm seed:rich`). When imported by the
+// demo-mode bootstrap, the export above is used instead so the api can keep
+// the process alive after seeding completes.
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  runSeedRich()
+    .then((result) => {
+      if (!result.ok) process.exit(1);
+    })
+    .catch((err) => {
+      console.error("[seed-rich] failed", err);
+      process.exit(1);
+    });
+}

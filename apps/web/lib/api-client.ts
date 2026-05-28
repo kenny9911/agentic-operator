@@ -69,6 +69,12 @@ const ReplayRunPayload = z.object({
   replayed_run: z.string(),
   new_event_id: z.string(),
 });
+const CancelRunPayload = z.object({
+  runId: z.string(),
+  status: z.string(),
+  cancelled: z.boolean(),
+  note: z.string(),
+});
 
 export const runs = {
   list: (opts: z.input<typeof import("@agentic/contracts").ListRunsQuery> = {}) =>
@@ -77,6 +83,10 @@ export const runs = {
     call(GetRunPayload, `/v1/runs/${encodeURIComponent(id)}`),
   replay: (id: string) =>
     call(ReplayRunPayload, `/v1/runs/${encodeURIComponent(id)}/replay`, {
+      method: "POST",
+    }),
+  cancel: (id: string) =>
+    call(CancelRunPayload, `/v1/runs/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
     }),
 };

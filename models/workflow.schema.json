@@ -141,7 +141,14 @@
                     "description": {
                       "type": "string"
                     },
-                    "input_schema": {}
+                    "input_schema": {},
+                    "config": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
                   },
                   "required": [
                     "name"

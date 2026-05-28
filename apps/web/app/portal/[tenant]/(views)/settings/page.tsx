@@ -52,11 +52,13 @@ const ROUTED_SECTIONS: Record<string, string> = {
   audit: "audit",
 };
 
-// FE-P0-4 sub-fix 4c: region comes from a public env var so dev/prod can
-// differ; defaults to the prior literal so existing dashboards keep showing
-// "cn-shenzhen-1" until ops override it.
+// Region label for the workspace subtitle. Comes from
+// `NEXT_PUBLIC_AGENTIC_REGION` so prod/staging can differ. **No fake
+// fallback** — if the env var isn't set we show "—" so the operator
+// doesn't read a region they didn't deploy to (the prior default was
+// "cn-shenzhen-1", which actively misled non-China deployments).
 const REGION =
-  process.env.NEXT_PUBLIC_AGENTIC_REGION ?? "cn-shenzhen-1";
+  (process.env.NEXT_PUBLIC_AGENTIC_REGION ?? "").trim() || "—";
 
 export default function SettingsPage() {
   const [section, setSection] = useState<SettingsSectionId>("workspace");

@@ -133,14 +133,31 @@ describe("TC-61: /v1/llm/fleet model-fleet CRUD", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST /fleet rejects model not in catalog for catalogued provider", async () => {
+  it("POST /fleet accepts any non-empty model name (live discovery is the source of truth)", async () => {
+    // The static catalog was historically a gate that rejected anything not
+    // in PROVIDER_MODEL_CATALOG, but the picker shows live-discovered models
+    // (OpenRouter alone returns ~360). A live model the catalog hasn't been
+    // updated for must still be addable. Bad names surface at invocation
+    // time when the upstream returns 404.
     const res = await env.fetch("/v1/llm/fleet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        provider: "anthropic",
-        modelName: "not-a-real-model",
+        provider: "openrouter",
+        modelName: "openai/gpt-5.4-mini-future",
       }),
+    });
+    expect(res.status).toBe(200);
+    // Clean up so later tests still see only the two seeded entries.
+    const body = (await res.json()) as { data: { id: string } };
+    await env.fetch(`/v1/llm/fleet/${body.data.id}`, { method: "DELETE" });
+  });
+
+  it("POST /fleet rejects empty modelName", async () => {
+    const res = await env.fetch("/v1/llm/fleet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "openrouter", modelName: "  " }),
     });
     expect(res.status).toBe(400);
   });
@@ -199,5 +216,28 @@ describe("TC-61: /v1/llm/fleet model-fleet CRUD", () => {
   it("DELETE /fleet/:id 404 on unknown id", async () => {
     const res = await env.fetch("/v1/llm/fleet/mdl-nosuch", { method: "DELETE" });
     expect(res.status).toBe(404);
+  });
+
+  // The catalog was extended with five model IDs that the live OpenRouter
+  // /models endpoint returns but the curated list previously rejected — the
+  // user saw `bad_request — model … not in openrouter catalog` when trying
+  // to add them through the Settings picker. Guard the catalog so the
+  // entries don't get pruned by a future cleanup.
+  it.each([
+    "openai/gpt-oss-120b",
+    "google/gemini-3-flash-preview",
+    "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4-flash",
+    "minimax/minimax-m2.7",
+  ])("POST /fleet accepts catalog model %s", async (modelName) => {
+    const res = await env.fetch("/v1/llm/fleet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "openrouter", modelName }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; data: { modelName: string } };
+    expect(body.ok).toBe(true);
+    expect(body.data.modelName).toBe(modelName);
   });
 });

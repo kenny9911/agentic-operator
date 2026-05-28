@@ -85,7 +85,7 @@ Required gates: lines ≥ 70 %, branches ≥ 60 %. **All workspaces pass.**
 ### E2E suite
 
 All 19 specs across 6 files pass against a live `pnpm dev` stack
-(`api:3501` + `web:3500` + inngest dev `:8288`). Reproduction:
+(`api:3501` + `web:3599` + inngest dev `:8288`). Reproduction:
 
 ```bash
 nvm use
@@ -98,7 +98,7 @@ LLM_DEFAULT_MODEL=mock-model-v1 AGENTIC_RATE_LIMIT_DISABLED=1 pnpm dev
 
 # Terminal B
 pnpm --filter @agentic/web exec playwright install chromium
-PW_API_BASE=http://localhost:3501 PW_WEB_BASE=http://localhost:3500 \
+PW_API_BASE=http://localhost:3501 PW_WEB_BASE=http://localhost:3599 \
   pnpm --filter @agentic/web test:e2e
 ```
 

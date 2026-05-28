@@ -19,7 +19,7 @@ import fs from "node:fs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(__dirname, "current-snapshots");
 fs.mkdirSync(OUT_DIR, { recursive: true });
-const BASE_URL = process.env.PW_BASE_URL ?? "http://localhost:3500";
+const BASE_URL = process.env.PW_BASE_URL ?? "http://localhost:3599";
 
 const VIEWS = [
   "dashboard",

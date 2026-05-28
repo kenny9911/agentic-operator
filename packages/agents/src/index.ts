@@ -10,4 +10,5 @@ export { BaseAgent } from "./base-agent";
 export { agentRegistry } from "./registry";
 export { setGateway, getGateway, hasGateway } from "./gateway-host";
 export { bootstrapCodeAgents } from "./bootstrap";
+export { RunCancelledError } from "./run-engine";
 export type { AgentContext, AgentResult, AgentKind } from "./types";

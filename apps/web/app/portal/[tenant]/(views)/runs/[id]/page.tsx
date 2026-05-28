@@ -12,7 +12,7 @@
  * preserves the "Open agent" jump button + TEST RUN badge for testRun runs.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -28,12 +28,16 @@ import {
 } from "@/app/portal/components";
 import { fmtDur, fmtNum, fmtTime } from "@/app/portal/lib/format";
 import { useTenant } from "@/app/portal/lib/use-tenant";
-import { useRun, useReplayRun, type RunListRow, type StepRow } from "@/lib/hooks/useRuns";
-import { useRaasData } from "@/lib/hooks/data-context";
-import type { SpaAgent } from "@/lib/spa/types";
+import {
+  useRun,
+  useReplayRun,
+  useCancelRun,
+  type RunListRow,
+  type StepRow,
+} from "@/lib/hooks/useRuns";
+import { useAgents, useAgent, type AgentListRow } from "@/lib/hooks/useAgents";
 // AgentCodeTab is owned by the heavy-views engineer (P2-FE-08/09). Imported
-// directly here to satisfy delta D-7 (Runs detail "agent" tab) — see audit
-// 01 §6.
+// directly here to satisfy delta D-7 (Runs detail "agent" tab).
 import { AgentCodeTab } from "@/app/portal/components/agent-code/AgentCodeTab";
 import { TraceTree } from "@/app/portal/components/runs/TraceTree";
 
@@ -81,18 +85,40 @@ interface RunDetailProps {
 }
 
 function RunDetail({ run, steps, tab, setTab, tenant }: RunDetailProps) {
-  const { agents, sampleLog } = useRaasData();
+  const { data: agents = [] } = useAgents();
   const router = useRouter();
   const toast = useToast();
   const replay = useReplayRun();
-  // The /v1/runs response keys agents by name; the bootstrap snapshot keys
-  // them by id. Match on name when available.
-  const agent = useMemo(
+  const cancel = useCancelRun();
+  // Inline-confirmation gate for the Stop button (P0 NO-MODAL policy —
+  // matches the rest of the portal's "click once to arm, again to fire"
+  // pattern). Stays armed for 3s then snaps back to idle so a stray click
+  // doesn't accidentally cancel a run after the operator wandered away.
+  const [confirmStop, setConfirmStop] = useState(false);
+  useEffect(() => {
+    if (!confirmStop) return;
+    const t = setTimeout(() => setConfirmStop(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmStop]);
+  // The /v1/runs response keys agents by name; match on name to find the
+  // listing row, then fetch full manifest detail for the "agent" code tab.
+  const agentRow = useMemo(
     () => agents.find((a) => a.name === run.agentName) ?? null,
     [agents, run.agentName],
   );
+  const agentDetailQuery = useAgent(agentRow?.kebabId ?? null);
+  const agentDetail = agentDetailQuery.data ?? null;
   const testRun = (run as { testRun?: boolean }).testRun === true;
   const isReplay = Boolean(run.parentRunId);
+  // The Stop button is only meaningful for runs that haven't finished. We
+  // treat the same set the API treats as cancellable: anything not in
+  // {ok, failed, cancelled}. `idle` is included for completeness in case a
+  // future code path enqueues a run without flipping straight to running.
+  const isActive =
+    run.status === "running" ||
+    run.status === "waiting" ||
+    run.status === "queued" ||
+    run.status === "idle";
 
   async function handleReplay() {
     try {
@@ -109,6 +135,42 @@ function RunDetail({ run, steps, tab, setTab, tenant }: RunDetailProps) {
       toast({
         tone: "red",
         title: "Replay failed",
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  }
+
+  async function handleStop() {
+    // Two-click confirmation gate: first click arms, second click fires.
+    // The arm state self-resets after 3s (see useEffect above) so a stray
+    // click doesn't cancel a run the operator wandered away from.
+    if (!confirmStop) {
+      setConfirmStop(true);
+      return;
+    }
+    setConfirmStop(false);
+    try {
+      const data = await cancel.mutateAsync(run.id);
+      if (data.cancelled) {
+        toast({
+          tone: "amber",
+          title: "Run cancelled",
+          description: data.note,
+        });
+      } else {
+        // Server-side idempotent no-op (run was already terminal). Treat
+        // as success, not error — the operator's intent ("stop this run")
+        // is already satisfied.
+        toast({
+          tone: "default",
+          title: "Already finished",
+          description: data.note,
+        });
+      }
+    } catch (err) {
+      toast({
+        tone: "red",
+        title: "Cancel failed",
         description: err instanceof Error ? err.message : "Unknown error",
       });
     }
@@ -176,6 +238,27 @@ function RunDetail({ run, steps, tab, setTab, tenant }: RunDetailProps) {
               alignItems: "center",
             }}
           >
+            {isActive && (
+              <Button
+                small
+                icon="pause"
+                tone="danger"
+                onClick={handleStop}
+                disabled={cancel.isPending}
+                title={
+                  confirmStop
+                    ? "Click again within 3s to cancel this run"
+                    : "Stop this in-flight run"
+                }
+                ariaLabel={confirmStop ? "Confirm stop run" : "Stop run"}
+              >
+                {cancel.isPending
+                  ? "Stopping…"
+                  : confirmStop
+                    ? "Confirm stop"
+                    : "Stop"}
+              </Button>
+            )}
             <Button
               small
               icon="replay"
@@ -185,9 +268,9 @@ function RunDetail({ run, steps, tab, setTab, tenant }: RunDetailProps) {
             >
               {replay.isPending ? "Replaying…" : "Replay"}
             </Button>
-            {agent && (
+            {agentRow && (
               <Link
-                href={`/portal/${tenant}/agents/${agent.id}` as never}
+                href={`/portal/${tenant}/agents/${agentRow.kebabId}` as never}
                 style={{ textDecoration: "none" }}
               >
                 <Button small icon="agent" tone="ghost">
@@ -280,23 +363,24 @@ function RunDetail({ run, steps, tab, setTab, tenant }: RunDetailProps) {
       </div>
 
       {/* Agent tab — full-bleed flex region; embeds the AgentCodeTab from
-          heavy-views (delta D-7). Falls back to Empty when no matching agent
-          exists in the bootstrap snapshot. Coercion via spread is needed
-          because SpaAgent's tool_use is typed `unknown` while AgentCodeTab
-          expects a narrower ToolUseSchema[] — the runtime shape matches. */}
+          heavy-views (delta D-7). The api's AgentDetail contract doesn't
+          yet surface typescript_code / tool_use / input_data /
+          ontology_instructions — those come back empty. The tab renders
+          the "no code recorded" state for manifest agents until the api
+          starts shipping those fields. */}
       {isAgentTab && (
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          {agent ? (
+          {agentDetailQuery.isLoading && !agentDetail ? (
+            <Empty title="Loading agent…" hint={agentRow?.kebabId ?? ""} />
+          ) : agentRow ? (
             <AgentCodeTab
               agent={{
-                actor: agent.actor,
-                name: agent.name,
-                typescript_code: agent.typescript_code,
-                tool_use: Array.isArray(agent.tool_use)
-                  ? (agent.tool_use as never)
-                  : undefined,
-                input_data: agent.input_data,
-                ontology_instructions: agent.ontology_instructions,
+                actor: agentRow.actor,
+                name: agentRow.name,
+                typescript_code: "",
+                tool_use: undefined,
+                input_data: {},
+                ontology_instructions: "",
               }}
             />
           ) : (
@@ -320,8 +404,8 @@ function RunDetail({ run, steps, tab, setTab, tenant }: RunDetailProps) {
           </div>
         </Panel>
       )}
-      {tab === "logs" && <LogsTab sampleLog={sampleLog} />}
-      {tab === "io" && <IOTab run={run} agent={agent} />}
+      {tab === "logs" && <LogsTab runId={run.id} tenant={tenant} />}
+      {tab === "io" && <IOTab run={run} agent={agentRow} tenant={tenant} />}
       {tab === "events" && <RunEventsTab run={run} />}
 
       {/* Failed-run error panel (any tab except agent) */}
@@ -520,11 +604,63 @@ function TimelineTab({ steps, run }: { steps: StepRow[]; run: RunListRow }) {
 
 // ─── Logs tab ────────────────────────────────────────────────────────────────
 
-function LogsTab({ sampleLog }: { sampleLog: string }) {
+function LogsTab({ runId, tenant }: { runId: string; tenant: string }) {
+  // Real per-run log content via `/v1/runs/:runId/logs`. Previously this
+  // rendered a RAAS-specific sample log (matchResume/CAN-88412) regardless
+  // of which run the user opened.
+  const [lines, setLines] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setLines([]);
+    // The api streams logs as SSE text/event-stream. Without ?follow=1 it
+    // sends the existing file content then closes the connection — perfect
+    // for a one-shot "show me the log" panel. We parse SSE frames so the
+    // operator sees the same lines that the server-side tail would emit.
+    fetch(`/v1/runs/${encodeURIComponent(runId)}/logs`, {
+      credentials: "same-origin",
+      headers: { Accept: "text/event-stream", "x-agentic-tenant": tenant },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`/v1/runs/${runId}/logs: HTTP ${res.status}`);
+        const text = await res.text();
+        if (cancelled) return;
+        const out: string[] = [];
+        // Frames look like:
+        //   event: log\n
+        //   data: <line>\n
+        //   \n
+        // Pull just the data lines from `event: log` frames.
+        let currentEvent: string | null = null;
+        for (const raw of text.split("\n")) {
+          if (raw.startsWith("event:")) currentEvent = raw.slice(6).trim();
+          else if (raw.startsWith("data:")) {
+            if (currentEvent === "log") out.push(raw.slice(5).trim());
+            else if (currentEvent === "info") out.push(`# ${raw.slice(5).trim()}`);
+          } else if (raw === "") currentEvent = null;
+        }
+        setLines(out);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, tenant]);
+
   return (
     <Panel
-      title="logs/run.log"
-      subtitle="tail -f · file-backed"
+      title={`logs/runs/${runId}.log`}
+      subtitle={loading ? "loading…" : error ? "error" : "file-backed"}
       padded={false}
       action={
         <Button small icon="external" tone="ghost">
@@ -547,7 +683,13 @@ function LogsTab({ sampleLog }: { sampleLog: string }) {
           overflow: "auto",
         }}
       >
-        {(sampleLog || "").split("\n").map((line, i) => {
+        {error && (
+          <div style={{ color: "var(--red)" }}>Failed to load logs: {error}</div>
+        )}
+        {!error && lines.length === 0 && !loading && (
+          <div style={{ color: "var(--text-3)" }}>(no log lines recorded for this run)</div>
+        )}
+        {lines.map((line, i) => {
           let color = "var(--text-2)";
           if (line.includes("ERROR")) color = "var(--red)";
           else if (line.includes(" WARN ")) color = "var(--amber)";
@@ -570,9 +712,11 @@ function LogsTab({ sampleLog }: { sampleLog: string }) {
 function IOTab({
   run,
   agent,
+  tenant,
 }: {
   run: RunListRow;
-  agent: SpaAgent | null;
+  agent: AgentListRow | null;
+  tenant: string;
 }) {
   return (
     <div
@@ -589,9 +733,14 @@ function IOTab({
               event: run.triggerEvent,
               subject: run.subject,
               context: {
-                tenant: "raas",
+                // Reconstruct the trigger envelope from real run fields —
+                // tenant comes from the URL, agent + correlation from the
+                // run row. Previously this hardcoded "raas" and a fixed
+                // "raas@2026.05.16-a" version that misrepresented runs
+                // from every other tenant.
+                tenant,
                 agent: agent?.name ?? run.agentName,
-                agent_version: "raas@2026.05.16-a",
+                correlation_id: run.correlationId ?? null,
               },
               payload: {
                 run_id: run.id,

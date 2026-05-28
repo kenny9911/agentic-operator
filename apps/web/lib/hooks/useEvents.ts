@@ -9,6 +9,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { EVENT_KEYS, COUNT_KEYS } from "./useStream";
+import { tenantHeader } from "./tenant-header";
 
 interface ApiOk<T> {
   ok: true;
@@ -20,13 +21,15 @@ interface ApiErr {
 }
 
 async function callV1<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { headers: initHeaders, ...rest } = init;
   const res = await fetch(path, {
     credentials: "same-origin",
+    ...rest,
     headers: {
       Accept: "application/json",
-      ...(init.headers as Record<string, string> | undefined),
+      ...tenantHeader(),
+      ...(initHeaders as Record<string, string> | undefined),
     },
-    ...init,
   });
   const body = (await res.json()) as ApiOk<T> | ApiErr;
   if (!body.ok) {
@@ -61,6 +64,53 @@ export interface EventRow {
   sourceAgentName: string | null;
   sourceAgentTitle: string | null;
   payloadRef: string | null;
+  /** Runs whose trigger_event_id == this event.id. Empty if no subscriber
+   * picked it up yet. Optional so legacy responses that omit it still
+   * decode cleanly. */
+  consumers?: Array<{
+    runId: string;
+    agentName: string | null;
+    agentTitle: string | null;
+    status: string;
+  }>;
+}
+
+/** Field descriptor from `/v1/events/catalog` — drives typed form inputs. */
+export interface EventCatalogField {
+  name: string;
+  type: string;
+  target_object?: string | null;
+  required?: boolean;
+  enum?: string[];
+}
+
+/** One row from `/v1/events/catalog`. */
+export interface EventCatalogEntry {
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  color?: string | null;
+  source_action?: string | null;
+  fields: EventCatalogField[];
+  raw_payload_schema: unknown;
+}
+
+/**
+ * Event-type catalog for the current tenant — name + description + typed
+ * field schema. Used by the Publish-event modal so it can render typed
+ * inputs instead of a raw JSON blob.
+ */
+export function useEventCatalog(): UseQueryResult<EventCatalogEntry[]> {
+  return useQuery({
+    queryKey: ["events", "catalog"],
+    queryFn: async () => {
+      const data = await callV1<{ events: EventCatalogEntry[] }>(
+        "/v1/events/catalog",
+      );
+      return data.events;
+    },
+    staleTime: 60_000,
+  });
 }
 
 export function useEvents(

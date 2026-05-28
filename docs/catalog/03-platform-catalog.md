@@ -16,11 +16,11 @@ The product is a **two-process split with a shared Zod contract package**. Web i
 The root `package.json` script orchestrates three child processes via `concurrently`:
 ```
 pnpm dev → concurrently -n web,api,inngest \
-  "pnpm --filter @agentic/web run dev"       # port 3500 (Next.js + Turbopack)
+  "pnpm --filter @agentic/web run dev"       # port 3599 (Next.js + Turbopack)
   "pnpm --filter @agentic/api run dev"       # port 3501 (Fastify)
   "npx -y inngest-cli@latest dev -u http://localhost:3501/inngest"  # port 8288
 ```
-`predev` at `package.json:11` kills anything squatting on `3500,3501,8288,8289,50052,50053` before the cluster starts so a stuck process never silently shadows the new boot. The `/health` endpoint at `apps/api/src/routes/health.ts:11-26` returns the live `HealthReport` contract with subsystem checks (`inngest`, `sqlite`, `disk`) — anything but `ok:true` flips the response code to 503. Used by Docker `HEALTHCHECK` (PF-OPS) and by uptime probes. Test: `apps/api/test/tc-52-p4-metrics-health.test.ts` asserts the response shape including the optional `version`, `schemaVersion`, `llmGateway` fields added by P4-API-04.
+`predev` at `package.json:11` kills anything squatting on `3599,3501,8288,8289,50052,50053` before the cluster starts so a stuck process never silently shadows the new boot. The `/health` endpoint at `apps/api/src/routes/health.ts:11-26` returns the live `HealthReport` contract with subsystem checks (`inngest`, `sqlite`, `disk`) — anything but `ok:true` flips the response code to 503. Used by Docker `HEALTHCHECK` (PF-OPS) and by uptime probes. Test: `apps/api/test/tc-52-p4-metrics-health.test.ts` asserts the response shape including the optional `version`, `schemaVersion`, `llmGateway` fields added by P4-API-04.
 
 ### PF-TOP-02 — Production process map (docker-compose) ✅
 `docker-compose.yml` at repo root builds three services (`api`, `web`, `inngest`) on a single bridge network named `agentic`. Bind mounts:
@@ -31,7 +31,7 @@ Healthcheck inheritance: each Dockerfile declares its own `HEALTHCHECK` so `depe
 ### PF-TOP-03 — Port map ✅
 | Port | Service | Notes |
 |---|---|---|
-| 3500 | Next.js web | `next dev` → Turbopack in dev; `next start` in prod. |
+| 3599 | Next.js web | `next dev` → Turbopack in dev; `next start` in prod. |
 | 3501 | Fastify API | All `/v1/*` + `/health` + `/metrics` + `/inngest` webhook. |
 | 8288 | Inngest dev broker | Polls `http://localhost:3501/inngest` for function registry. |
 | 8289 | Inngest dev internals | Pre-killed by `predev`; freed for safety. |
@@ -503,7 +503,7 @@ Turbo is the orchestrator; each workspace owns its own `tsc --noEmit`, lint, and
 pnpm 11 with `package.json#packageManager` pinned at `pnpm@11.1.2`. The `pnpm-workspace.yaml#allowBuilds` and `package.json#pnpm.onlyBuiltDependencies` allow-lists let `better-sqlite3`, `esbuild`, `protobufjs`, `sharp`, `unrs-resolver` run their postinstall scripts. Without that allow-list, pnpm 11 halts the install with `ERR_PNPM_IGNORED_BUILDS`. The native `better-sqlite3` binding is compiled per Node major — `.nvmrc` pins Node 26; mismatches surface as `ERR_DLOPEN_FAILED` at boot. Bumping the Node major requires a dedicated PR that regenerates the binding.
 
 ### PF-BUILD-02 — `pnpm dev` orchestration ✅
-Root script. Predev hook kills any process squatting on `3500,3501,8288,8289,50052,50053` (Inngest's internal gRPC ports plus the web + api + broker ports), then `concurrently` boots three children labelled `web,api,inngest`. The api dev script (`apps/api/package.json:7`) is `tsx watch --env-file=../../.env --env-file=.env.local src/server.ts` — both env files load (later wins). The Inngest CLI is fetched via `npx -y inngest-cli@latest dev -u http://localhost:3501/inngest`.
+Root script. Predev hook kills any process squatting on `3599,3501,8288,8289,50052,50053` (Inngest's internal gRPC ports plus the web + api + broker ports), then `concurrently` boots three children labelled `web,api,inngest`. The api dev script (`apps/api/package.json:7`) is `tsx watch --env-file=../../.env --env-file=.env.local src/server.ts` — both env files load (later wins). The Inngest CLI is fetched via `npx -y inngest-cli@latest dev -u http://localhost:3501/inngest`.
 
 ### PF-BUILD-03 — `pnpm build` ✅
 `turbo run build` fans out per workspace. The web build is `next build` with Turbopack (Next 16 default) producing the `output: "standalone"` bundle. The api build is `tsc --noEmit` only — the api itself runs via `tsx` in dev *and* in the Docker image (no JS emit). Apps that emit (`apps/cli`) write to `dist/`.
@@ -528,7 +528,7 @@ Root script. Predev hook kills any process squatting on `3500,3501,8288,8289,500
 RAAS historical fixtures + English ontology overlay (idempotent). Run after `db:seed` if you want English-labeled agents in the UI (the RAAS canonical workflow ships with Chinese titles; `seedAgentMetadata()` overlays English from the handoff prototype).
 
 ### PF-BUILD-09 — Playwright (e2e + visual) ✅
-`apps/web/e2e/*.spec.ts` for flows; `apps/web/test/visual/` for 1440×900 pixel diffs against `test/visual/v1_1-reference/`. The dev server must be running on :3500. `PW_AUTO_WEBSERVER=1` env opts CI into auto-boot. Invocation: `pnpm --filter @agentic/web exec playwright test`. The visual-diff baseline is the v1_1 static SPA reference — production App Router pages must match within the tolerance budget. P4-TEST-04/05 ratified TanStack Query hooks + React effects through Playwright instead of vitest mocking.
+`apps/web/e2e/*.spec.ts` for flows; `apps/web/test/visual/` for 1440×900 pixel diffs against `test/visual/v1_1-reference/`. The dev server must be running on :3599. `PW_AUTO_WEBSERVER=1` env opts CI into auto-boot. Invocation: `pnpm --filter @agentic/web exec playwright test`. The visual-diff baseline is the v1_1 static SPA reference — production App Router pages must match within the tolerance budget. P4-TEST-04/05 ratified TanStack Query hooks + React effects through Playwright instead of vitest mocking.
 
 ### PF-BUILD-10 — Web vitest gate ✅
 `pnpm --filter @agentic/web run test` runs a small vitest unit gate (lines ≥70, branches ≥60) over the helpers listed in `apps/web/vitest.config.ts`. Scope is intentionally narrow — pure helpers with a unit-test seam (formatters, density math, sparkline math, session sign/verify). Component behavior is covered by Playwright, not the unit gate. Same coverage gate (70/60) is enforced for `@agentic/api` and `@agentic/cli` — see PF-CI-02.

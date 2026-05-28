@@ -33,7 +33,7 @@ const OUT_DIR = path.join(
 );
 const SUFFIX = `-chromium-${PLATFORM}.png`;
 fs.mkdirSync(OUT_DIR, { recursive: true });
-const BASE_URL = process.env.PW_BASE_URL ?? "http://localhost:3500";
+const BASE_URL = process.env.PW_BASE_URL ?? "http://localhost:3599";
 
 // Sidebar labels in the legacy SPA (app.jsx). "Human tasks" was renamed
 // to "Tasks" in the new portal; capture under the slug expected by the

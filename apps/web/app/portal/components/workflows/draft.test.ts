@@ -6,25 +6,20 @@ import {
   toManifest,
   type WorkflowDraft,
 } from "./draft";
-import type { RaasAgent } from "@/lib/hooks/data-context";
+import type { DagAgent } from "@/lib/hooks/useAgents";
 
-function agent(id: string, overrides: Partial<RaasAgent> = {}): RaasAgent {
+function agent(id: string, overrides: Partial<DagAgent> = {}): DagAgent {
   return {
     id,
+    kebabId: id,
     name: id,
     title: `Agent ${id}`,
-    description: "",
     actor: "Agent",
     stage: 0,
     triggers: [],
     emits: [],
-    steps: [],
-    tools: [],
-    model: "",
-    input_data: {},
-    ontology_instructions: "",
-    tool_use: undefined,
-    typescript_code: "",
+    recentRunCount: 0,
+    isLive: false,
     ...overrides,
   };
 }
@@ -44,7 +39,7 @@ describe("applyDraft", () => {
     };
     const out = applyDraft(base, draft);
     expect(out).toHaveLength(1);
-    expect(out[0]?.id).toBe("2");
+    expect(out[0]?.kebabId).toBe("2");
   });
 
   it("overrides edited fields", () => {
@@ -68,7 +63,7 @@ describe("applyDraft", () => {
     };
     const out = applyDraft(base, draft);
     expect(out).toHaveLength(2);
-    expect(out[1]?.id).toBe("new-1");
+    expect(out[1]?.kebabId).toBe("new-1");
     expect(out[1]?.title).toBe("Brand new");
   });
 });

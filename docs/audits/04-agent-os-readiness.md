@@ -99,7 +99,7 @@ The single most important table in this audit. Each row is one capability an Age
 | **CLI (`agentic` command)** | None — DESIGN.md §5.6 promises `agentic init/deploy/logs/events`; no `apps/cli` package exists | — | NO |
 | **Visual builder** | Not present; PRD lists as Mode 3; no implementation | — | NO |
 | **API contract introspection** | `@agentic/contracts` Zod schemas + dual-side validation (`packages/contracts/src/`) | — | YES |
-| **Frontend ↔ backend separation** | Next.js web (`:3500`) calls Fastify api (`:3501`); no shared DB access | — | YES |
+| **Frontend ↔ backend separation** | Next.js web (`:3599`) calls Fastify api (`:3501`); no shared DB access | — | YES |
 | **Multi-tenant DB scoping** | `with-tenant.ts` helpers; `tenantId` on every user-visible table | — | YES |
 
 ### What this table says
@@ -204,7 +204,7 @@ When a manifest is uploaded via `POST /v1/agents`, DB rows are written but `mode
 
 ### Process model
 
-- **3 processes in dev:** `apps/web` (Next.js :3500), `apps/api` (Fastify :3501), `inngest-cli dev` (:8288). `package.json:11` shows the `concurrently` invocation.
+- **3 processes in dev:** `apps/web` (Next.js :3599), `apps/api` (Fastify :3501), `inngest-cli dev` (:8288). `package.json:11` shows the `concurrently` invocation.
 - **In production:** identical — no horizontal scaling story documented.
 
 ### Isolation

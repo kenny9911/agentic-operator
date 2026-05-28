@@ -1,0 +1,677 @@
+"use client";
+
+/**
+ * Agentic Tools — comprehensive API reference for the global tool registry.
+ *
+ * This is the canonical "what tools can I drop into a workflow?" page.
+ * Every entry in @agentic/tools's globalToolRegistry gets a full section
+ * with manifest declaration, args, returns, config, and chaining notes —
+ * structured so a new-tenant author can compose an entire workflow from
+ * configuration alone.
+ *
+ * Layout:
+ *   - 240px sticky left rail: search + category chips + scrollable tool list
+ *     (clicking a tool scrolls the right pane to that section).
+ *   - Right pane: API-docs-style scrollable surface. Each tool section has
+ *     anchor-stable id="tool-<name>" so direct links work.
+ *
+ * Backed by `useTools()` against GET /v1/tools.
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Badge,
+  Button,
+  Empty,
+  FilterChip,
+  Panel,
+  ViewHeader,
+} from "@/app/portal/components";
+import {
+  useTools,
+  type ToolCatalogEntry,
+  type ToolFieldSchema,
+} from "@/lib/hooks/useTools";
+
+function slugifyAnchor(name: string): string {
+  return "tool-" + name.replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase();
+}
+
+export default function ToolsPage() {
+  const { data, isLoading, error } = useTools();
+  const tools = data?.tools ?? [];
+  const categories = data?.categories ?? [];
+
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<string | "all">("all");
+  const scrollPaneRef = useRef<HTMLDivElement | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return tools.filter((t) => {
+      if (category !== "all" && t.category !== category) return false;
+      if (!q) return true;
+      const hay = [
+        t.name,
+        t.summary,
+        t.description ?? "",
+        ...(t.aliases ?? []),
+        t.sourcePath,
+        ...Object.keys(t.argsSchema ?? {}),
+        ...Object.keys(t.configSchema ?? {}),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [tools, query, category]);
+
+  // Group filtered tools by category for the right-pane TOC.
+  const grouped = useMemo(() => {
+    const m = new Map<string, ToolCatalogEntry[]>();
+    for (const t of filtered) {
+      const arr = m.get(t.category) ?? [];
+      arr.push(t);
+      m.set(t.category, arr);
+    }
+    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [filtered]);
+
+  // Deep-link → scroll on initial load if URL has #tool-<name>.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) return;
+    // Defer until DOM has the section nodes.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(hash);
+      if (el) el.scrollIntoView({ behavior: "auto", block: "start" });
+    });
+  }, [filtered.length]);
+
+  function scrollToTool(name: string) {
+    const id = slugifyAnchor(name);
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Persist in URL so refresh / link-sharing works.
+      window.history.replaceState(null, "", `#${id}`);
+    }
+  }
+
+  return (
+    <div
+      style={{ display: "flex", flexDirection: "column", height: "100%" }}
+    >
+      <ViewHeader
+        title="Agentic Tools"
+        subtitle="Globally-registered tools any workflow can call. Configure per tenant via the manifest's tool_use[].config block — no code changes required."
+        badge={
+          <Badge tone="signal">
+            {data ? `${data.count} tools · ${data.categories.length} categories` : "—"}
+          </Badge>
+        }
+      />
+
+      {error && (
+        <div style={{ padding: 20 }}>
+          <Empty
+            title="Failed to load tool catalog"
+            hint={error.message || "api unreachable on :3501"}
+          />
+        </div>
+      )}
+      {!error && isLoading && (
+        <div style={{ padding: 20 }}>
+          <Empty title="Loading catalog…" hint="" />
+        </div>
+      )}
+
+      {!error && !isLoading && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "260px 1fr",
+            gap: 0,
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          {/* LEFT RAIL */}
+          <aside
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              padding: 16,
+              borderRight: "1px solid var(--border)",
+              background: "var(--panel-2)",
+              overflow: "auto",
+            }}
+          >
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search tools…"
+              style={{
+                width: "100%",
+                padding: "7px 9px",
+                fontFamily: "var(--mono)",
+                fontSize: 12,
+                background: "var(--bg)",
+                color: "var(--text)",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                outline: "none",
+              }}
+            />
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              <FilterChip
+                active={category === "all"}
+                onClick={() => setCategory("all")}
+              >
+                All ({tools.length})
+              </FilterChip>
+              {categories.map((cat) => {
+                const count = tools.filter((t) => t.category === cat).length;
+                return (
+                  <FilterChip
+                    key={cat}
+                    active={category === cat}
+                    onClick={() => setCategory(cat)}
+                  >
+                    {cat} ({count})
+                  </FilterChip>
+                );
+              })}
+            </div>
+
+            <nav style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {grouped.map(([cat, items]) => (
+                <div key={cat}>
+                  <div style={catLabelStyle}>{cat}</div>
+                  <ul
+                    style={{ listStyle: "none", margin: "4px 0 0", padding: 0 }}
+                  >
+                    {items.map((t) => (
+                      <li key={t.name}>
+                        <button
+                          onClick={() => scrollToTool(t.name)}
+                          style={navLinkStyle}
+                        >
+                          {t.name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              {grouped.length === 0 && (
+                <div style={{ color: "var(--text-3)", fontSize: 12 }}>
+                  No tools match the current filter.
+                </div>
+              )}
+            </nav>
+          </aside>
+
+          {/* RIGHT PANE — scroll target */}
+          <div
+            ref={scrollPaneRef}
+            style={{ overflow: "auto", padding: "24px 32px" }}
+          >
+            {filtered.length === 0 ? (
+              <Empty
+                title="No tools match"
+                hint="Try clearing the search or category filter."
+              />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+                <div style={introStyle}>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontFamily: "var(--display)",
+                      fontSize: 20,
+                      color: "var(--text)",
+                    }}
+                  >
+                    API reference
+                  </h2>
+                  <p style={introBodyStyle}>
+                    Every tool listed below is callable from any tenant's
+                    workflow manifest by adding it to an agent's{" "}
+                    <code className="mono">tool_use[]</code> array. Per-tenant
+                    knobs (API keys, paths, allow-lists) bind via{" "}
+                    <code className="mono">tool_use[].config</code> with no
+                    TypeScript involved. Resolution order is{" "}
+                    <strong>tenant override → global registry → MCP</strong>;
+                    the manifest is always the trust boundary.
+                  </p>
+                </div>
+
+                {grouped.map(([cat, items]) => (
+                  <section
+                    key={cat}
+                    style={{ display: "flex", flexDirection: "column", gap: 20 }}
+                  >
+                    <h2 style={categoryHeadingStyle}>{cat}</h2>
+                    {items.map((t) => (
+                      <ToolSection key={t.name} tool={t} />
+                    ))}
+                  </section>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Section ────────────────────────────────────────────────────────────────
+
+function ToolSection({ tool }: { tool: ToolCatalogEntry }) {
+  const manifestSnippet = useMemo(() => {
+    const entry: Record<string, unknown> = {
+      name: tool.name,
+      description: tool.summary,
+    };
+    if (tool.configExample && Object.keys(tool.configExample).length > 0) {
+      entry.config = tool.configExample;
+    }
+    return JSON.stringify([entry], null, 2);
+  }, [tool]);
+
+  const hasArgs = tool.argsSchema && Object.keys(tool.argsSchema).length > 0;
+  const hasConfig = tool.configSchema && Object.keys(tool.configSchema).length > 0;
+  const hasReturns = tool.returnsSchema && Object.keys(tool.returnsSchema).length > 0;
+
+  return (
+    <article
+      id={`tool-${tool.name.replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase()}`}
+      style={sectionStyle}
+    >
+      <header style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <h3
+            className="mono"
+            style={{
+              margin: 0,
+              fontSize: 18,
+              color: "var(--text)",
+              fontWeight: 500,
+            }}
+          >
+            {tool.name}
+          </h3>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <Badge tone="muted">{tool.category}</Badge>
+            {tool.chainsWith && tool.chainsWith.length > 0 && (
+              <Badge tone="signal">chains with {tool.chainsWith.join(", ")}</Badge>
+            )}
+          </div>
+        </div>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 13,
+            color: "var(--text)",
+            lineHeight: 1.5,
+          }}
+        >
+          {tool.summary}
+        </p>
+        {tool.description && (
+          <p
+            style={{
+              margin: "4px 0 0",
+              fontSize: 12.5,
+              color: "var(--text-2)",
+              lineHeight: 1.55,
+            }}
+          >
+            {tool.description}
+          </p>
+        )}
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            fontSize: 11,
+            color: "var(--text-3)",
+            fontFamily: "var(--mono)",
+            marginTop: 4,
+            flexWrap: "wrap",
+          }}
+        >
+          {tool.aliases && tool.aliases.length > 0 && (
+            <span>aliases: {tool.aliases.join(", ")}</span>
+          )}
+          <span>source: {tool.sourcePath}</span>
+        </div>
+      </header>
+
+      <SubBlock title="Manifest declaration" copyText={manifestSnippet}>
+        <pre style={preStyle}>{manifestSnippet}</pre>
+      </SubBlock>
+
+      {hasArgs ? (
+        <SubBlock
+          title="Arguments"
+          subtitle={`Passed by the LLM (or by a type:"tool" action's upstream event payload).`}
+        >
+          <SchemaTable schema={tool.argsSchema!} />
+          {tool.argsExample && Object.keys(tool.argsExample).length > 0 && (
+            <ExampleBlock value={tool.argsExample} label="Example" />
+          )}
+        </SubBlock>
+      ) : (
+        <SubBlock title="Arguments">
+          <p style={mutedNoteStyle}>
+            This tool takes no arguments — call it with{" "}
+            <code className="mono">{"{}"}</code>.
+          </p>
+        </SubBlock>
+      )}
+
+      {hasReturns && (
+        <SubBlock title="Returns" subtitle="Available to the LLM in the next turn and to the next step as `ctx.lastResult`.">
+          <SchemaTable schema={tool.returnsSchema!} />
+          {tool.returnsExample !== undefined && (
+            <ExampleBlock value={tool.returnsExample} label="Example" />
+          )}
+        </SubBlock>
+      )}
+
+      {hasConfig ? (
+        <SubBlock
+          title="Per-tenant configuration"
+          subtitle="Bound in the manifest's tool_use[].config block. Lifted into ctx.config at dispatch."
+        >
+          <SchemaTable schema={tool.configSchema!} />
+          {tool.configExample && Object.keys(tool.configExample).length > 0 && (
+            <ExampleBlock value={tool.configExample} label="Example config" />
+          )}
+        </SubBlock>
+      ) : (
+        <SubBlock title="Per-tenant configuration">
+          <p style={mutedNoteStyle}>No per-tenant configuration — same behaviour for every tenant.</p>
+        </SubBlock>
+      )}
+    </article>
+  );
+}
+
+// ─── Sub-components ─────────────────────────────────────────────────────────
+
+function SubBlock({
+  title,
+  subtitle,
+  copyText,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  copyText?: string;
+  children: React.ReactNode;
+}) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    if (!copyText) return;
+    void navigator.clipboard.writeText(copyText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  }
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          marginBottom: 6,
+          gap: 12,
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: 10.5,
+              textTransform: "uppercase",
+              letterSpacing: 0.6,
+              color: "var(--text-3)",
+              fontFamily: "var(--mono)",
+              fontWeight: 600,
+            }}
+          >
+            {title}
+          </div>
+          {subtitle && (
+            <div
+              style={{
+                fontSize: 11.5,
+                color: "var(--text-3)",
+                marginTop: 2,
+                lineHeight: 1.4,
+              }}
+            >
+              {subtitle}
+            </div>
+          )}
+        </div>
+        {copyText && (
+          <Button small tone="ghost" icon={copied ? "check" : "code"} onClick={copy}>
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SchemaTable({ schema }: { schema: Record<string, ToolFieldSchema> }) {
+  const entries = Object.entries(schema);
+  return (
+    <table style={tableStyle}>
+      <thead>
+        <tr>
+          <th style={thStyle}>Field</th>
+          <th style={thStyle}>Type</th>
+          <th style={thStyle}>Default</th>
+          <th style={thStyle}>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {entries.map(([key, def]) => (
+          <tr key={key} style={{ borderTop: "1px solid var(--border)" }}>
+            <td style={tdMono}>
+              {key}
+              {def.required && (
+                <span
+                  style={{
+                    color: "var(--red)",
+                    marginLeft: 4,
+                    fontFamily: "var(--mono)",
+                  }}
+                  title="Required"
+                >
+                  *
+                </span>
+              )}
+            </td>
+            <td style={tdMono}>{def.type}</td>
+            <td style={tdMono}>
+              {def.default !== undefined
+                ? typeof def.default === "string"
+                  ? `"${def.default}"`
+                  : JSON.stringify(def.default)
+                : "—"}
+            </td>
+            <td style={td}>{def.description ?? "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ExampleBlock({ value, label }: { value: unknown; label: string }) {
+  const json = useMemo(() => JSON.stringify(value, null, 2), [value]);
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    void navigator.clipboard.writeText(json);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  }
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          marginBottom: 4,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 10.5,
+            textTransform: "uppercase",
+            letterSpacing: 0.6,
+            color: "var(--text-3)",
+            fontFamily: "var(--mono)",
+          }}
+        >
+          {label}
+        </span>
+        <Button small tone="ghost" icon={copied ? "check" : "code"} onClick={copy}>
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+      <pre style={preStyle}>{json}</pre>
+    </div>
+  );
+}
+
+// ─── styles ─────────────────────────────────────────────────────────────────
+
+const catLabelStyle: React.CSSProperties = {
+  fontSize: 10.5,
+  textTransform: "uppercase",
+  letterSpacing: 0.6,
+  color: "var(--text-3)",
+  fontFamily: "var(--mono)",
+  marginBottom: 2,
+};
+
+const navLinkStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  textAlign: "left",
+  padding: "4px 6px",
+  fontSize: 12,
+  fontFamily: "var(--mono)",
+  color: "var(--text-2)",
+  background: "transparent",
+  border: "none",
+  borderRadius: 3,
+  cursor: "pointer",
+  lineHeight: 1.4,
+};
+
+const introStyle: React.CSSProperties = {
+  paddingBottom: 8,
+  borderBottom: "1px solid var(--border)",
+};
+const introBodyStyle: React.CSSProperties = {
+  margin: "8px 0 0",
+  fontSize: 12.5,
+  color: "var(--text-2)",
+  lineHeight: 1.55,
+};
+
+const categoryHeadingStyle: React.CSSProperties = {
+  margin: 0,
+  paddingBottom: 4,
+  borderBottom: "1px solid var(--border)",
+  fontSize: 14,
+  textTransform: "uppercase",
+  letterSpacing: 0.6,
+  color: "var(--text-3)",
+  fontFamily: "var(--mono)",
+};
+
+const sectionStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 16,
+  padding: "18px 20px",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  background: "var(--panel)",
+  scrollMarginTop: 16,
+};
+
+const preStyle: React.CSSProperties = {
+  margin: 0,
+  padding: 12,
+  background: "var(--panel-2)",
+  border: "1px solid var(--border)",
+  borderRadius: 4,
+  fontFamily: "var(--mono)",
+  fontSize: 12,
+  color: "var(--text)",
+  lineHeight: 1.5,
+  overflow: "auto",
+  whiteSpace: "pre",
+};
+
+const tableStyle: React.CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+  fontSize: 12.5,
+};
+
+const thStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "6px 10px",
+  fontSize: 10.5,
+  textTransform: "uppercase",
+  letterSpacing: 0.4,
+  color: "var(--text-3)",
+  fontFamily: "var(--mono)",
+};
+
+const td: React.CSSProperties = {
+  padding: "8px 10px",
+  fontSize: 12,
+  color: "var(--text-2)",
+  verticalAlign: "top",
+  lineHeight: 1.45,
+};
+
+const tdMono: React.CSSProperties = {
+  ...td,
+  fontFamily: "var(--mono)",
+  color: "var(--text)",
+  whiteSpace: "nowrap",
+};
+
+const mutedNoteStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 12.5,
+  color: "var(--text-3)",
+  lineHeight: 1.5,
+};

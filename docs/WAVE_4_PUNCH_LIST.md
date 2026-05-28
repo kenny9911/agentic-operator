@@ -108,7 +108,7 @@ Per Test Architect strategy:
 2. `pnpm lint` (≤30s)
 3. `pnpm --filter @agentic/api exec vitest run test/smoke.test.ts` (≤30s, new smoke file)
 4. `pnpm test` (full api vitest, ≤180s)
-5. `pnpm --filter @agentic/web exec playwright test` (≤300s; dev server on :3500 required)
+5. `pnpm --filter @agentic/web exec playwright test` (≤300s; dev server on :3599 required)
 6. `pnpm --filter @agentic/web exec playwright test test/visual/` (≤120s)
 7. `pnpm build` (≤180s, full turbo)
 

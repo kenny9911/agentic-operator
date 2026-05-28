@@ -11,13 +11,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common commands
 
 ```bash
-pnpm dev                  # web :3500 + api :3501 + inngest dev :8288 (predev frees those ports + 8289/50052/50053)
+pnpm dev                  # web :3599 + api :3501 + inngest dev :8288 (predev frees those ports + 8289/50052/50053)
 pnpm build                # turbo run build across all workspaces
 pnpm lint                 # turbo run lint (Next.js ESLint on web only)
 pnpm typecheck            # turbo run typecheck (every package has its own tsc --noEmit)
 pnpm test                 # turbo run test → vitest in apps/api
 pnpm db:migrate           # apply drizzle migrations to data/agentic.db
 pnpm db:seed              # 3 tenants + 1 admin
+pnpm db:wipe-runtime      # truncate runtime traffic only (runs/steps/events/tasks/audit/artifacts); keeps tenants/users/workflows/agents/deployments/event_types/etc.
 pnpm seed:rich            # RAAS historical fixtures + English ontology overlay (idempotent)
 pnpm db:generate          # drizzle-kit generate after editing packages/db/src/schema.ts
 pnpm db:studio            # drizzle-kit studio
@@ -56,6 +57,49 @@ Routing:
 
 **SPA prototype gotcha (only relevant if editing `/demo`).** All `<script type="text/babel">` view files share one global scope. A top-level `function Foo()` in one view file shadows the same name in any other view loaded earlier — last load wins. This bit us when both `views/logs.jsx` and `views/schema-editor.jsx` declared `function TreeNode`. Convention: **prefix internal components with the view name** (`SchemaTreeNode`, `LogsTreeNode`) so they can't collide. Only the top-level view component (`SchemaEditor`, `Workflows`, …) should use a bare name. Cross-view shared components live in `components.jsx` and attach to `window.*` once at the bottom of that file.
 
+## Demo mode
+
+**Architectural rule (locked 2026-05-26):** production mode = **ZERO** mock/seed/synthetic data. Demo mode = seed + loop. Two clean states only — no "looks like demo, actually mock fallback" ambiguity.
+
+Switch via the single env flag `AGENTIC_DEMO_MODE` (default `false`; truthy values: `true`, `1`, `yes`):
+
+- `AGENTIC_DEMO_MODE=false` (production): bootstrap skips `seed:rich` and never starts the demo-runner. Dashboard reflects only real events fired through `POST /v1/events`. When `/v1/tenants` is unreachable the portal renders an inline "api unreachable" banner — it does NOT fall back to the deleted `SAMPLE_TENANTS` fixture.
+- `AGENTIC_DEMO_MODE=true` (demo): bootstrap runs `runSeedRich()` programmatically (idempotent — every helper skips rows that already exist by primary key) and starts `apps/api/src/services/demo-runner.ts`. The sidebar renders a lime "DEMO" pill near the logo. `/health` exposes `demoMode: true` so the web tier sees the same flag the api booted with.
+
+**Demo-runner cadence** (all env-overridable):
+
+| Env var | Default | Behavior |
+|---|---|---|
+| `AGENTIC_DEMO_TICK_MS` | 30 000 | Publish one random event on a random tenant w/ a live workflow + declared event types. |
+| `AGENTIC_DEMO_TASK_RESOLVE_MS` | 90 000 | Resolve one open HITL task with a random approve/reject + emit `task.resolved`. |
+| `AGENTIC_DEMO_HEARTBEAT_MS` | 300 000 | Log `[demo-runner] tick — N events fired, K tasks resolved`. |
+| `AGENTIC_DEMO_RUN_BACKPRESSURE` | 25 | Skip a tick when the picked tenant already has ≥ N runs in flight. |
+
+**Auto-applied demo env overrides** (in-process only — the on-disk `.env` is never touched):
+
+When `AGENTIC_DEMO_MODE=true`, `apps/api/src/config/demo-mode.ts → applyDemoModeOverrides()` runs BEFORE the LLM gateway is constructed and swaps:
+
+| Var | Demo default | Why |
+|---|---|---|
+| `LLM_DEFAULT_PROVIDER` | `mock` | The runner fires events every 30s → each triggers a workflow → each workflow's `logic` step calls the LLM. With your typical `LLM_DEFAULT_PROVIDER=openrouter`, demo mode would bleed real $ for free. Mock provider returns canned deterministic responses so workflows still complete + the dashboard still animates. |
+| `LLM_DEFAULT_MODEL` | `mock-model-v1` | Pairs with the mock provider. |
+
+**Restore is automatic.** Setting `AGENTIC_DEMO_MODE=false` and restarting the api brings back the original `.env` values — there's nothing to restore because the override only mutated `process.env` in-process.
+
+**Escape hatches** (keep your real provider under demo mode, e.g. for a live customer demo):
+- `AGENTIC_DEMO_LLM_PROVIDER=openrouter` — override the override
+- `AGENTIC_DEMO_LLM_MODEL=google/gemini-3.1-flash-lite-preview` — same for the model
+
+Boot log surfaces the override exactly: `[bootstrap] demo overrides — LLM_DEFAULT_PROVIDER=mock (was openrouter), LLM_DEFAULT_MODEL=mock-model-v1 (was google/gemini-3.1-flash-lite-preview)`.
+
+**Safety gates** (all wired in `apps/api/src/services/demo-runner.ts`):
+- The runner is a hard no-op when `process.env.NODE_ENV === "test"` regardless of the flag — vitest never sees background interval traffic, so row-count assertions don't flake.
+- It is also a no-op when `AGENTIC_DEMO_MODE !== true` — defense in depth against an accidental import.
+- Every tick is wrapped in try/catch — a single failure (DB contention, no eligible tenants, missing event types) is logged via `app.log` and the loop continues.
+- The interval timers `.unref()` so Ctrl-C alone exits cleanly; SIGTERM/SIGINT route through `installGracefulShutdown` → Fastify `onClose` → `stopDemoRunner()` for a clean drain.
+
+**Clean-slate primitive:** `pnpm db:wipe-runtime` truncates the runtime-traffic tables (`runs`, `steps`, `events`, `tasks`, `audit_log`, `artifacts`, `event_listeners`, `agent_memory_*`) and keeps identity + workflow + agent-config rows. Run it once before flipping between modes to confirm what's coming from the loop vs. what's stale.
+
 ## Adding a tenant
 
 Pure-declarative (manifest-only): drop `models/<slug>-v<n>/` with the five JSON files, add a row to `packages/db/src/seed.ts`, `pnpm db:seed`, restart api. Bootstrap auto-discovers and registers Inngest functions; the new tenant appears in the sidebar switcher.
@@ -69,3 +113,4 @@ With custom tools/prompts: also create `tenants/<slug>/` (copy `tenants/raas/`),
 - The RAAS canonical workflow ships with Chinese titles. `pnpm seed:rich` overlays English from the handoff prototype via `seedAgentMetadata()`; rerun it after `db:seed` if you want English-labeled agents in the UI.
 - The production UI lives at `/portal/<tenant>/<view>` (App Router). `/` redirects there. The Babel SPA prototype is at `/demo` — don't conflate the two.
 - Workflow DAG layout is hand-tuned (stage + lane per kebab id) in the legacy workflows page — do not replace with auto-packing if you ever revive it.
+- **Cancelling a run:** `POST /v1/runs/:id/cancel` — manifest agents stop via Inngest `cancelOn` keyed on `${tenantSlug}/run.cancel` matching subject; code agents poll `runs.status` between checkpoints in `packages/agents/src/run-engine.ts` and throw `RunCancelledError`. Idempotent — re-cancelling a terminal run returns 200 with `cancelled:false`.

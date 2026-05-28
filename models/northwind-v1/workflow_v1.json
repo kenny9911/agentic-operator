@@ -1,0 +1,94 @@
+[
+  {
+    "id": "jd-author-agent",
+    "name": "jdAuthorAgent",
+    "title": "JD Author Agent",
+    "description": "订阅 HIRING_REQUIREMENT_SUBMITTED。加载 jd-authoring 技能,把招聘需求转写成中文 JD,持久化到 data/jd-archive/<tenant>/,emit JD_DRAFTED 带 jdId + jdPath + jd_text 供下游 agent 使用。",
+    "actor": ["Agent"],
+    "trigger": ["HIRING_REQUIREMENT_SUBMITTED"],
+    "tool_use": [
+      { "name": "skills.list_skills", "description": "Discover skills." },
+      { "name": "skills.load_skill", "description": "Load 'jd-authoring' for the canonical procedure." },
+      {
+        "name": "writeJdToDisk",
+        "description": "Persist the authored JD to data/jd-archive/<tenant>/<jdId>.md.",
+        "config": { "subdir": "jd-archive", "id_prefix": "jd" }
+      },
+      { "name": "parseJdApi", "description": "Optional: RoboHire /api/v1/parse-jd to structure the JD." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "authorJD",
+        "description": "Draft a Chinese JD from the requirements payload, persist, emit JD_DRAFTED.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["JD_DRAFTED"]
+  },
+  {
+    "id": "resume-intake-agent",
+    "name": "resumeIntakeAgent",
+    "title": "Resume Intake Agent",
+    "description": "订阅 RESUME_INTAKE_REQUESTED。从 data/resumes/<tenant>/inbox/<filename> 读取 PDF/文本简历,调用 RoboHire parseResumeApi 结构化候选人数据,emit RESUME_PARSED 带 candidate_name + parsed_resume + jr_id + jd_text 供 batchMatchAgent 直接消费。",
+    "actor": ["Agent"],
+    "trigger": ["RESUME_INTAKE_REQUESTED"],
+    "tool_use": [
+      { "name": "readResumeFromDisk", "description": "Read the resume file from the tenant inbox folder. REQUIRES {filename}. Returns {filename, mime, base64, sha256, bytes, path}." },
+      { "name": "parseResumeApi", "description": "RoboHire POST /api/v1/parse-resume — accepts {resume_base64} (with mime hint), {resume_url}, or {resume_text}. Returns structured candidate data." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "intakeAndParseResume",
+        "description": "Read the resume file from the inbox, parse it via RoboHire, emit RESUME_PARSED with structured candidate data and pass-through JD context.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["RESUME_PARSED"]
+  },
+  {
+    "id": "batch-match-agent",
+    "name": "batchMatchAgent",
+    "title": "Batch Match Agent",
+    "description": "订阅 CANDIDATE_BATCH_SUBMITTED 和 RESUME_PARSED。加载 match-rubric 技能,对每位候选人调用 RoboHire matchResumeApi,按阈值映射决策标签,emit BATCH_MATCH_COMPLETED 带排序后的 matches 数组。RESUME_PARSED 视为单候选人批次。",
+    "actor": ["Agent"],
+    "trigger": ["CANDIDATE_BATCH_SUBMITTED", "RESUME_PARSED"],
+    "tool_use": [
+      { "name": "skills.list_skills" },
+      { "name": "skills.load_skill", "description": "Load 'match-rubric' for the score → decision matrix." },
+      { "name": "matchResumeApi", "description": "RoboHire POST /api/v1/match-resume — REQUIRES {resume, jd}. Returns normalized {matchScore, verdict, hiringRecommendation, summary, raw}." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "batchMatchResumes",
+        "description": "Loop the candidates array, call matchResumeApi for each, rank by matchScore, emit ranked BATCH_MATCH_COMPLETED. When the trigger is RESUME_PARSED, treat as a 1-candidate batch.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["BATCH_MATCH_COMPLETED"]
+  },
+  {
+    "id": "report-agent",
+    "name": "reportAgent",
+    "title": "Report Agent",
+    "description": "订阅 BATCH_MATCH_COMPLETED。加载 report-template 技能,组装完整的中文 HTML 招聘漏斗报告,持久化到 data/reports/<tenant>/,emit REPORT_GENERATED 带文件路径。",
+    "actor": ["Agent"],
+    "trigger": ["BATCH_MATCH_COMPLETED"],
+    "tool_use": [
+      { "name": "skills.list_skills" },
+      { "name": "skills.load_skill", "description": "Load 'report-template' for the HTML skeleton." },
+      { "name": "writeReportToDisk", "description": "Persist the assembled HTML to data/reports/<tenant>/<reportId>.html." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "buildReport",
+        "description": "Assemble the full HTML report from the ranked matches array, persist, emit REPORT_GENERATED.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["REPORT_GENERATED"]
+  }
+]

@@ -3,8 +3,10 @@
 /**
  * Read-only and edit tabs in the Agents detail view.
  *
- * Ported from `apps/web/public/portal/views/agents.jsx:268-693` — split into
- * a sibling file so the page module stays under ~600 LOC.
+ * Consumes a normalized `ViewAgent` shape that the page constructs from
+ * the live AgentDetail + AgentListRow. Manifest fields the api doesn't
+ * yet surface (tool_use, ontology_instructions, model, etc.) come through
+ * as empty values — no mock fallback (2026-05-26 production rule).
  */
 
 import { useState } from "react";
@@ -20,12 +22,7 @@ import {
   Td,
 } from "@/app/portal/components";
 import { fmtAgo, fmtDur } from "@/lib/format";
-import type {
-  RaasAgent,
-  RaasDeployment,
-  RaasRun,
-} from "@/lib/hooks/data-context";
-import { useRaasData } from "@/lib/hooks/data-context";
+import { useDeployments } from "@/lib/hooks/useDeployments";
 import { AGENT_SAMPLE_TOOL_USE } from "@/app/portal/components/agent-code/samples";
 import {
   AgentCodeEditPanel,
@@ -34,6 +31,43 @@ import {
 import type { ToolUseSchema } from "@/app/portal/components/agent-code/samples";
 import { AGENT_SAMPLE_TS_CODE } from "@/app/portal/components/agent-code/samples";
 
+/**
+ * Normalized view of an agent the tabs render. Matches the legacy SpaAgent
+ * shape so the heavy code/io/versions tab markup didn't need rewriting.
+ */
+export interface ViewAgent {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  actor: "Agent" | "Human";
+  stage: number;
+  triggers: string[];
+  emits: string[];
+  steps: string[];
+  tools: string[];
+  model: string;
+  input_data: Record<string, unknown>;
+  ontology_instructions: string;
+  tool_use: unknown;
+  typescript_code: string;
+}
+
+/**
+ * Row shape for `RunsTab`. Wider than `AgentDetail.recentRuns` so the live
+ * `RunListRow` from `/v1/runs` can be passed directly — only the small set
+ * of fields the table renders is required.
+ */
+export interface RunRow {
+  id: string;
+  status: string;
+  subject: string | null;
+  triggerEvent: string | null;
+  durationMs: number | null;
+  startedAt: string | null;
+  testRun?: boolean;
+}
+
 interface ModelInfo {
   id: string;
   name: string;
@@ -41,7 +75,7 @@ interface ModelInfo {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-export function ConfigTab({ agent }: { agent: RaasAgent }) {
+export function ConfigTab({ agent }: { agent: ViewAgent }) {
   const hasCode = agent.actor === "Agent";
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -178,7 +212,7 @@ export function ConfigTab({ agent }: { agent: RaasAgent }) {
   );
 }
 
-export function IOConfigTab({ agent }: { agent: RaasAgent }) {
+export function IOConfigTab({ agent }: { agent: ViewAgent }) {
   return (
     <Panel title="Schema" padded>
       <CodeBlock>{`// inputs
@@ -208,12 +242,16 @@ export function IOConfigTab({ agent }: { agent: RaasAgent }) {
   );
 }
 
-export function VersionsTab({ agent }: { agent: RaasAgent }) {
-  const { deployments } = useRaasData();
-  const versions = deployments.filter(
-    (d): d is RaasDeployment & { agent: string } =>
-      typeof (d as { agent?: unknown }).agent === "string" && (d as { agent: string }).agent === agent.name,
-  );
+export function VersionsTab({ agent }: { agent: ViewAgent }) {
+  // /v1/deployments returns workflow-level deployments only — there is no
+  // per-agent version history endpoint yet. We show the workflow deploys
+  // (best correlate) and surface an empty-state when the api hasn't
+  // recorded any. The legacy `{ agent: agent.name }` filter is gone —
+  // it was a synthetic field from the bootstrap mock that never matched
+  // real deploys.
+  void agent;
+  const deploymentsQuery = useDeployments();
+  const versions = deploymentsQuery.data?.list ?? [];
   return (
     <Panel title="Versions" padded={false}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -228,44 +266,49 @@ export function VersionsTab({ agent }: { agent: RaasAgent }) {
           </tr>
         </thead>
         <tbody>
-          {versions.length === 0 ? (
+          {deploymentsQuery.isError ? (
             <tr>
               <Td colSpan={6} style={{ padding: 24, textAlign: "center", color: "var(--text-3)" }}>
-                No agent-specific deploys recorded; running on workflow-level version.
+                Failed to load deployments: {deploymentsQuery.error?.message ?? "api unreachable"}
+              </Td>
+            </tr>
+          ) : deploymentsQuery.isLoading ? (
+            <tr>
+              <Td colSpan={6} style={{ padding: 24, textAlign: "center", color: "var(--text-3)" }}>
+                Loading deployments…
+              </Td>
+            </tr>
+          ) : versions.length === 0 ? (
+            <tr>
+              <Td colSpan={6} style={{ padding: 24, textAlign: "center", color: "var(--text-3)" }}>
+                No workflow deployments recorded yet.
               </Td>
             </tr>
           ) : (
             versions.map((v) => {
-              const row = v as unknown as {
-                id: string;
-                version: string;
-                status: string;
-                by: string;
-                at: number;
-                note: string;
-              };
+              const at = v.deployedAt ? new Date(v.deployedAt).getTime() : 0;
               return (
-                <tr key={row.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                <tr key={v.id} style={{ borderBottom: "1px solid var(--border)" }}>
                   <Td>
-                    <span className="mono">{row.version}</span>
+                    <span className="mono">{v.versionString}</span>
                   </Td>
                   <Td>
-                    {row.status === "live" ? (
+                    {v.status === "live" ? (
                       <Badge tone="signal">LIVE</Badge>
-                    ) : row.status === "rolled-back" ? (
+                    ) : v.status === "rolled_back" || v.status === "rolled-back" ? (
                       <Badge tone="muted">ROLLED BACK</Badge>
                     ) : (
-                      <Badge tone="muted">{row.status}</Badge>
+                      <Badge tone="muted">{v.status}</Badge>
                     )}
                   </Td>
                   <Td>
-                    <span style={{ color: "var(--text-2)" }}>{row.by}</span>
+                    <span style={{ color: "var(--text-2)" }}>{v.deployedBy ?? "—"}</span>
                   </Td>
                   <Td>
-                    <span style={{ color: "var(--text-3)" }}>{fmtAgo(row.at)}</span>
+                    <span style={{ color: "var(--text-3)" }}>{at > 0 ? fmtAgo(at) : "—"}</span>
                   </Td>
                   <Td>
-                    <span style={{ color: "var(--text-2)" }}>{row.note}</span>
+                    <span style={{ color: "var(--text-2)" }}>{v.note ?? ""}</span>
                   </Td>
                   <Td>
                     <Button small tone="ghost">Rollback</Button>
@@ -284,7 +327,7 @@ export function RunsTab({
   runs,
   onOpenRun,
 }: {
-  runs: RaasRun[];
+  runs: RunRow[];
   onOpenRun: (id: string) => void;
 }) {
   if (runs.length === 0) return <Empty title="No recent runs" />;
@@ -332,7 +375,9 @@ export function RunsTab({
                 <span className="mono" style={{ color: "var(--text-2)" }}>{fmtDur(r.durationMs)}</span>
               </Td>
               <Td>
-                <span style={{ color: "var(--text-3)" }}>{fmtAgo(r.startedAt)}</span>
+                <span style={{ color: "var(--text-3)" }}>
+                  {r.startedAt ? fmtAgo(Date.parse(r.startedAt)) : "—"}
+                </span>
               </Td>
             </tr>
           ))}
@@ -346,7 +391,7 @@ export function RunsTab({
 // EditConfigTab — form-based editor for an existing agent.
 // ────────────────────────────────────────────────────────────────────────────
 
-export function EditConfigTab({ agent, models }: { agent: RaasAgent; models: ModelInfo[] }) {
+export function EditConfigTab({ agent, models }: { agent: ViewAgent; models: ModelInfo[] }) {
   const [name, setName] = useState(agent.name);
   const [title, setTitle] = useState(agent.title);
   const [desc, setDesc] = useState(agent.description);

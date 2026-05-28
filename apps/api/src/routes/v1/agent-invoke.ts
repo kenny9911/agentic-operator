@@ -20,10 +20,12 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { agentRegistry } from "@agentic/agents";
+import { agentRegistry, RunCancelledError } from "@agentic/agents";
 import { PROVIDER_IDS, type ProviderId } from "@agentic/contracts";
 import { isLLMError } from "@agentic/llm-gateway";
-import { inngest } from "@agentic/runtime";
+import { appendToLedger, inngest } from "@agentic/runtime";
+import { events, eventTypes, getDb } from "@agentic/db";
+import { and, eq } from "drizzle-orm";
 import { InvokeAgentBody } from "@agentic/contracts";
 import { makeId } from "@agentic/shared";
 import { getLLMGateway } from "../../services/llm";
@@ -150,6 +152,48 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
         };
         if (testRunQuery) {
           inngestData.__test = true;
+        }
+
+        // Persist the synthetic trigger event so the manifest engine's
+        // `runs.trigger_event_id` FK (packages/runtime/src/register.ts:223)
+        // points at a real row. Without this insert the manifest engine
+        // throws `SqliteError: FOREIGN KEY constraint failed` on its first
+        // step.run() write, leaving the run invisible to the UI and
+        // re-triggering Inngest retries until the per-fn cap is hit.
+        try {
+          const payloadRef = await appendToLedger(auth.tenantSlug, {
+            id: eventId,
+            name: triggerEvent,
+            subject,
+            data: inngestData,
+            ts: Date.now(),
+          });
+          const db = getDb();
+          const catalogRow = db
+            .select({ category: eventTypes.category })
+            .from(eventTypes)
+            .where(
+              and(
+                eq(eventTypes.tenantId, auth.tenantId),
+                eq(eventTypes.name, triggerEvent),
+              ),
+            )
+            .all()[0];
+          db.insert(events)
+            .values({
+              id: eventId,
+              tenantId: auth.tenantId,
+              name: triggerEvent,
+              category: catalogRow?.category ?? null,
+              subject,
+              payloadRef,
+            })
+            .run();
+        } catch (err) {
+          req.log.warn(
+            { err, eventId, triggerEvent },
+            "manifest-invoke: failed to persist synthetic trigger event; the run row insert will likely fail",
+          );
         }
 
         try {
@@ -287,6 +331,21 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
         }
         return reply.ok(okData);
       } catch (err) {
+        // Operator clicked Stop while the synchronous run was in flight.
+        // Cancellation is a successful outcome — return 200 with the
+        // cancelled status so the portal can render the cancel state
+        // without a red error toast. The run row was already flipped to
+        // `cancelled` by the cancel-route handler; the run engine recorded
+        // the step as `skipped`. Bumping metrics here would double-count
+        // (the cancel route already incremented the cancel counter), so
+        // we skip the metric increment for this path.
+        if (err instanceof RunCancelledError) {
+          return reply.ok({
+            runId: err.runId,
+            status: "cancelled",
+            cancelled: true,
+          });
+        }
         const tenantLabel = req.auth?.tenantSlug ?? "__system";
         metrics.runs.inc({
           tenant: tenantLabel,

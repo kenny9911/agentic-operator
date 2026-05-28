@@ -2,8 +2,11 @@
  * Workflow canvas layout constants + the hand-tuned LAYOUT map.
  *
  * Ported verbatim from `agentic-operator_v1_1/views/workflows.jsx:5-37`.
- * **DO NOT** replace this with auto-packing — every value here was hand-tuned
- * to match the design prototype (audit 01 §4.2 acceptance criterion).
+ * **DO NOT** replace this with auto-packing for the RAAS workflow — every
+ * value here was hand-tuned to match the design prototype (audit 01 §4.2
+ * acceptance criterion). The auto-packer below is ONLY consulted as a
+ * fallback for tenant kebab-ids that LAYOUT doesn't cover (e.g. robohire's
+ * `matcher-agent` / `inviter-agent`); existing LAYOUT entries always win.
  */
 
 export const NODE_W = 184;
@@ -43,8 +46,118 @@ export const LAYOUT: Record<string, { stage: number; lane: number }> = {
   "16": { stage: 7, lane: 1 },
 };
 
-export function nodePos(id: string): { x: number; y: number } {
-  const p = LAYOUT[id];
+/**
+ * Auto-pack a set of agents into the (stage, lane) grid for tenants that
+ * don't have a hand-tuned LAYOUT entry. Used as a fallback by `getLayout()`.
+ *
+ * Strategy — bucket by stage, then assign lanes within each bucket:
+ *   1. If every agent shares the same stage (the api uses 99 as the
+ *      "unknown stage" sentinel when a manifest doesn't declare staging),
+ *      derive stages from the event topology instead: agents with no
+ *      incoming triggers from this tenant land at stage 0; downstream
+ *      listeners land at stage = 1 + max(stage of upstream emitters).
+ *      This gives `matcher-agent → MATCH_COMPLETED → inviter-agent` the
+ *      natural left-to-right layout (matcher in col 0, inviter in col 1).
+ *   2. Otherwise pass the manifest-declared stage through unchanged so a
+ *      tenant that DOES declare stages keeps them.
+ *   3. Sort agent ids inside each bucket by string compare so the same
+ *      input always produces the same lane assignment (deterministic).
+ *
+ * Stable: same input array → identical output. The function never mutates
+ * input.
+ */
+export function autoPackLayout(
+  agents: Array<{
+    id: string;
+    stage: number;
+    triggers?: string[];
+    emits?: string[];
+  }>,
+): Record<string, { stage: number; lane: number }> {
+  if (agents.length === 0) return {};
+
+  // Step 1: decide effective stage per agent.
+  //   - Mixed manifest stages → pass through.
+  //   - All-same stage (typical: every agent at stage 99) → topo-sort.
+  const declared = new Set(agents.map((a) => a.stage));
+  const effectiveStage = new Map<string, number>();
+
+  if (declared.size === 1) {
+    // Topo-sort: who emits an event that anyone else triggers on?
+    const emitterOf = new Map<string, string[]>(); // event → agent ids that emit it
+    for (const a of agents) {
+      for (const e of a.emits ?? []) {
+        const arr = emitterOf.get(e) ?? [];
+        arr.push(a.id);
+        emitterOf.set(e, arr);
+      }
+    }
+    // Memoized depth — guard against accidental cycles by capping at agents.length.
+    const depth = new Map<string, number>();
+    const visiting = new Set<string>();
+    function depthOf(id: string): number {
+      const cached = depth.get(id);
+      if (cached !== undefined) return cached;
+      if (visiting.has(id)) return 0; // cycle break
+      visiting.add(id);
+      const agent = agents.find((a) => a.id === id);
+      const triggers = agent?.triggers ?? [];
+      let maxParent = -1;
+      for (const t of triggers) {
+        const parents = emitterOf.get(t) ?? [];
+        for (const p of parents) {
+          if (p === id) continue;
+          maxParent = Math.max(maxParent, depthOf(p));
+        }
+      }
+      const d = maxParent + 1; // 0 when no parents
+      depth.set(id, d);
+      visiting.delete(id);
+      return d;
+    }
+    for (const a of agents) {
+      effectiveStage.set(a.id, Math.min(depthOf(a.id), agents.length));
+    }
+  } else {
+    for (const a of agents) effectiveStage.set(a.id, a.stage);
+  }
+
+  // Step 2: bucket by stage, sort ids stably, assign lanes.
+  const byStage = new Map<number, string[]>();
+  for (const a of agents) {
+    const s = effectiveStage.get(a.id) ?? 0;
+    const arr = byStage.get(s) ?? [];
+    arr.push(a.id);
+    byStage.set(s, arr);
+  }
+  const out: Record<string, { stage: number; lane: number }> = {};
+  for (const [stage, ids] of byStage) {
+    const sorted = [...ids].sort();
+    sorted.forEach((id, lane) => {
+      out[id] = { stage, lane };
+    });
+  }
+  return out;
+}
+
+/**
+ * Resolve a position for an agent. Hand-tuned LAYOUT entry wins; falls back
+ * to the auto-packed map (typically the output of `autoPackLayout` for the
+ * current tenant). Returns null when neither has an entry — caller decides
+ * whether to skip rendering or render at origin.
+ */
+export function getLayout(
+  id: string,
+  fallback?: Record<string, { stage: number; lane: number }>,
+): { stage: number; lane: number } | null {
+  return LAYOUT[id] ?? fallback?.[id] ?? null;
+}
+
+export function nodePos(
+  id: string,
+  fallback?: Record<string, { stage: number; lane: number }>,
+): { x: number; y: number } {
+  const p = getLayout(id, fallback);
   if (!p) return { x: 0, y: 0 };
   return {
     x: PAD_X + p.stage * COL_W,

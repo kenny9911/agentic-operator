@@ -3,15 +3,17 @@
 /**
  * Agent detail view — header + 4-stat strip + 5 tabs (config|io|code|versions|runs).
  *
- * Ported from `apps/web/public/portal/views/agents.jsx:171-256`.
- * Phase 1/2 deltas:
- *   - D-5: Splitter between list aside and detail (min 260, max 720)
- *   - D-8: TEST badge on test runs
- *   - D-11: TEST · {ago} chip in header that opens the latest test run
- *   - D-4: Test run button uses POST /v1/agents/:name/invoke?testRun=1
+ * Live data via canonical TanStack hooks:
+ *   - useAgents() — list aside (left)
+ *   - useAgent(kebabId) — selected agent's manifest detail
+ *   - useRuns({ limit: 200 }) — recent runs for stats + RunsTab
  *
- * The page renders the list aside on the left (re-uses compact list) so URL
- * params and direct deep-links land you in the same UX as v1_1.
+ * Manifest fields (description, steps, typescript_code, ontology_instructions,
+ * tool_use, model, tools, emits) are NOT yet surfaced by /v1/agents/:kebab —
+ * the AgentDetail contract only ships id/name/title/actor/triggers/
+ * triggeredEvents/actions/workflowSlug/workflowVersion. The detail tabs render
+ * what's available and leave the rest blank rather than substitute mock data
+ * (2026-05-26 product rule: production mode = zero mock).
  */
 
 import { useMemo, useState } from "react";
@@ -29,11 +31,13 @@ import {
 } from "@/app/portal/components";
 import { fmtAgo } from "@/lib/format";
 import {
-  useRaasData,
-  type RaasAgent,
-  type RaasRun,
-} from "@/lib/hooks/data-context";
-import { useInvokeAgent } from "@/lib/hooks/useAgents";
+  useAgent,
+  useAgents,
+  useInvokeAgent,
+  type AgentDetail,
+  type AgentListRow,
+} from "@/lib/hooks/useAgents";
+import { useRuns, type RunListRow } from "@/lib/hooks/useRuns";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { AgentCodeTab } from "@/app/portal/components/agent-code/AgentCodeTab";
 import { AgentCodeEdit } from "@/app/portal/components/agent-code/edit-code";
@@ -43,8 +47,10 @@ import {
   IOConfigTab,
   RunsTab,
   VersionsTab,
+  type ViewAgent as AgentTabsViewAgent,
 } from "@/app/portal/components/agents/AgentTabs";
 import { DeployAgentModal } from "@/app/portal/components/agents/DeployAgentModal";
+import { RunWithInputModal } from "@/app/portal/components/agents/RunWithInputModal";
 import { ImportManifestModal } from "@/app/portal/components/import-manifest/ImportManifestModal";
 
 interface AgentStats {
@@ -60,12 +66,50 @@ function emptyStats(): AgentStats {
   return { runs: 0, errors: 0, lastRun: 0, tests: 0, lastTestRunId: null, lastTestAt: 0 };
 }
 
+/**
+ * AgentTabs was written against the SpaAgent shape — a denormalized object
+ * with every manifest field (description, steps, tool_use, ...). The live
+ * `/v1/agents/:kebab` (AgentDetail) is leaner: id/name/title/actor/
+ * triggers/triggeredEvents/actions/workflowSlug/workflowVersion. This
+ * adapter materializes a `ViewAgent` (the shape AgentTabs now expects) so
+ * the read-only and edit tabs keep rendering; fields the api doesn't yet
+ * surface come back empty rather than a synthetic placeholder.
+ */
+type ViewAgent = AgentTabsViewAgent;
+
+function detailToViewAgent(
+  detail: AgentDetail,
+  list?: AgentListRow,
+): ViewAgent {
+  return {
+    id: detail.kebabId,
+    name: detail.name,
+    title: detail.title ?? detail.name,
+    description: list?.description ?? "",
+    actor: detail.actor,
+    stage: 0,
+    triggers: detail.triggers,
+    emits: detail.triggeredEvents,
+    steps: detail.actions.map((a) => a.name),
+    tools: [],
+    model: "",
+    input_data: {},
+    ontology_instructions: "",
+    tool_use: [],
+    typescript_code: "",
+  };
+}
+
 export default function AgentDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const tenant = useTenant();
-  const selectedId = params?.id ?? "";
-  const { agents, runs } = useRaasData();
+  const selectedKebab = params?.id ?? "";
+  const agentsQuery = useAgents();
+  const runsQuery = useRuns({ limit: 200 });
+  const detailQuery = useAgent(selectedKebab);
+  const agents = agentsQuery.data ?? [];
+  const runs = runsQuery.data ?? [];
   const [query, setQuery] = useState("");
   const [actorFilter, setActorFilter] = useState<"all" | "Agent" | "Human">("all");
   const [listW, setListW] = useState(440);
@@ -73,18 +117,25 @@ export default function AgentDetailPage() {
   const [importOpen, setImportOpen] = useState(false);
 
   const stats = useMemo(() => {
+    // Bucket by name (the canonical join key the api uses on run rows) so
+    // the per-agent stats correctly aggregate the live `/v1/runs` payload.
     const m = new Map<string, AgentStats>();
-    agents.forEach((a) => m.set(a.id, emptyStats()));
+    agents.forEach((a) => {
+      const s = emptyStats();
+      m.set(a.kebabId, s);
+      if (a.name) m.set(a.name, s);
+    });
     runs.forEach((r) => {
-      const s = m.get(r.agentId);
+      const s = m.get(r.agentName ?? "");
       if (!s) return;
+      const startedAt = r.startedAt ? Date.parse(r.startedAt) : 0;
       s.runs += 1;
       if (r.status === "failed") s.errors += 1;
-      if (r.startedAt > s.lastRun) s.lastRun = r.startedAt;
+      if (startedAt > s.lastRun) s.lastRun = startedAt;
       if (r.testRun) {
         s.tests += 1;
-        if (r.startedAt > s.lastTestAt) {
-          s.lastTestAt = r.startedAt;
+        if (startedAt > s.lastTestAt) {
+          s.lastTestAt = startedAt;
           s.lastTestRunId = r.id;
         }
       }
@@ -104,14 +155,17 @@ export default function AgentDetailPage() {
     return true;
   });
 
-  function openAgent(id: string) {
-    router.push(`/portal/${tenant}/agents/${id}` as never);
+  function openAgent(kebabId: string) {
+    router.push(`/portal/${tenant}/agents/${kebabId}` as never);
   }
   function openRun(id: string) {
     router.push(`/portal/${tenant}/runs/${id}` as never);
   }
 
-  const agent = agents.find((a) => a.id === selectedId);
+  const listMatch = agents.find((a) => a.kebabId === selectedKebab);
+  const agent = detailQuery.data
+    ? detailToViewAgent(detailQuery.data, listMatch)
+    : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -163,26 +217,44 @@ export default function AgentDetailPage() {
             </FilterChip>
           </div>
           <div style={{ flex: 1, overflow: "auto" }}>
-            <AgentsListCompact
-              agents={filtered}
-              stats={stats}
-              selectedId={selectedId}
-              onPick={openAgent}
-            />
+            {agentsQuery.isError ? (
+              <Empty
+                title="Failed to load agents"
+                hint={agentsQuery.error?.message ?? "api unreachable on :3501"}
+              />
+            ) : agentsQuery.isLoading && agents.length === 0 ? (
+              <Empty title="Loading agents…" hint="" />
+            ) : (
+              <AgentsListCompact
+                agents={filtered}
+                stats={stats}
+                selectedKebab={selectedKebab}
+                onPick={openAgent}
+              />
+            )}
           </div>
         </aside>
 
         <Splitter axis="x" getValue={() => listW} setValue={setListW} min={260} max={720} />
 
         <div style={{ flex: 1, minWidth: 0, overflow: "auto", minHeight: 0 }}>
-          <AgentDetail
-            agent={agent}
-            stats={stats.get(selectedId)}
-            tenant={tenant}
-            onOpenWorkflow={() => router.push(`/portal/${tenant}/workflows` as never)}
-            onOpenRun={openRun}
-            allRuns={runs}
-          />
+          {detailQuery.isError ? (
+            <Empty
+              title="Failed to load agent"
+              hint={detailQuery.error?.message ?? "api unreachable on :3501"}
+            />
+          ) : detailQuery.isLoading && !agent ? (
+            <Empty title="Loading agent…" hint={selectedKebab} />
+          ) : (
+            <AgentDetail
+              agent={agent}
+              stats={stats.get(selectedKebab) ?? stats.get(agent?.name ?? "")}
+              tenant={tenant}
+              onOpenWorkflow={() => router.push(`/portal/${tenant}/workflows` as never)}
+              onOpenRun={openRun}
+              allRuns={runs}
+            />
+          )}
         </div>
       </div>
 
@@ -195,23 +267,23 @@ export default function AgentDetailPage() {
 function AgentsListCompact({
   agents,
   stats,
-  selectedId,
+  selectedKebab,
   onPick,
 }: {
-  agents: RaasAgent[];
+  agents: AgentListRow[];
   stats: Map<string, AgentStats>;
-  selectedId: string;
-  onPick: (id: string) => void;
+  selectedKebab: string;
+  onPick: (kebabId: string) => void;
 }) {
   return (
     <div>
       {agents.map((a) => {
-        const s = stats.get(a.id) ?? emptyStats();
-        const active = a.id === selectedId;
+        const s = stats.get(a.kebabId) ?? stats.get(a.name) ?? emptyStats();
+        const active = a.kebabId === selectedKebab;
         return (
           <button
             key={a.id}
-            onClick={() => onPick(a.id)}
+            onClick={() => onPick(a.kebabId)}
             style={{
               display: "block",
               width: "100%",
@@ -225,7 +297,7 @@ function AgentsListCompact({
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
               <ActorTag actor={a.actor} />
-              <span className="mono" style={{ fontSize: 10.5, color: "var(--text-3)" }}>{a.id}</span>
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--text-3)" }}>{a.kebabId}</span>
               <span
                 style={{
                   marginLeft: "auto",
@@ -253,25 +325,40 @@ function AgentDetail({
   onOpenRun,
   allRuns,
 }: {
-  agent: RaasAgent | undefined;
+  agent: ViewAgent | null;
   stats: AgentStats | undefined;
   tenant: string;
   onOpenWorkflow: () => void;
   onOpenRun: (id: string) => void;
-  allRuns: RaasRun[];
+  allRuns: RunListRow[];
 }) {
   const invoke = useInvokeAgent();
   const [tab, setTab] = useState<"config" | "io" | "code" | "versions" | "runs">("config");
   const [editing, setEditing] = useState(false);
+  // "Run with input…" dialog. Decoupled from the default "Test run" path
+  // so the operator can drop a real payload (resume + jd, candidate id,
+  // etc.) without having to author it into the manifest's input_data
+  // declaration.
+  const [runInputOpen, setRunInputOpen] = useState(false);
+  // 2-second cooldown after Test run settles. Prevents a rapid double-click
+  // (or stuck enter-key) from creating duplicate runs — earlier we saw
+  // ~7 TEST-* events fire from accidental repeats. `invoke.isPending`
+  // covers the in-flight window; this covers the brief gap between
+  // mutation success and a possible second click.
+  const [testCooldown, setTestCooldown] = useState(false);
   void tenant; // tenant is in URL via the layout
 
   if (!agent) return <Empty title="Agent not found" />;
 
-  const recentRuns = allRuns.filter((r) => r.agentId === agent.id).slice(0, 10);
+  // Runs are keyed by name in the live api payload.
+  const recentRuns = allRuns
+    .filter((r) => r.agentName === agent.name)
+    .slice(0, 10);
   const testRuns = recentRuns.filter((r) => r.testRun);
   const lastTest = testRuns[0];
 
   async function handleTestRun() {
+    if (invoke.isPending || testCooldown) return;
     try {
       const data = await invoke.mutateAsync({
         name: agent!.name,
@@ -283,6 +370,9 @@ function AgentDetail({
     } catch (err) {
       // Toast wiring lands later — log to console for now.
       console.error("Test run failed", err);
+    } finally {
+      setTestCooldown(true);
+      setTimeout(() => setTestCooldown(false), 2000);
     }
   }
 
@@ -320,7 +410,7 @@ function AgentDetail({
               }}
             >
               <StatusDot status={(lastTest.status as never) ?? "idle"} size={6} />
-              TEST · {fmtAgo(lastTest.startedAt)}
+              TEST · {fmtAgo(lastTest.startedAt ? Date.parse(lastTest.startedAt) : 0)}
             </button>
           )}
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
@@ -341,8 +431,28 @@ function AgentDetail({
                 <Button small icon="code" onClick={() => setEditing(true)}>
                   Edit
                 </Button>
-                <Button small icon="run" tone="primary" onClick={handleTestRun}>
-                  Test run
+                <Button
+                  small
+                  onClick={() => setRunInputOpen(true)}
+                  title="Open a JSON editor and run with a custom body.input — needed for manifest agents whose tool-use loop requires real payload fields (e.g. resume + jd)."
+                >
+                  Run with input…
+                </Button>
+                <Button
+                  small
+                  icon="run"
+                  tone="primary"
+                  onClick={handleTestRun}
+                  disabled={invoke.isPending || testCooldown}
+                  title={
+                    invoke.isPending
+                      ? "Running…"
+                      : testCooldown
+                        ? "Cooling down (2s) — prevents double-clicks from creating duplicate runs"
+                        : "Run the agent with its declared default input"
+                  }
+                >
+                  {invoke.isPending ? "Running…" : "Test run"}
                 </Button>
               </>
             )}
@@ -389,7 +499,23 @@ function AgentDetail({
           value={stats?.errors ?? 0}
           accent={(stats?.errors ?? 0) > 0 ? "var(--red)" : undefined}
         />
-        <StatCellA label="P50 latency" value={agent.actor === "Agent" ? "2.4s" : "—"} />
+        <StatCellA
+          label="P50 latency"
+          value={(() => {
+            // Compute P50 from real durationMs across this agent's runs
+            // — replaces the hardcoded "2.4s" mock so every agent shows
+            // its actual median duration (or "—" when no completed runs).
+            const durations = recentRuns
+              .map((r) => r.durationMs ?? 0)
+              .filter((d) => d > 0)
+              .sort((a, b) => a - b);
+            if (durations.length === 0) return "—";
+            const p50 = durations[Math.floor(durations.length / 2)] ?? 0;
+            return p50 >= 1000
+              ? `${(p50 / 1000).toFixed(1)}s`
+              : `${Math.round(p50)}ms`;
+          })()}
+        />
         <StatCellA
           label="Last run"
           value={stats?.lastRun && stats.lastRun > 0 ? fmtAgo(stats.lastRun) : "—"}
@@ -452,6 +578,20 @@ function AgentDetail({
         {tab === "versions" && <VersionsTab agent={agent} />}
         {tab === "runs" && <RunsTab runs={recentRuns} onOpenRun={onOpenRun} />}
       </div>
+      {runInputOpen && (
+        <RunWithInputModal
+          agentName={agent.name}
+          agentTitle={agent.title ?? agent.name}
+          defaultInput={agent.input_data}
+          onClose={() => setRunInputOpen(false)}
+          onSubmitted={(runId) => {
+            // Fire-and-jump — keep the modal open so the operator can copy
+            // the runId / run again, but also surface a deep-link to the
+            // new run via the router.
+            void runId;
+          }}
+        />
+      )}
     </div>
   );
 }

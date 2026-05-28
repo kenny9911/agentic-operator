@@ -8,8 +8,6 @@
  *
  *   - `setTimeout(..., 900)` standing in for the validate call
  *   - the `+ New tenant` toast "Not yet implemented"
- *   - `useEffect(load, [])` in `DataProvider` (so tenant switches don't
- *     reload the canvas)
  *   - the static `TENANTS` fixture in `chrome.tsx` instead of `useTenants()`
  *
  * Each of these passed typecheck and lint because they're all valid TS.
@@ -20,6 +18,12 @@
  * are absent. They are intentionally NOT runtime tests because the
  * production page tree requires Next.js + RSC + a live api to exercise
  * end-to-end (that's the Playwright suite's job).
+ *
+ * NOTE 2026-05-26: the DataProvider/bootstrap-fetch assertions used to
+ * live here have been dropped — that whole layer (`lib/hooks/data-context.tsx`
+ * + `/api/spa/bootstrap`) is extinct. Every view consumes canonical live
+ * hooks now, so there's no shared snapshot fetcher whose deps could
+ * regress.
  *
  * If a legitimate refactor changes a pattern this test asserts, update
  * the regex below in the SAME commit. Do not delete the file.
@@ -96,11 +100,11 @@ describe("regression: production wizard wiring", () => {
     it("does NOT show the 'Not yet implemented' toast for + New tenant", () => {
       // The toast pattern was distinctive — a `tone: "amber"` with title
       // containing "Not yet implemented" + the New-tenant description.
-      const stub =
-        /toast\([^)]*Not yet implemented/ ||
-        /Tenant provisioning is post-v1/;
+      // Either spelling is a regression; check both.
+      const notYetImplemented = /toast\([^)]*Not yet implemented/.test(src);
+      const postV1 = /Tenant provisioning is post-v1/.test(src);
       expect(
-        stub.test(src),
+        notYetImplemented || postV1,
         "+ New tenant still toasts 'Not yet implemented'. Revert detected.",
       ).toBe(false);
     });
@@ -140,38 +144,4 @@ describe("regression: production wizard wiring", () => {
     });
   });
 
-  describe("DataProvider — must re-fetch on tenant change", () => {
-    const src = read("lib/hooks/data-context.tsx");
-
-    it("imports usePathname (or another tenant-reactive source)", () => {
-      const usesPathname = /\busePathname\s*\(/.test(src);
-      const usesParams = /\buseParams\s*\(/.test(src);
-      expect(
-        usesPathname || usesParams,
-        "DataProvider must react to URL tenant changes — usePathname() / useParams() missing",
-      ).toBe(true);
-    });
-
-    it("does NOT use a bare [] dependency array for the bootstrap fetch", () => {
-      // Match the *load* effect specifically — there might be other
-      // useEffect calls in the file. The bootstrap loader is the one
-      // that calls /api/spa/bootstrap.
-      // Strategy: find the useEffect that contains "/api/spa/bootstrap"
-      // and inspect its deps line.
-      const effectBlock = src.match(
-        /useEffect\(\s*\(\)\s*=>\s*\{[\s\S]*?\/api\/spa\/bootstrap[\s\S]*?\},\s*\[([^\]]*)\]/,
-      );
-      expect(
-        effectBlock,
-        "Could not locate the bootstrap useEffect in data-context.tsx — refactor may have hidden it",
-      ).not.toBeNull();
-      if (effectBlock) {
-        const deps = effectBlock[1].trim();
-        expect(
-          deps.length > 0,
-          "DataProvider useEffect has empty [] deps — switching tenant won't refetch. Revert detected.",
-        ).toBe(true);
-      }
-    });
-  });
 });

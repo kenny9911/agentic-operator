@@ -30,6 +30,19 @@ export const ReplayEventResponse = z.object({
   new_event_id: z.string(),
 });
 
+/**
+ * A run that consumed an event (joined via runs.trigger_event_id). Surfaced
+ * in EventRow.consumers so the dashboard ticker can show "consumed by X"
+ * inline without a second round-trip.
+ */
+export const EventConsumer = z.object({
+  runId: z.string(),
+  agentName: z.string().nullable(),
+  agentTitle: z.string().nullable(),
+  status: z.string(),
+});
+export type EventConsumer = z.infer<typeof EventConsumer>;
+
 export const EventRow = z.object({
   id: z.string(),
   name: z.string(),
@@ -40,6 +53,10 @@ export const EventRow = z.object({
   sourceAgentName: z.string().nullable(),
   sourceAgentTitle: z.string().nullable(),
   payloadRef: z.string().nullable(),
+  /** Runs whose trigger_event_id == this event.id. Empty when no
+   * subscribers fired (e.g. a dead-letter event). Optional so older
+   * tests / callers that don't populate it keep validating. */
+  consumers: z.array(EventConsumer).optional(),
 });
 export type EventRow = z.infer<typeof EventRow>;
 

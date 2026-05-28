@@ -253,7 +253,7 @@ export async function listRecentEvents(
   const whereParts = [eq(events.tenantId, tenantId), isNull(events.deletedAt)];
   if (opts.name) whereParts.push(eq(events.name, opts.name));
 
-  return db
+  const rows = db
     .select({
       id: events.id,
       name: events.name,
@@ -278,4 +278,70 @@ export async function listRecentEvents(
     .orderBy(desc(events.receivedAt))
     .limit(opts.limit ?? 30)
     .all();
+
+  return hydrateEventConsumers(rows);
+}
+
+/**
+ * Attach `consumers[]` to each event by looking up `runs` whose
+ * `trigger_event_id` matches an event id in the page. One batched IN query
+ * regardless of page size, so the cost is O(events + runs-for-this-page),
+ * not O(events × runs).
+ *
+ * Why join through trigger_event_id instead of (name, subject)? The
+ * (name, subject) pair is non-unique: when a workflow runs the same agent
+ * for the same subject twice (replay, retry-with-new-event), each instance
+ * gets its own (event_id, run_id) pair — joining on name/subject would
+ * fold them all into one event and misattribute consumer chips. The FK is
+ * exact and respects test/replay semantics.
+ */
+function hydrateEventConsumers(
+  rows: Array<
+    Omit<EventRow, "consumers"> & { id: string }
+  >,
+): EventRow[] {
+  if (rows.length === 0) return rows;
+  const db = getDb();
+  const ids = rows.map((r) => r.id);
+
+  const consumerRows = db
+    .select({
+      eventId: runs.triggerEventId,
+      runId: runs.id,
+      status: runs.status,
+      agentName: agents.name,
+      agentTitle: agents.title,
+    })
+    .from(runs)
+    .leftJoin(agents, eq(agents.id, runs.agentId))
+    .where(
+      sql`${runs.triggerEventId} IN (${sql.join(
+        ids.map((i) => sql`${i}`),
+        sql`, `,
+      )})`,
+    )
+    .all();
+
+  const byEvent = new Map<
+    string,
+    Array<{
+      runId: string;
+      agentName: string | null;
+      agentTitle: string | null;
+      status: string;
+    }>
+  >();
+  for (const c of consumerRows) {
+    if (!c.eventId) continue;
+    const arr = byEvent.get(c.eventId) ?? [];
+    arr.push({
+      runId: c.runId,
+      agentName: c.agentName ?? null,
+      agentTitle: c.agentTitle ?? null,
+      status: c.status,
+    });
+    byEvent.set(c.eventId, arr);
+  }
+
+  return rows.map((r) => ({ ...r, consumers: byEvent.get(r.id) ?? [] }));
 }

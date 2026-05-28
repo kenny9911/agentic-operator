@@ -14,13 +14,13 @@
 
 import { useState, useEffect } from "react";
 import { ActorTag, Badge, Button } from "@/app/portal/components";
-import type { RaasAgent, RaasEvent } from "@/lib/hooks/data-context";
-import { Section } from "./inspectors";
+import type { DagAgent } from "@/lib/hooks/useAgents";
+import { Section, type EventCatalogItem } from "./inspectors";
 import type { DraftAgent } from "./draft";
 
 export interface AgentEditorProps {
-  agent: RaasAgent;
-  events: RaasEvent[];
+  agent: DagAgent;
+  events: EventCatalogItem[];
   /** Current draft for this agent (so the editor stays controlled across re-renders). */
   draft: DraftAgent | undefined;
   onChange: (next: DraftAgent) => void;
@@ -46,14 +46,14 @@ export function AgentEditor({
     setTitleInput(effective.title);
     setTriggerInput(effective.triggers.join(", "));
     setEmitInput(effective.emits.join(", "));
-    // We intentionally key off agent.id so React's lint rule isn't quite
+    // We intentionally key off agent.kebabId so React's lint rule isn't quite
     // right; rerunning on every field change would clobber typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.id]);
+  }, [agent.kebabId]);
 
   function commit(partial: Partial<DraftAgent>) {
     onChange({
-      id: agent.id,
+      id: agent.kebabId,
       title: titleInput,
       triggers: parseList(triggerInput),
       emits: parseList(emitInput),
@@ -83,7 +83,7 @@ export function AgentEditor({
         <div>
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             <ActorTag actor={agent.actor} />
-            <Badge tone="muted">{agent.id}</Badge>
+            <Badge tone="muted">{agent.kebabId}</Badge>
             <Badge tone="amber">EDIT</Badge>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-3)" }}>
@@ -133,12 +133,6 @@ export function AgentEditor({
         <EventDictHint events={events} prefix="Available" />
       </Section>
 
-      <Section title="Description">
-        <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>
-          {agent.description || "(no description set)"}
-        </div>
-      </Section>
-
       <div
         style={{
           padding: 14,
@@ -160,7 +154,7 @@ function EventDictHint({
   events,
   prefix,
 }: {
-  events: RaasEvent[];
+  events: EventCatalogItem[];
   prefix: string;
 }) {
   if (events.length === 0) return null;
@@ -183,9 +177,9 @@ export function parseList(s: string): string[] {
 }
 
 function mergeAgent(
-  base: RaasAgent,
+  base: DagAgent,
   draft: DraftAgent | undefined,
-): RaasAgent {
+): DagAgent {
   if (!draft) return base;
   return {
     ...base,

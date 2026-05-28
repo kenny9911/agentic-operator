@@ -85,10 +85,50 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function devTenant(): AuthedContext | null {
-  const slug = process.env.AGENTIC_DEV_TENANT ?? "raas";
-  const t = getDb().select().from(tenants).where(eq(tenants.slug, slug)).all()[0];
-  return t ? { tenantId: t.id, tenantSlug: t.slug, via: "dev" } : null;
+/**
+ * Dev-only tenant override header. The Next.js portal forwards the URL's
+ * `[tenant]` segment as `x-agentic-tenant` so dashboards bound to
+ * `/portal/<slug>/...` see that tenant's data — not whatever
+ * `AGENTIC_DEV_TENANT` happens to be. Strictly gated to `AUTH_MODE=dev`:
+ * production must continue to derive tenant exclusively from the bearer
+ * token / session cookie, never from a client-controlled header.
+ *
+ * Hotfix — dashboard render hang (`/portal/hello/dashboard`). See
+ * docs/team-execution/00-master-plan.md for the full narrative.
+ */
+const DEV_TENANT_HEADER = "x-agentic-tenant";
+
+/**
+ * Read the dev-only tenant override from a request. Returns the trimmed
+ * slug when the header is present, non-empty, and references an existing
+ * (non-archived) tenant; otherwise returns null so callers fall back to
+ * `AGENTIC_DEV_TENANT`. NEVER consults this header outside `AUTH_MODE=dev`.
+ */
+function devTenantOverride(req: FastifyRequest | null): string | null {
+  if (!req) return null;
+  const raw = req.headers[DEV_TENANT_HEADER];
+  const slug = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof slug !== "string") return null;
+  const trimmed = slug.trim();
+  if (!trimmed) return null;
+  // Slug shape mirrors `packages/db/schema.ts#tenants.slug` and the wizard
+  // validator: 1-32 chars of [a-z0-9_-]. Reject malformed values rather
+  // than running a SELECT with attacker-controlled text — defense in depth.
+  if (!/^[a-z0-9_-]{1,32}$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function devTenant(req: FastifyRequest | null = null): AuthedContext | null {
+  const override = devTenantOverride(req);
+  const fallback = process.env.AGENTIC_DEV_TENANT ?? "raas";
+  // Try the URL-bound tenant first; fall back to the env-pinned slug if it
+  // doesn't resolve. The header is advisory in dev mode — never a 401.
+  const candidates = override && override !== fallback ? [override, fallback] : [fallback];
+  for (const slug of candidates) {
+    const t = getDb().select().from(tenants).where(eq(tenants.slug, slug)).all()[0];
+    if (t) return { tenantId: t.id, tenantSlug: t.slug, via: "dev" };
+  }
+  return null;
 }
 
 /**
@@ -102,7 +142,7 @@ function devTenant(): AuthedContext | null {
  */
 export async function authenticate(req: FastifyRequest): Promise<AuthedContext | null> {
   if (process.env.AUTH_MODE === "dev") {
-    return devTenant();
+    return devTenant(req);
   }
 
   // UC-V11-29 / PF-GAP-05 — cookie auth precedes bearer in prod. The

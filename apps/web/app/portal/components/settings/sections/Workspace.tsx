@@ -5,9 +5,15 @@
  *
  * Includes P2-FE-27 timezone picker — backed by useWorkspace() which persists
  * via POST /api/prefs.
+ *
+ * NOTE: this form is currently view-only — the local useState defaults are
+ * seeded from the *active tenant's* live record (via useTenant + useTenants)
+ * so it never displays stale RAAS values. There's no POST /v1/tenants/:id
+ * editor wired up yet, so "Save changes" is a no-op (the visible accent +
+ * region pickers are demo-only).
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Panel } from "@/app/portal/components";
 import {
   Field,
@@ -16,8 +22,9 @@ import {
   Toggle,
 } from "@/app/portal/components/settings/atoms";
 import { LOCALES, TIMEZONES } from "@/app/portal/components/settings/data";
-import { useRaasData } from "@/lib/hooks/data-context";
+import { useTenants } from "@/lib/hooks/useTenants";
 import { useWorkspace } from "@/lib/hooks/useWorkspace";
+import { useTenant } from "@/app/portal/lib/use-tenant";
 
 const ACCENTS = [
   { value: "#d0ff00", label: "Lime" },
@@ -27,16 +34,48 @@ const ACCENTS = [
 ];
 
 export function WorkspaceSection() {
-  const { tenants } = useRaasData();
+  const tenantsQuery = useTenants();
+  // Adapt the live tenant rows to the local {id, name, color} shape this
+  // form already uses. Filters out archived tenants so they don't show in
+  // the "default tenant" picker.
+  const tenants =
+    tenantsQuery.data?.items
+      .filter((t) => t.archivedAt == null)
+      .map((t) => ({
+        id: t.slug,
+        name: t.name,
+        color: t.color ?? "#d0ff00",
+      })) ?? [];
   const { timezone, locale, setTimezone, setLocale } = useWorkspace();
-  const [name, setName] = useState("agentic-operator");
-  const [display, setDisplay] = useState("Agentic Operator · RAAS");
-  const [region, setRegion] = useState("cn-shenzhen-1");
-  const [tenant, setTenant] = useState(tenants[0]?.id ?? "raas");
-  const [accent, setAccent] = useState("#d0ff00");
+  const activeSlug = useTenant();
+  // Lookup the live tenant row so the form seeds from real data, not the
+  // legacy "agentic-operator · RAAS" mock that used to ship in dev.
+  const activeTenant =
+    tenants.find((t) => t.id === activeSlug) ?? tenants[0] ?? null;
+  const [name, setName] = useState(activeTenant?.id ?? activeSlug);
+  const [display, setDisplay] = useState(activeTenant?.name ?? activeSlug);
+  // Region is a placeholder for the future deploy-region selector — no
+  // /v1/region API exists yet. Seed from NEXT_PUBLIC_AGENTIC_REGION if the
+  // operator has pinned one, otherwise show "Not configured" so the UI
+  // doesn't pretend the workspace is anchored in a specific region.
+  const initialRegion =
+    (process.env.NEXT_PUBLIC_AGENTIC_REGION ?? "").trim() || "Not configured";
+  const [region, setRegion] = useState(initialRegion);
+  const [tenant, setTenant] = useState(activeSlug);
+  const [accent, setAccent] = useState(activeTenant?.color ?? "#d0ff00");
   const [retention, setRetention] = useState("30");
   const [piiMask, setPiiMask] = useState(true);
   const [strict, setStrict] = useState(false);
+
+  // The tenants list is async — re-seed once it lands so the form shows the
+  // resolved active tenant rather than the initial slug fallback.
+  useEffect(() => {
+    if (!activeTenant) return;
+    setName(activeTenant.id);
+    setDisplay(activeTenant.name);
+    setTenant(activeTenant.id);
+    if (activeTenant.color) setAccent(activeTenant.color);
+  }, [activeTenant?.id, activeTenant?.name, activeTenant?.color]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -53,12 +92,13 @@ export function WorkspaceSection() {
         </Field>
         <Field
           label="Region"
-          hint="Workers and event storage run in this region. Moving regions requires re-deploy."
+          hint="Workers and event storage run in this region. Currently advisory — set NEXT_PUBLIC_AGENTIC_REGION to pin one once the multi-region runtime ships."
         >
           <SelectIn
             value={region}
             onChange={setRegion}
             options={[
+              "Not configured",
               "cn-shenzhen-1",
               "cn-shanghai-2",
               "cn-beijing-3",

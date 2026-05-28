@@ -37,6 +37,12 @@ export interface HealthReport {
     logsDir?: string;
     freeBytes?: number;
   };
+  /**
+   * 2026-05-26 — AGENTIC_DEMO_MODE flag. Surfaced so the sidebar can render
+   * a lime "DEMO" pill near the logo. Optional because older api builds
+   * (without this field) still parse cleanly; treat undefined as false.
+   */
+  demoMode?: boolean;
 }
 
 export const HEALTH_KEYS = {

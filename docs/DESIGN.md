@@ -54,7 +54,7 @@ flowchart LR
         EXT[External callers<br/>RMS / ATS / webhooks]
     end
 
-    subgraph Web["apps/web — Next.js :3500"]
+    subgraph Web["apps/web — Next.js :3599"]
         NEXT[Next.js routes<br/>+ React SPA]
     end
 
@@ -128,7 +128,7 @@ flowchart LR
 │  $ pnpm dev   (concurrently)                              │
 │                                                            │
 │   ┌────────────────┐  ┌────────────────┐  ┌────────────┐  │
-│   │ apps/web :3500 │  │ apps/api :3501 │  │ inngest    │  │
+│   │ apps/web :3599 │  │ apps/api :3501 │  │ inngest    │  │
 │   │ next dev       │  │ tsx watch      │  │  :8288/dev │  │
 │   │ (Turbopack)    │  │ (Fastify)      │  │            │  │
 │   └────────┬───────┘  └────────┬───────┘  └─────┬──────┘  │
@@ -137,7 +137,7 @@ flowchart LR
 └──────────────────────────────────────────────────────────┘
 ```
 
-- `predev` (root `package.json:11`) hard-kills `:3500 :3501 :8288 :8289 :50052 :50053` before each run. A sharp tool — necessary on shared dev boxes; not used in prod (*Audit #2 §2.3*).
+- `predev` (root `package.json:11`) hard-kills `:3599 :3501 :8288 :8289 :50052 :50053` before each run. A sharp tool — necessary on shared dev boxes; not used in prod (*Audit #2 §2.3*).
 - Hot reload: Next.js Turbopack covers the web tier. `tsx watch` restarts Fastify on file change but does **not** hot-reload Inngest function registrations — those re-register only at boot (*Audit #2 §5.3*). This is acceptable for v1 dev; manifest hot-reload is on the roadmap (PRD §FR-OS-HOTRELOAD).
 - Healthcheck contracts (dev parity with prod, §3.2): `GET /health` returns 200 if DB ping + Inngest reachable + LLM gateway initialized. Returns 503 if any subsystem fails. Today's `/health` matches this shape (`apps/api/src/routes/health.ts:12`).
 
@@ -147,7 +147,7 @@ Three logical services, deployable as three containers or co-located in one (ope
 
 | Service | Process | Port (default) | Scale model | Healthcheck |
 |---|---|---|---|---|
-| **web** | Next.js standalone bundle | `3500` | Stateless, horizontal | `GET /health` (proxied to api) |
+| **web** | Next.js standalone bundle | `3599` | Stateless, horizontal | `GET /health` (proxied to api) |
 | **api** | Fastify (tsx or `node dist/server.js`) | `3501` | Stateful (SQLite local FS); horizontal needs Postgres + shared FS for artifacts | `GET /health` |
 | **inngest-worker** | The same `api` process, or a separate Node process running only Inngest serve | `3501/inngest` | Horizontal once stateless (Postgres + S3) | inspected via Inngest dashboard |
 | **scheduler** | Owned by Inngest Cloud (or self-hosted Inngest) | n/a | n/a | n/a — pushed by Inngest |
@@ -159,7 +159,7 @@ Three logical services, deployable as three containers or co-located in one (ope
                       │     TLS termination · static caching · WAF                  │
                       └───────────────┬────────────────────────────┬────────────────┘
                                       │                            │
-                          web :3500 ──┘                            └── api :3501
+                          web :3599 ──┘                            └── api :3501
                                                                           │
                                                           ┌───────────────┼─────────────┐
                                                           ▼               ▼             ▼

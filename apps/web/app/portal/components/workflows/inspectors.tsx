@@ -9,12 +9,18 @@ import {
   eventTone,
 } from "@/app/portal/components";
 import { fmtAgo } from "@/lib/format";
-import { useRaasData } from "@/lib/hooks/data-context";
-import type {
-  RaasAgent,
-  RaasEvent,
-  RaasStreamItem,
-} from "@/lib/hooks/data-context";
+import { useDag, useAgent, type DagAgent } from "@/lib/hooks/useAgents";
+import { useEvents, type EventRow } from "@/lib/hooks/useEvents";
+
+/**
+ * Catalog row built from the live `/v1/events` stream so the inspectors can
+ * surface color + category metadata without the bootstrap snapshot.
+ */
+export interface EventCatalogItem {
+  name: string;
+  color: string;
+  category: string;
+}
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -51,11 +57,11 @@ export function DefaultInspector({
   agents,
   onPick,
 }: {
-  events: RaasEvent[];
-  agents: RaasAgent[];
+  events: EventCatalogItem[];
+  agents: DagAgent[];
   onPick: (name: string) => void;
 }) {
-  const grouped: Record<string, RaasEvent[]> = {
+  const grouped: Record<string, EventCatalogItem[]> = {
     agent: [],
     human: [],
     data: [],
@@ -126,11 +132,24 @@ export function AgentInspector({
   onClose,
   onOpenFull,
 }: {
-  agent: RaasAgent | null | undefined;
+  agent: DagAgent | null | undefined;
   onClose: () => void;
   onOpenFull: () => void;
 }) {
+  // Fetch the rich AgentDetail (actions, workflowSlug, workflowVersion,
+  // recentRuns) when an agent is selected. Falls back gracefully when the
+  // detail call is still loading — the inspector renders triggers/emits
+  // from the canvas-side DagAgent immediately.
+  const detailQuery = useAgent(agent?.kebabId ?? null);
+  const detail = detailQuery.data;
   if (!agent) return null;
+
+  // Prefer the live AgentDetail fields when available so we always show
+  // the canonical manifest values; fall back to the DAG snapshot otherwise.
+  const triggers = detail?.triggers ?? agent.triggers;
+  const emits = detail?.triggeredEvents ?? agent.emits;
+  const actionNames = (detail?.actions ?? []).map((a) => a.name);
+
   return (
     <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
       <header
@@ -145,20 +164,17 @@ export function AgentInspector({
         <div>
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             <ActorTag actor={agent.actor} />
-            <Badge tone="muted">{agent.id}</Badge>
+            <Badge tone="muted">{agent.kebabId}</Badge>
           </div>
           <div style={{ fontSize: 15, color: "var(--text)", fontWeight: 500, lineHeight: 1.3 }}>{agent.title}</div>
         </div>
         <Button small icon="x" tone="ghost" onClick={onClose} />
       </header>
-      <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-        <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.55 }}>{agent.description}</div>
-      </div>
-      {agent.steps && agent.steps.length > 0 && (
+      {actionNames.length > 0 && (
         <Section title="Steps">
           <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
-            {agent.steps.map((s, i) => (
-              <li key={s} style={{ display: "flex", gap: 8, padding: "4px 0", fontSize: 12 }}>
+            {actionNames.map((s, i) => (
+              <li key={`${s}-${i}`} style={{ display: "flex", gap: 8, padding: "4px 0", fontSize: 12 }}>
                 <span style={{ color: "var(--text-3)", fontFamily: "var(--mono)", width: 18 }}>{i + 1}.</span>
                 <span className="mono" style={{ color: "var(--text)" }}>{s}</span>
               </li>
@@ -168,8 +184,8 @@ export function AgentInspector({
       )}
       <Section title="Triggers">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-          {agent.triggers.length > 0 ? (
-            agent.triggers.map((t) => (
+          {triggers.length > 0 ? (
+            triggers.map((t) => (
               <Badge key={t} tone="blue">{t}</Badge>
             ))
           ) : (
@@ -179,23 +195,17 @@ export function AgentInspector({
       </Section>
       <Section title="Emits">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-          {agent.emits.map((e) => (
+          {emits.map((e) => (
             <Badge key={e} tone="green">{e}</Badge>
           ))}
         </div>
       </Section>
-      {agent.tools && agent.tools.length > 0 && (
-        <Section title="Tools">
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {agent.tools.map((t) => (
-              <Badge key={t} tone="muted">{t}</Badge>
-            ))}
-          </div>
-        </Section>
-      )}
-      {agent.model && (
-        <Section title="Model">
-          <span className="mono" style={{ fontSize: 12, color: "var(--text)" }}>{agent.model}</span>
+      {detail?.workflowSlug && (
+        <Section title="Workflow">
+          <span className="mono" style={{ fontSize: 12, color: "var(--text)" }}>
+            {detail.workflowSlug}
+            {detail.workflowVersion ? ` · ${detail.workflowVersion}` : ""}
+          </span>
         </Section>
       )}
       <div
@@ -229,13 +239,19 @@ export function EventInspector({
   onNavigateAgent: (id: string) => void;
   onNavigateEvents: (eventName: string) => void;
 }) {
-  const { events, agents, eventStream } = useRaasData();
-  const ev = events.find((e) => e.name === eventName);
+  // Live event-name filter — bounded to 8 so the "recent" panel only shows
+  // the most useful entries even if the tenant's event history is large.
+  const eventsQuery = useEvents({ name: eventName, limit: 8 });
+  const catalogQuery = useEvents({ limit: 200 });
+  const dagQuery = useDag();
+
+  const agents = dagQuery.data?.agents ?? [];
+  const recent = eventsQuery.data ?? [];
+  const catalog = catalogQuery.data ?? [];
+  const catalogRow = catalog.find((c) => c.name === eventName);
+
   const emitters = agents.filter((a) => a.emits.includes(eventName));
   const listeners = agents.filter((a) => a.triggers.includes(eventName));
-  const recentInStream: RaasStreamItem[] = eventStream
-    .filter((e: RaasStreamItem) => (e as { name?: string }).name === eventName)
-    .slice(0, 4);
 
   return (
     <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
@@ -249,8 +265,8 @@ export function EventInspector({
         }}
       >
         <div>
-          <Badge tone={eventTone(ev?.color ?? "")} style={{ marginBottom: 8 }}>{eventName}</Badge>
-          <div style={{ fontSize: 11, color: "var(--text-3)" }}>category · {ev?.category}</div>
+          <Badge tone={eventTone(catalogRow?.color ?? "")} style={{ marginBottom: 8 }}>{eventName}</Badge>
+          <div style={{ fontSize: 11, color: "var(--text-3)" }}>category · {catalogRow?.category ?? "—"}</div>
         </div>
         <Button small icon="x" tone="ghost" onClick={onClose} />
       </header>
@@ -260,13 +276,13 @@ export function EventInspector({
       <Section title={`Listened by · ${listeners.length}`}>
         <NodeList agents={listeners} onPick={onNavigateAgent} />
       </Section>
-      <Section title={`Recent · ${recentInStream.length}`}>
-        {recentInStream.map((e) => {
-          const item = e as { id: string; at?: number | null };
+      <Section title={`Recent · ${recent.length}`}>
+        {recent.map((row: EventRow) => {
+          const at = row.receivedAt ? Date.parse(row.receivedAt) : null;
           return (
-            <div key={item.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 11.5 }}>
-              <span className="mono" style={{ color: "var(--text-2)" }}>{item.id}</span>
-              <span style={{ color: "var(--text-3)" }}>{item.at != null ? fmtAgo(item.at) : "—"}</span>
+            <div key={row.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 11.5 }}>
+              <span className="mono" style={{ color: "var(--text-2)" }}>{row.id}</span>
+              <span style={{ color: "var(--text-3)" }}>{at != null && Number.isFinite(at) ? fmtAgo(at) : "—"}</span>
             </div>
           );
         })}
@@ -280,13 +296,13 @@ export function EventInspector({
   );
 }
 
-function NodeList({ agents, onPick }: { agents: RaasAgent[]; onPick: (id: string) => void }) {
+function NodeList({ agents, onPick }: { agents: DagAgent[]; onPick: (id: string) => void }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {agents.map((a) => (
         <button
-          key={a.id}
-          onClick={() => onPick(a.id)}
+          key={a.kebabId}
+          onClick={() => onPick(a.kebabId)}
           style={{
             display: "flex",
             alignItems: "center",

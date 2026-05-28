@@ -12,15 +12,27 @@ dist
 .env
 .env.local
 .env.*.local
+# env / file backups — may contain plaintext secrets (e.g. .env.local.bak)
+*.bak
 
-# runtime data — all live under data/
-data/agentic.db
-data/agentic.db-shm
-data/agentic.db-wal
-data/logs/**/*
-!data/logs/.gitkeep
-data/artifacts/**/*
+# runtime data — everything under data/ is runtime output and is gitignored,
+# EXCEPT the intentionally-tracked skeleton + config in the allowlist below.
+# CLAUDE.md: "Everything under data/ is gitignored." This `data/*` + allowlist
+# auto-ignores leaked runtime dirs (test-artifacts, test-logs, resumes, briefs,
+# jd-archive, reports, use-cases, the live agentic.db, …) so they can never
+# sneak into a commit, while keeping the files git already tracks today.
+data/*
+!data/artifacts/
+!data/backups/
+!data/logs/
+!data/model-fleet.json
+!data/provider-keys.json
+!data/system-agents/
+# inside the artifact + log dirs, keep ONLY the .gitkeep placeholder
+data/artifacts/*
 !data/artifacts/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
 
 # editor / OS
 .DS_Store
@@ -44,3 +56,10 @@ test-results
 
 # manifest-import test fixtures — random-slug model dirs leaked by e2e runs
 models/mi*-v*/
+
+# __system is the test-suite tenant (AGENTIC_DEV_TENANT=__system). Its manifest
+# engine writes a fresh workflow_vN.json on every deploy / re-register, so these
+# accumulate by the hundred. Pure runtime/test output — never source. (144 were
+# committed before this rule landed; run `git rm -r --cached models/__system-v1`
+# to untrack them in a dedicated cleanup commit.)
+models/__system-v1/workflow_v*.json

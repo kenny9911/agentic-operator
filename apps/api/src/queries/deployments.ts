@@ -80,7 +80,20 @@ export async function getLiveDeployment(
     .innerJoin(workflows, eq(workflows.id, workflowVersions.workflowId))
     .leftJoin(users, eq(users.id, deployments.deployedBy))
     .where(
-      and(eq(deployments.tenantId, tenantId), eq(deployments.status, "live")),
+      and(
+        eq(deployments.tenantId, tenantId),
+        eq(deployments.status, "live"),
+        // Filter to the workflow lane — a tenant can have multiple live
+        // deployments in parallel lanes (workflow, tenant_code, agent,
+        // runtime, code_agent). The "Live Workflow" card on the
+        // Deployments page is specifically about the manifest graph; it
+        // must NOT show a row from another lane (e.g. raas has a
+        // tenant_code live deployment 9 sec newer than its workflow
+        // deployment — without this filter the card would surface the
+        // wrong workflow version + agent count). Audit history (via
+        // listDeployments) deliberately shows all lanes.
+        eq(deployments.target, "workflow"),
+      ),
     )
     .orderBy(desc(deployments.deployedAt))
     .all()[0];

@@ -1,11 +1,12 @@
 /**
  * Workflow editor draft state (P3-FE-01).
  *
- * The DAG canvas reads its agents from `useRaasData()` — a read-only
- * bootstrap snapshot. To support editing without round-tripping to the
- * server on every keystroke, we maintain an in-memory `WorkflowDraft`:
+ * The DAG canvas reads its agents from `useDag()` — a live read of the
+ * `/v1/workflows/dag` payload. To support editing without round-tripping
+ * to the server on every keystroke, we maintain an in-memory
+ * `WorkflowDraft`:
  *
- *   - `agents`  : map of agent.id → mutable `DraftAgent` (overrides bootstrap)
+ *   - `agents`  : map of agent.id → mutable `DraftAgent` (overrides live data)
  *   - `removed` : ids deleted in this session
  *   - `added`   : ids inserted in this session
  *
@@ -21,12 +22,12 @@
  * server returns `{ workflow_version_id, version, diff, note }`.
  */
 
-import type { RaasAgent } from "@/lib/hooks/data-context";
+import type { DagAgent } from "@/lib/hooks/useAgents";
 
 /**
  * A subset of the AgentSpec fields the editor can mutate. Other fields
  * (id, actor, actions, description) are preserved verbatim from the
- * bootstrap snapshot in `toManifest()`.
+ * live snapshot in `toManifest()`.
  */
 export interface DraftAgent {
   id: string;
@@ -51,15 +52,18 @@ export function emptyDraft(): WorkflowDraft {
 /**
  * Apply a draft to a base agent list. Returns the new effective list.
  * Pure — order-stable for unchanged entries.
+ *
+ * Agents on the canvas are keyed by `kebabId` (the manifest slug) so the
+ * draft maps line up with the DAG payload's `agents[].kebabId` field.
  */
 export function applyDraft(
-  base: RaasAgent[],
+  base: DagAgent[],
   draft: WorkflowDraft,
-): RaasAgent[] {
-  const out: RaasAgent[] = [];
+): DagAgent[] {
+  const out: DagAgent[] = [];
   for (const a of base) {
-    if (draft.removed.has(a.id)) continue;
-    const d = draft.agents[a.id];
+    if (draft.removed.has(a.kebabId)) continue;
+    const d = draft.agents[a.kebabId];
     if (d) {
       out.push({
         ...a,
@@ -76,23 +80,18 @@ export function applyDraft(
   for (const id of draft.added) {
     const d = draft.agents[id];
     if (!d) continue;
-    if (base.some((b) => b.id === id)) continue; // already present
+    if (base.some((b) => b.kebabId === id)) continue; // already present
     out.push({
       id,
+      kebabId: id,
       name: d.name ?? id,
       title: d.title ?? id,
-      description: "",
       actor: "Agent",
       stage: 0,
       triggers: d.triggers ?? [],
       emits: d.emits ?? [],
-      steps: [],
-      tools: [],
-      model: "",
-      input_data: {},
-      ontology_instructions: "",
-      tool_use: undefined,
-      typescript_code: "",
+      recentRunCount: 0,
+      isLive: false,
     });
   }
   return out;
@@ -104,13 +103,13 @@ export function applyDraft(
  * The manifest is an array of AgentSpec entries. The contract requires
  * `actions: ActionSpec[]` — we synthesize a one-element placeholder action
  * for added nodes so the schema parse succeeds. For existing nodes the
- * client doesn't ship their actions (it doesn't read them from the
- * bootstrap snapshot in v1), so the action set is reduced to a stub. A
- * follow-up will round-trip the full action set once the API surfaces
- * `actions` on `GET /v1/agents/:kebab`.
+ * client doesn't ship their actions (it doesn't read them from the DAG
+ * payload in v1), so the action set is reduced to a stub. A follow-up
+ * will round-trip the full action set once the API surfaces `actions` on
+ * `GET /v1/agents/:kebab`.
  */
 export function toManifest(
-  applied: RaasAgent[],
+  applied: DagAgent[],
 ): Array<{
   id: string;
   name: string;
@@ -122,10 +121,10 @@ export function toManifest(
   triggered_event: string[];
 }> {
   return applied.map((a) => ({
-    id: a.id,
+    id: a.kebabId,
     name: a.name,
     title: a.title,
-    description: a.description ?? "",
+    description: "",
     actor: [a.actor],
     trigger: a.triggers,
     actions: [

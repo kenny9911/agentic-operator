@@ -22,7 +22,7 @@ This is the **end-to-end test matrix** for Agentic Operator covering every `/v1/
 
 - API: `pnpm --filter @agentic/api run test` — vitest, single-fork, `pool: "forks"`, `sequence.concurrent: false`. Setup at `apps/api/test/setup.ts` forces `AUTH_MODE=dev`, `AGENTIC_DEV_TENANT=__system`, `LLM_DEFAULT_PROVIDER=mock`, redirects logs/artifacts under `data/test-logs/` and `data/test-artifacts/`. The single-fork pin is mandatory: the manifest-import commit transaction is heavy enough to trip `SQLITE_BUSY` (5 s) under multi-worker contention.
 - Web unit: `pnpm --filter @agentic/web run test` — vitest, narrow coverage gate (lines ≥ 70, branches ≥ 60) over the helpers listed in `apps/web/vitest.config.ts`.
-- Web e2e: `pnpm --filter @agentic/web exec playwright test` — Playwright; dev server must be on `:3500` or set `PW_AUTO_WEBSERVER=1`.
+- Web e2e: `pnpm --filter @agentic/web exec playwright test` — Playwright; dev server must be on `:3599` or set `PW_AUTO_WEBSERVER=1`.
 - Web visual: `apps/web/test/visual/portal.spec.ts` — 1440×900 pixel diffs against `test/visual/v1_1-reference/`.
 - CLI: `pnpm --filter @agentic/cli run test`.
 - Manual UAT items run in the dev environment (`pnpm dev`) by an engineer with two browser windows and at least two seeded tenants.
@@ -1036,7 +1036,7 @@ Use-case slots (`UC-?`) are placeholders the Test Engineer fills in after `01-us
 **Use case:** UC-VisualReference
 **Level:** visual
 **Type:** regression
-**Preconditions:** dev stack on :3500.
+**Preconditions:** dev stack on :3599.
 **Steps:** Playwright pixel-diff at 1440×900 against `apps/web/test/visual/v1_1-reference/`.
 **Expected:** every diff ≤ tolerance.
 **Automated:** yes
@@ -1048,7 +1048,7 @@ Use-case slots (`UC-?`) are placeholders the Test Engineer fills in after `01-us
 **Use case:** UC-A11y
 **Level:** visual / a11y
 **Type:** regression
-**Preconditions:** dev stack on :3500.
+**Preconditions:** dev stack on :3599.
 **Steps:** Playwright + axe-core runs `a11y.spec.ts` against the main routes.
 **Expected:** zero serious/critical violations.
 **Automated:** yes

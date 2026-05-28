@@ -26,6 +26,9 @@ import { auditRoutes } from "./routes/v1/audit";
 import { streamRoutes } from "./routes/v1/stream";
 import { tenantCodeRoutes } from "./routes/v1/tenant-code";
 import { workflowRoutes } from "./routes/v1/workflow";
+import { demoRoutes } from "./routes/v1/demo";
+import { toolsRoutes } from "./routes/v1/tools";
+import { stopDemoRunner } from "./services/demo-runner";
 import { inngestRoute } from "./routes/inngest";
 import { bootstrapRuntime } from "./bootstrap";
 
@@ -33,7 +36,7 @@ const MAX_BODY_BYTES = Number(process.env.AGENTIC_MAX_BODY_BYTES ?? 10 * 1024 * 
 
 const PORT = Number(process.env.PORT ?? 3501);
 const HOST = process.env.HOST ?? "0.0.0.0";
-const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3500";
+const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:3599";
 
 export async function build() {
   const app = Fastify({
@@ -84,9 +87,20 @@ export async function build() {
   await app.register(healthRoute);
   await app.register(metricsRoute);
 
-  // Inngest webhook — needs bootstrap result
+  // Inngest webhook — needs bootstrap result. We deliberately ignore
+  // `result.stopDemoRunner` here: that closure is only populated when the
+  // env flag boot-starts the runner, so a runner started later via
+  // `POST /v1/demo/start` would NOT be drained on SIGTERM. The imported
+  // `stopDemoRunner` from the demo-runner module reads the live
+  // `_activeRunner` singleton, so it works for both code paths.
   const { inngest, functions } = await bootstrapRuntime();
   await inngestRoute(app, { client: inngest, functions });
+
+  // Demo-runner stops cleanly on Fastify drain (SIGTERM / SIGINT route here
+  // through `installGracefulShutdown`). No-op when nothing is running.
+  app.addHook("onClose", async () => {
+    stopDemoRunner();
+  });
 
   // /v1 REST surface
   await app.register(
@@ -116,6 +130,13 @@ export async function build() {
       await v1.register(streamRoutes);
       await v1.register(tenantCodeRoutes);
       await v1.register(workflowRoutes);
+      // Demo-mode runtime toggle — POST /v1/demo/start | /v1/demo/stop |
+      // GET /v1/demo/status. Lets the operator flip the synthetic-traffic
+      // loop on/off without an api restart.
+      await v1.register(demoRoutes);
+      // Global tool catalog — drives the Tools view in the portal so
+      // manifest authors can browse what's available without spelunking.
+      await v1.register(toolsRoutes);
     },
     { prefix: "/v1" },
   );

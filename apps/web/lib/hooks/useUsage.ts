@@ -16,6 +16,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
+import { tenantHeader } from "./tenant-header";
 
 interface ApiOk<T> {
   ok: true;
@@ -27,13 +28,15 @@ interface ApiErr {
 }
 
 async function callV1<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { headers: initHeaders, ...rest } = init;
   const res = await fetch(path, {
     credentials: "same-origin",
+    ...rest,
     headers: {
       Accept: "application/json",
-      ...(init.headers as Record<string, string> | undefined),
+      ...tenantHeader(),
+      ...(initHeaders as Record<string, string> | undefined),
     },
-    ...init,
   });
   const body = (await res.json()) as ApiOk<T> | ApiErr;
   if (!body.ok) {

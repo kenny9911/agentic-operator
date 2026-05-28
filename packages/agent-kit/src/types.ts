@@ -35,6 +35,22 @@ export interface ToolContext {
    * pipe data forward without explicit wiring in the manifest.
    */
   lastResult?: unknown;
+  /**
+   * Per-tenant tool configuration, lifted from the workflow manifest's
+   * `tool_use[i].config` blob and passed through verbatim. Handlers use this
+   * for per-tenant credentials (e.g. `api_key_env`), per-tenant paths
+   * (e.g. `subdir`), and any other knob that varies between deployments
+   * but shouldn't require a code change.
+   *
+   * Concretely: a global tool like `robohire.parseResumeApi` can read
+   * `ctx.config?.api_key_env` so tenant A and tenant B can both invoke
+   * the same shared tool with different credentials, picked up from
+   * different env vars, with zero TypeScript.
+   *
+   * `undefined` means the manifest didn't declare a config block for this
+   * tool — handlers should fall back to env defaults in that case.
+   */
+  config?: Record<string, unknown>;
 }
 
 /**
@@ -88,8 +104,52 @@ export interface PromptDescriptor<TOutput = unknown> {
  * A tenant package's default export. Bootstrap auto-discovers `@tenants/<slug>`
  * and merges these registries with the generic tool/prompt set so manifest
  * actions can reference tenant-specific names without further wiring.
+ *
+ * `mcpServers` and `skills` are opt-in extensions:
+ *   - When `mcpServers` is set, the runtime spins up the MCP client for
+ *     each entry and folds the advertised tools into `tools` under
+ *     `<serverName>.<toolName>` keys (see `@agentic/mcp`).
+ *   - When `skills` is set, the runtime registers two built-in tools
+ *     (`skills.list_skills` and `skills.load_skill`) so any agent in the
+ *     tenant can progressively-disclose SKILL.md bodies (see `@agentic/skills`).
  */
 export interface TenantRegistry {
   tools?: Record<string, ToolDescriptor>;
   prompts?: Record<string, PromptDescriptor>;
+  mcpServers?: McpServerConfigLike[];
+  skills?: SkillDescriptorLike[];
+}
+
+/**
+ * Structural alias for `McpServerConfig` from `@agentic/mcp`. Defined here
+ * to keep `@agentic/agent-kit` from importing the MCP SDK transitively
+ * (tenant packages that ship zero MCP servers shouldn't pull megabytes of
+ * stdio-transport deps). The runtime narrows this to the real type at
+ * the bootstrap edge.
+ */
+export interface McpServerConfigLike {
+  name: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  allowTools?: string[];
+  optional?: boolean;
+}
+
+/**
+ * Structural alias for `SkillDescriptor` from `@agentic/skills`. Same
+ * decoupling rationale as `McpServerConfigLike` — declared here so
+ * `agent-kit` keeps zero filesystem deps.
+ */
+export interface SkillDescriptorLike {
+  name: string;
+  description: string;
+  /** Absolute path to the SKILL.md body for progressive load. */
+  path: string;
+  /** Optional frontmatter metadata surfaced verbatim to the agent. */
+  metadata?: Record<string, unknown>;
 }

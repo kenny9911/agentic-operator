@@ -3,12 +3,12 @@
 /**
  * DeployAgentModal — 6-step wizard for adding a new agent to the workflow.
  *
- * Ported from `apps/web/public/portal/views/agents.jsx:696-1029`.
- * Stays a sibling so the Agents page module is readable. Models are passed
+ * Live data via canonical TanStack hooks (useEvents for event-name
+ * autocomplete + useDag for the workflow stage list). Models are passed
  * in from the page (audit 01 D-11).
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActorTag,
   Badge,
@@ -18,7 +18,8 @@ import {
   ModalOverlay,
   Panel,
 } from "@/app/portal/components";
-import { useRaasData } from "@/lib/hooks/data-context";
+import { useDag } from "@/lib/hooks/useAgents";
+import { useEvents } from "@/lib/hooks/useEvents";
 import {
   AGENT_SAMPLE_TOOL_USE,
   AGENT_SAMPLE_TS_CODE,
@@ -28,6 +29,18 @@ import {
   AgentCodeEditPanel,
   AgentToolUseEditPanel,
 } from "@/app/portal/components/agent-code/EditPanels";
+
+// Static workflow ontology labels — mirrors the dashboard funnel.
+const STAGE_LABELS: Record<number, string> = {
+  0: "Intake",
+  1: "Analyze",
+  2: "JD",
+  3: "Publish",
+  4: "Resume",
+  5: "Match & Interview",
+  6: "Package",
+  7: "Submit",
+};
 
 interface ModelInfo {
   id: string;
@@ -68,7 +81,27 @@ export function DeployAgentModal({
   onClose: () => void;
   models: ModelInfo[];
 }) {
-  const { stages, events } = useRaasData();
+  const { data: dag } = useDag();
+  const { data: liveEvents = [] } = useEvents({ limit: 100 });
+  // Derive stages from the live DAG (set of stage indices in use).
+  const stages = useMemo(() => {
+    const used = new Set<number>();
+    for (const a of dag?.agents ?? []) used.add(a.stage);
+    return Array.from(used)
+      .sort((a, b) => a - b)
+      .map((id) => ({ id, label: STAGE_LABELS[id] ?? `Stage ${id}` }));
+  }, [dag]);
+  // Event-name catalog combines names seen on the live stream + every name
+  // declared by an agent in the DAG.
+  const events = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of liveEvents) set.add(e.name);
+    for (const a of dag?.agents ?? []) {
+      for (const n of a.triggers) set.add(n);
+      for (const n of a.emits) set.add(n);
+    }
+    return Array.from(set).sort().map((name) => ({ name }));
+  }, [liveEvents, dag]);
   const [step, setStep] = useState(0);
   const [template, setTemplate] = useState<Template | null>(null);
   const [name, setName] = useState("");

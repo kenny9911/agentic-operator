@@ -39,6 +39,35 @@ import { getGateway } from "./gateway-host";
 
 const SYSTEM_TENANT_SLUG = "__system";
 
+/**
+ * Operator kill switch (POST /v1/runs/:id/cancel) for code agents.
+ *
+ * Unlike manifest agents — which Inngest can terminate mid-step via
+ * `cancelOn` — code-agent runs execute synchronously inside the invoke
+ * route handler. We therefore poll `runs.status` at the natural
+ * checkpoints (before the LLM call, before parseOutput) and throw this
+ * error when the row has flipped to `cancelled`. The invoke route catches
+ * it and returns 200 with `{status: 'cancelled'}` — cancellation is a
+ * successful outcome, not a 4xx/5xx.
+ */
+export class RunCancelledError extends Error {
+  readonly runId: string;
+  constructor(runId: string) {
+    super(`run ${runId} cancelled by operator`);
+    this.name = "RunCancelledError";
+    this.runId = runId;
+  }
+}
+
+function isRunCancelled(db: DB, runId: string): boolean {
+  const row = db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .all()[0];
+  return row?.status === "cancelled";
+}
+
 function artifactsRoot(): string {
   return process.env.AGENTIC_ARTIFACTS_DIR ?? "./artifacts";
 }
@@ -188,11 +217,29 @@ export async function executeAgentRun<TInput, TOutput>(
       messages,
     });
 
+    // Cooperative cancel checkpoint #1 — before the LLM call. The route
+    // handler `POST /v1/runs/:id/cancel` flips `runs.status='cancelled'`
+    // synchronously; we read it here so a Stop click that lands after the
+    // run starts but before the (potentially seconds-long) provider call
+    // skips the spend entirely.
+    if (isRunCancelled(db, runId)) {
+      throw new RunCancelledError(runId);
+    }
+
     const response: ChatResponse = await gateway.chat({
       messages,
       provider,
       model: model ?? undefined,
     });
+
+    // Cooperative cancel checkpoint #2 — between the LLM response and
+    // parseOutput. The provider call may have taken several seconds; the
+    // operator could have clicked Stop while it was in flight. Honouring
+    // the cancel here keeps the run row in `cancelled` rather than
+    // overwriting it to `ok` on the finalize update below.
+    if (isRunCancelled(db, runId)) {
+      throw new RunCancelledError(runId);
+    }
 
     const outputArtifact = await writeArtifact(runId, "step-1-output.json", {
       text: response.text,
@@ -258,6 +305,30 @@ export async function executeAgentRun<TInput, TOutput>(
       testRun: isTest,
     };
   } catch (err) {
+    // Operator-initiated cancel — close the step row (status=skipped, so
+    // the timeline visualiser knows the step never ran) but leave the run
+    // row alone: it was already flipped to `cancelled` by the route
+    // handler. Overwriting it here to `failed` would lose the cancel
+    // distinction (which the dashboard renders differently) and would
+    // discard the cancel reason recorded in `runs.error_message`.
+    if (err instanceof RunCancelledError) {
+      const stepEndedAt = Date.now();
+      db.update(steps)
+        .set({
+          status: "skipped",
+          endedAt: new Date(stepEndedAt),
+          durationMs: stepEndedAt - startedAt,
+          error: "cancelled_by_operator",
+        })
+        .where(eq(steps.id, stepId))
+        .run();
+      await writeRunLog(logCtx, "INFO", "run.cancelled", {
+        agent: agent.name,
+        reason: "operator_stop",
+      });
+      throw err;
+    }
+
     const llm = isLLMError(err)
       ? err
       : new LLMError(

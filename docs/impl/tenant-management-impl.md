@@ -66,10 +66,10 @@ Fresh-checkout verification:
 4. **`pnpm db:seed`** — idempotent. Seed admin (`ops@agentic.local`) is the
    `actorUserId` for every tenant created via the API until P5-TEN-02 wires
    the real auth-context user id.
-5. **`pnpm dev`** — web :3500, api :3501, inngest :8288. Set `AUTH_MODE=dev`
+5. **`pnpm dev`** — web :3599, api :3501, inngest :8288. Set `AUTH_MODE=dev`
    in `apps/api/.env.local` so unauthenticated browser requests resolve to
    the `AGENTIC_DEV_TENANT` tenant.
-6. **Open `http://localhost:3500`** — click the tenant pill, then "+ New
+6. **Open `http://localhost:3599`** — click the tenant pill, then "+ New
    tenant" at the bottom of the dropdown. Walk through the 4-step wizard
    (Identity → Template → Quotas → Review). On submit, the token reveal
    modal opens.

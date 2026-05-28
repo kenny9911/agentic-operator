@@ -33,12 +33,12 @@ export AGENTIC_MODELS_DIR="$(pwd)/models"
 
 # 3. Boot the stack — concurrent web + api + Inngest dev server
 pnpm dev
-# → portal:    http://localhost:3500
+# → portal:    http://localhost:3599
 # → api:       http://localhost:3501
 # → inngest:   http://localhost:8288
 
 # 4. Open the portal
-open http://localhost:3500/portal/raas/dashboard
+open http://localhost:3599/portal/raas/dashboard
 ```
 
 You should land on the dashboard with the seeded RAAS workflow (23 manifest agents + 1 code agent loaded from `models/RAAS-v1/`). Click around — every view has live data.
@@ -79,7 +79,7 @@ Full env contract in [.env.production.example](../.env.production.example).
 
 ## 4. The portal at a glance
 
-The portal lives at `http://localhost:3500/portal/<tenant>/<view>`. Every URL is shareable + deep-linkable.
+The portal lives at `http://localhost:3599/portal/<tenant>/<view>`. Every URL is shareable + deep-linkable.
 
 | View | URL | What you can do |
 |---|---|---|
@@ -148,7 +148,7 @@ The "22/23" message means 22 valid agents loaded; the 1 skipped is a Human-actor
 
 ### 5.2 See it on the canvas
 
-Open http://localhost:3500/portal/raas/workflows.
+Open http://localhost:3599/portal/raas/workflows.
 
 The view fetches `GET /v1/workflows/dag`, which returns `{agents, edges, workflowVersion}`. The canvas:
 - **Stage lanes**: agents grouped by their stage prefix (1, 2, 3-2, …) into 8 swimlanes
@@ -178,7 +178,7 @@ Human-actor agents (e.g. `manualEntry`, `jdReview`) have no auto-trigger. The ro
 
 ### 5.4 Watch the cascade
 
-Open http://localhost:3500/portal/raas/runs in another tab while you fire. The new run row appears at the top within ~1s via SSE (`/v1/stream`).
+Open http://localhost:3599/portal/raas/runs in another tab while you fire. The new run row appears at the top within ~1s via SSE (`/v1/stream`).
 
 For an event like `REQUIREMENT_SYNCED` that has multiple downstream subscribers, you'll see several rows populate as Inngest dispatches each:
 
@@ -464,7 +464,7 @@ Multi-step runs (tool-use loops, sub-flows) appear as a **trace tree** in the ru
 | `ERR_DLOPEN_FAILED` | Wrong Node major | `nvm use` (picks up `.nvmrc` → Node 26) |
 | Bootstrap reports `0/N agents` | `AGENTIC_MODELS_DIR` not set or wrong | `export AGENTIC_MODELS_DIR="$(pwd)/models"` |
 | `api: SyntaxError: ... 'hostname'` | Stale build | `rm -rf node_modules .turbo && pnpm install` |
-| `pnpm dev` hangs on port `:3500` | Stale dev process | `lsof -ti:3500,3501,8288,50052,50053 \| xargs kill -9` |
+| `pnpm dev` hangs on port `:3599` | Stale dev process | `lsof -ti:3599,3501,8288,50052,50053 \| xargs kill -9` |
 | Migrations fail on boot | Schema version mismatch | Check `_meta.schema_version` matches `SUPPORTED_SCHEMA_VERSION` in `apps/api/src/bootstrap.ts` |
 
 ### Auth
@@ -510,7 +510,7 @@ $EDITOR .env  # set NODE_ENV=production, JWT_SECRET, AGENTIC_KMS_KEY, LLM keys, 
 docker compose up -d
 
 # 3. Verify
-curl http://localhost:3500/health     # web
+curl http://localhost:3599/health     # web
 curl http://localhost:3501/health     # api
 curl http://localhost:3501/metrics    # prometheus
 

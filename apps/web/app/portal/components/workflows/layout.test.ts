@@ -18,7 +18,9 @@ import {
   PAD_X,
   PAD_Y,
   ROW_H,
+  autoPackLayout,
   colorVar,
+  getLayout,
   nodePos,
 } from "./layout";
 
@@ -106,5 +108,221 @@ describe("workflows/layout LAYOUT map", () => {
     expect(colorVar("muted")).toBe("var(--text-3)");
     expect(colorVar(undefined)).toBe("var(--text-3)");
     expect(colorVar("unknown-color")).toBe("var(--text-3)");
+  });
+});
+
+describe("autoPackLayout — fallback for non-RAAS tenants", () => {
+  it("returns an empty map for an empty input", () => {
+    expect(autoPackLayout([])).toEqual({});
+  });
+
+  it("packs agents with mixed manifest stages by passing stage through", () => {
+    const result = autoPackLayout([
+      { id: "a", stage: 1 },
+      { id: "b", stage: 1 },
+      { id: "c", stage: 2 },
+    ]);
+    expect(result).toEqual({
+      a: { stage: 1, lane: 0 },
+      b: { stage: 1, lane: 1 },
+      c: { stage: 2, lane: 0 },
+    });
+  });
+
+  it("derives stages from event topology when every agent shares one stage (api uses 99 as 'unknown')", () => {
+    // robohire-shaped: matcher emits MATCH_COMPLETED, inviter triggers on it.
+    // Both reported as stage 99 by the api; auto-pack must place matcher in
+    // stage 0 and inviter in stage 1 (downstream).
+    const result = autoPackLayout([
+      {
+        id: "inviter-agent",
+        stage: 99,
+        triggers: ["MATCH_COMPLETED"],
+        emits: ["INVITE_GENERATED"],
+      },
+      {
+        id: "matcher-agent",
+        stage: 99,
+        triggers: ["MATCH_REQUESTED"],
+        emits: ["MATCH_COMPLETED"],
+      },
+    ]);
+    expect(result["matcher-agent"]?.stage).toBe(0);
+    expect(result["inviter-agent"]?.stage).toBe(1);
+  });
+
+  it("places agents with no upstream emitter at stage 0", () => {
+    const result = autoPackLayout([
+      { id: "loner", stage: 99, triggers: ["EXTERNAL"], emits: [] },
+      { id: "another", stage: 99, triggers: [], emits: ["X"] },
+    ]);
+    expect(result["loner"]?.stage).toBe(0);
+    expect(result["another"]?.stage).toBe(0);
+  });
+
+  it("breaks cycles without hanging", () => {
+    // Pathological: A→B→A. Should still terminate and produce a valid map.
+    const result = autoPackLayout([
+      { id: "a", stage: 99, triggers: ["FROM_B"], emits: ["FROM_A"] },
+      { id: "b", stage: 99, triggers: ["FROM_A"], emits: ["FROM_B"] },
+    ]);
+    expect(Object.keys(result).sort()).toEqual(["a", "b"]);
+    // Both stages are finite (capped at agents.length).
+    expect(result["a"]?.stage).toBeLessThanOrEqual(2);
+    expect(result["b"]?.stage).toBeLessThanOrEqual(2);
+  });
+
+  it("is stable — same input -> identical output (deterministic lanes)", () => {
+    const input = [
+      { id: "c", stage: 99, triggers: [], emits: [] },
+      { id: "a", stage: 99, triggers: [], emits: [] },
+      { id: "b", stage: 99, triggers: [], emits: [] },
+    ];
+    const r1 = autoPackLayout(input);
+    const r2 = autoPackLayout(input);
+    expect(r1).toEqual(r2);
+    // Lanes assigned in sorted id order.
+    expect(r1["a"]).toEqual({ stage: 0, lane: 0 });
+    expect(r1["b"]).toEqual({ stage: 0, lane: 1 });
+    expect(r1["c"]).toEqual({ stage: 0, lane: 2 });
+  });
+});
+
+describe("getLayout — hand-tuned LAYOUT wins over fallback", () => {
+  it("returns the LAYOUT entry when both exist (RAAS fidelity guard)", () => {
+    // Even if the auto-pack puts "1-1" somewhere wildly different, the
+    // RAAS hand-tuned entry must always win. Visual regression guard.
+    const fallback = { "1-1": { stage: 99, lane: 99 } };
+    expect(getLayout("1-1", fallback)).toEqual({ stage: 0, lane: 0 });
+  });
+
+  it("falls back to the auto-packed entry when LAYOUT is silent", () => {
+    const fallback = {
+      "matcher-agent": { stage: 0, lane: 0 },
+      "inviter-agent": { stage: 1, lane: 0 },
+    };
+    expect(getLayout("matcher-agent", fallback)).toEqual({ stage: 0, lane: 0 });
+    expect(getLayout("inviter-agent", fallback)).toEqual({ stage: 1, lane: 0 });
+  });
+
+  it("returns null when neither LAYOUT nor fallback knows the id", () => {
+    expect(getLayout("does-not-exist")).toBeNull();
+    expect(getLayout("does-not-exist", {})).toBeNull();
+  });
+
+  it("nodePos resolves through the fallback chain", () => {
+    const fallback = { "custom-agent": { stage: 2, lane: 1 } };
+    // Hand-tuned wins.
+    expect(nodePos("1-1", fallback)).toEqual({ x: 30, y: 30 });
+    // Fallback used.
+    expect(nodePos("custom-agent", fallback)).toEqual({
+      x: PAD_X + 2 * COL_W,
+      y: PAD_Y + 1 * ROW_H,
+    });
+    // Unknown without fallback -> origin (unchanged behavior).
+    expect(nodePos("nope")).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("RAAS LAYOUT regression guard — hand-tuned positions must never move", () => {
+  // Locks in every (stage, lane) for the 23 RAAS agents. If a future edit
+  // ever auto-packs RAAS by mistake, this fails loudly.
+  it("preserves the v1_1 hand-tuned positions byte-for-byte", () => {
+    expect(LAYOUT).toMatchInlineSnapshot(`
+      {
+        "1-1": {
+          "lane": 0,
+          "stage": 0,
+        },
+        "1-2": {
+          "lane": 1,
+          "stage": 0,
+        },
+        "10-1": {
+          "lane": 0,
+          "stage": 5,
+        },
+        "10-2": {
+          "lane": 1,
+          "stage": 5,
+        },
+        "11-1": {
+          "lane": 2,
+          "stage": 5,
+        },
+        "11-2": {
+          "lane": 3,
+          "stage": 5,
+        },
+        "12": {
+          "lane": 4,
+          "stage": 5,
+        },
+        "13": {
+          "lane": 0,
+          "stage": 6,
+        },
+        "14-1": {
+          "lane": 1,
+          "stage": 6,
+        },
+        "14-2": {
+          "lane": 2,
+          "stage": 6,
+        },
+        "15": {
+          "lane": 3,
+          "stage": 6,
+        },
+        "16": {
+          "lane": 1,
+          "stage": 7,
+        },
+        "2": {
+          "lane": 0,
+          "stage": 1,
+        },
+        "3": {
+          "lane": 1,
+          "stage": 1,
+        },
+        "3-2": {
+          "lane": 2,
+          "stage": 1,
+        },
+        "4": {
+          "lane": 0,
+          "stage": 2,
+        },
+        "5": {
+          "lane": 1,
+          "stage": 2,
+        },
+        "6": {
+          "lane": 0,
+          "stage": 3,
+        },
+        "7-1": {
+          "lane": 1,
+          "stage": 3,
+        },
+        "7-2": {
+          "lane": 2,
+          "stage": 3,
+        },
+        "8": {
+          "lane": 0,
+          "stage": 4,
+        },
+        "9-1": {
+          "lane": 1,
+          "stage": 4,
+        },
+        "9-2": {
+          "lane": 2,
+          "stage": 4,
+        },
+      }
+    `);
   });
 });

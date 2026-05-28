@@ -10,7 +10,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { PROVIDER_IDS, PROVIDER_MODEL_CATALOG, type ProviderId } from "@agentic/contracts";
+import { PROVIDER_IDS, type ProviderId } from "@agentic/contracts";
 import { makeId } from "@agentic/shared";
 
 export type FleetRole = "primary" | "fallback" | "shadow";
@@ -113,15 +113,12 @@ export function addFleetEntry(input: AddFleetInput): ModelFleetEntry {
   if (!modelName) {
     throw new FleetValidationError("modelName is required");
   }
-  const catalog = PROVIDER_MODEL_CATALOG[input.provider];
-  // Allow models from the catalog OR any string for providers with empty
-  // catalogs (custom, bedrock, vertex). For catalogued providers, reject
-  // unknown names so the operator can't typo a model that won't resolve.
-  if (catalog.length > 0 && !catalog.some((m) => m.name === modelName)) {
-    throw new FleetValidationError(
-      `model ${modelName} not in ${input.provider} catalog`,
-    );
-  }
+  // We used to reject any modelName not in PROVIDER_MODEL_CATALOG, but the
+  // catalog is a curated subset (≤6 per provider) while live discovery
+  // returns the provider's full inventory — OpenRouter alone serves ~360.
+  // The picker shows live results; rejecting them at add-time was a
+  // permanent footgun. The catalog now serves UI metadata only; bad
+  // modelNames surface at invocation time when the upstream returns 404.
   const role: FleetRole = isFleetRole(input.role) ? input.role : "primary";
   const alias = (input.alias ?? "").trim() || modelName;
   const dailyCapUsd = Number.isFinite(input.dailyCapUsd) ? Math.max(0, Number(input.dailyCapUsd)) : 30;

@@ -6,9 +6,9 @@
  * Keyboard: ⌘+K / Ctrl+K opens the palette anywhere in the portal. ↑/↓ move
  * selection, Enter activates, Escape closes.
  *
- * Data sources:
- *   - DataContext agents / events     (snapshot from /api/spa/bootstrap)
- *   - useRuns / useTasks via React Query (already wired by Phase 1 hooks)
+ * Data sources: canonical TanStack Query hooks (useAgents / useEvents /
+ * useRuns / useTasks). No bootstrap snapshot — every result reflects the
+ * live tenant.
  *
  * Each command jumps via Next router. The palette stays alive across
  * unmounts because the host component <CommandPalette /> is mounted once
@@ -27,7 +27,8 @@ import { useRouter } from "next/navigation";
 import { Icon } from "../Icon";
 import { Kbd } from "../atoms";
 import { useTenant } from "../../lib/use-tenant";
-import { useRaasData } from "@/lib/hooks/data-context";
+import { useAgents } from "@/lib/hooks/useAgents";
+import { useEvents } from "@/lib/hooks/useEvents";
 import { useRuns } from "@/lib/hooks/useRuns";
 import { useTasks } from "@/lib/hooks/useTasks";
 
@@ -119,7 +120,8 @@ function PaletteInner({
   const router = useRouter();
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
-  const data = useRaasData();
+  const { data: agents = [] } = useAgents();
+  const { data: events = [] } = useEvents({ limit: 50 });
   const { data: runs = [] } = useRuns({ limit: 50 });
   const { data: tasks = [] } = useTasks();
 
@@ -129,12 +131,12 @@ function PaletteInner({
       href: c.href.replace("__TENANT__", tenant),
     }));
 
-    const agentCommands: Command[] = data.agents.map((a) => ({
-      id: `a:${a.id}`,
+    const agentCommands: Command[] = agents.map((a) => ({
+      id: `a:${a.kebabId}`,
       group: "Agents",
       label: a.title || a.name,
       hint: a.name,
-      href: `/portal/${tenant}/agents/${a.id}`,
+      href: `/portal/${tenant}/agents/${a.kebabId}`,
     }));
 
     const runCommands: Command[] = runs.slice(0, 20).map((r) => ({
@@ -145,19 +147,25 @@ function PaletteInner({
       href: `/portal/${tenant}/runs/${r.id}`,
     }));
 
-    const eventCommands: Command[] = data.events.slice(0, 20).map((e) => ({
-      id: `e:${e.name}`,
-      group: "Events",
-      label: e.name,
-      hint: e.category,
-      href: `/portal/${tenant}/events?type=${encodeURIComponent(e.name)}`,
-    }));
+    // De-dup event names so the palette doesn't show the same EVENT_NAME
+    // for each occurrence in the recent stream.
+    const eventNames = Array.from(new Set(events.map((e) => e.name))).slice(0, 20);
+    const eventCommands: Command[] = eventNames.map((name) => {
+      const sample = events.find((e) => e.name === name);
+      return {
+        id: `e:${name}`,
+        group: "Events",
+        label: name,
+        hint: sample?.category ?? undefined,
+        href: `/portal/${tenant}/events?type=${encodeURIComponent(name)}`,
+      };
+    });
 
     const taskCommands: Command[] = tasks.slice(0, 20).map((t) => ({
       id: `t:${t.id}`,
       group: "Tasks",
       label: t.id,
-      hint: typeof t === "object" && t && "type" in t ? String(t.type) : "task",
+      hint: t.type,
       href: `/portal/${tenant}/tasks/${t.id}`,
     }));
 
@@ -168,7 +176,7 @@ function PaletteInner({
       ...eventCommands,
       ...taskCommands,
     ];
-  }, [tenant, data.agents, data.events, runs, tasks]);
+  }, [tenant, agents, events, runs, tasks]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();

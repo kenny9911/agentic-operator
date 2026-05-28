@@ -16,6 +16,7 @@
     "@agentic/agent-kit": "workspace:*",
     "@agentic/db": "workspace:*",
     "@agentic/shared": "workspace:*",
+    "@agentic/tools": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

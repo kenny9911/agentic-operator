@@ -31,7 +31,7 @@ The platform has a *coherent, design-led* skeleton: clean envelope, typed contra
                                         │ HTTP
                                         ▼
    ┌──────────────────────────────────────────────────────────┐
-   │  Next.js 16 @ :3500  (apps/web)                          │
+   │  Next.js 16 @ :3599  (apps/web)                          │
    │                                                          │
    │  • rewrites:                                             │
    │     /v1/*       → API_URL (proxy)                        │
@@ -93,7 +93,7 @@ browser → /v1/runs?limit=50
 
 | Port  | Process | Owner | Restartable | Notes |
 |-------|---------|-------|-------------|-------|
-| 3500  | Next.js dev server | `pnpm --filter @agentic/web run dev` | yes | Turbopack, no native deps |
+| 3599  | Next.js dev server | `pnpm --filter @agentic/web run dev` | yes | Turbopack, no native deps |
 | 3501  | Fastify | `tsx watch ../../.env src/server.ts` | yes | better-sqlite3 native binding |
 | 8288  | Inngest Dev CLI | `npx inngest-cli@latest dev -u …/inngest` | yes | binds API_URL/inngest for discovery |
 | 50052/3 | Inngest gRPC | inngest-cli | yes | killed in `predev` |
@@ -471,7 +471,7 @@ Zero. Correlation IDs propagate through events and runs (`correlation.ts`) but t
 `server.ts:35-39`:
 ```ts
 await app.register(cors, {
-  origin: WEB_ORIGIN,   // defaults to http://localhost:3500
+  origin: WEB_ORIGIN,   // defaults to http://localhost:3599
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 });
@@ -514,11 +514,11 @@ Good — origin-pinned. In production needs to be the deployed web URL. `credent
 
 `package.json:11-12`:
 ```
-predev: lsof -ti:3500,3501,8288,8289,50052,50053 | xargs kill -9 2>/dev/null
+predev: lsof -ti:3599,3501,8288,8289,50052,50053 | xargs kill -9 2>/dev/null
 dev:    concurrently web, api, inngest
 ```
 
-Web is `next dev --port 3500`. API is `tsx watch --env-file=../../.env --env-file=.env.local src/server.ts`. Inngest is `npx -y inngest-cli@latest dev -u http://localhost:3501/inngest`.
+Web is `next dev --port 3599`. API is `tsx watch --env-file=../../.env --env-file=.env.local src/server.ts`. Inngest is `npx -y inngest-cli@latest dev -u http://localhost:3501/inngest`.
 
 This works locally. It does NOT scale to:
 - CI (no test orchestrator across services)

@@ -13,7 +13,11 @@
  * dispatch to a real tenant-defined prompt without editing the runtime.
  */
 
-import { runTool, type ToolContext as GenericToolContext } from "@agentic/tools";
+import {
+  runTool,
+  globalToolRegistry,
+  type ToolContext as GenericToolContext,
+} from "@agentic/tools";
 import type {
   PromptDescriptor,
   TenantRegistry,
@@ -22,14 +26,52 @@ import type {
 } from "@agentic/agent-kit";
 import type { ActionSpec } from "./manifest";
 import { getRuntimeGateway } from "./llm-host";
-import type { ChatMessage } from "@agentic/llm-gateway";
+import type {
+  ChatContentBlock,
+  ChatMessage,
+  ToolDef,
+  ToolUseBlock,
+  ToolResultBlock,
+} from "@agentic/llm-gateway";
 import path from "node:path";
 import { promises as fs } from "node:fs";
+
+/**
+ * Canonical tool-use entry on an AgentSpec (matches the Zod
+ * `ToolUseEntrySchema` in manifest.ts). Only `name` is mandatory — when
+ * `input_schema` is absent we synthesise a permissive object schema so the
+ * gateway can still hand the tool to the model.
+ */
+export interface ToolUseEntry {
+  name: string;
+  description?: string;
+  input_schema?: unknown;
+}
 
 interface AgentSlots {
   name?: string;
   description?: string;
   ontology_instructions?: string;
+  /**
+   * Declarative tool roster from the manifest's `agent.tool_use[]`. When
+   * non-empty AND a matching `tenantRegistry.tools[name]` exists, the
+   * `logic` action runs a tool-use loop (gateway emits `tool_use` blocks
+   * → engine executes → feeds `tool_result` back → repeat until text or
+   * `MAX_TOOL_USE_ITERS`).
+   */
+  tool_use?: ToolUseEntry[];
+}
+
+/** Hard cap on tool-use iterations per `logic` action. Anything above 8
+ * usually means the model is looping; we'd rather fail loud than burn
+ * tokens forever. Override via `AGENTIC_TOOL_USE_MAX_ITERS` for stress
+ * tests. */
+const MAX_TOOL_USE_ITERS_DEFAULT = 8;
+function resolveMaxIters(): number {
+  const raw = process.env.AGENTIC_TOOL_USE_MAX_ITERS;
+  if (!raw) return MAX_TOOL_USE_ITERS_DEFAULT;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : MAX_TOOL_USE_ITERS_DEFAULT;
 }
 
 export interface StepInput {
@@ -149,12 +191,15 @@ async function callLLM(
   preferredModel?: string,
   systemOverride?: string,
   agent?: AgentSlots,
+  tenantRegistry?: TenantRegistry,
+  ctx?: ToolContext,
 ): Promise<{
   text: string;
   tokensIn: number;
   tokensOut: number;
   provider: string;
   model: string;
+  toolCalls: ToolCallTrace[];
 }> {
   const gateway = getRuntimeGateway();
   if (!gateway) {
@@ -167,30 +212,215 @@ async function callLLM(
     agentDescription: agent?.description,
     ontologyInstructions: agent?.ontology_instructions,
   });
+
+  // Build the ToolDef[] roster ONCE per logic action. Each entry maps to a
+  // tenantRegistry tool by name; absent registry entries are silently dropped
+  // from the advertised list so the model can't request a tool that won't
+  // resolve. The schema fallback is intentionally permissive — strict input
+  // validation belongs in the tool handler.
+  const tools: ToolDef[] = [];
+  if (agent?.tool_use && agent.tool_use.length > 0) {
+    for (const entry of agent.tool_use) {
+      const handler = tenantRegistry?.tools?.[entry.name];
+      if (!handler) continue;
+      tools.push({
+        name: entry.name,
+        description: entry.description ?? handler.description ?? entry.name,
+        input_schema: isPlainSchema(entry.input_schema)
+          ? entry.input_schema
+          : { type: "object", additionalProperties: true },
+      });
+    }
+  }
+
   const messages: ChatMessage[] = [
     { role: "system", content: systemContent },
     { role: "user", content: rendered },
   ];
-  const response = await gateway.chat({
-    messages,
-    model: preferredModel,
-  });
+
+  // Tool-use loop. When no tools are advertised this is a single pass and
+  // exits immediately — same shape as the old single-call path.
+  const maxIters = resolveMaxIters();
+  let totalIn = 0;
+  let totalOut = 0;
+  let lastProvider = "";
+  let lastModel = "";
+  let finalText = "";
+  const toolCalls: ToolCallTrace[] = [];
+
+  for (let iter = 0; iter < maxIters; iter++) {
+    const response = await gateway.chat({
+      messages,
+      model: preferredModel,
+      tools: tools.length > 0 ? tools : undefined,
+      tenantSlug: ctx?.tenantSlug,
+    });
+    totalIn += response.tokensIn ?? 0;
+    totalOut += response.tokensOut ?? 0;
+    lastProvider = response.provider;
+    lastModel = response.model;
+
+    const requestedCalls = response.toolCalls ?? [];
+    if (requestedCalls.length === 0) {
+      // Model returned prose — we're done.
+      finalText = response.text;
+      break;
+    }
+
+    // Echo back an assistant message containing the model's tool_use blocks
+    // so the next turn has the right conversation history.
+    const assistantBlocks: ChatContentBlock[] = [];
+    if (response.text) assistantBlocks.push({ type: "text", text: response.text });
+    for (const call of requestedCalls) {
+      const block: ToolUseBlock = {
+        type: "tool_use",
+        id: call.id,
+        name: call.name,
+        input: call.input,
+      };
+      assistantBlocks.push(block);
+    }
+    messages.push({ role: "assistant", content: assistantBlocks });
+
+    // Execute each tool call, collect tool_result blocks for the next turn.
+    const resultBlocks: ChatContentBlock[] = [];
+    for (const call of requestedCalls) {
+      // Resolution chain: tenant override → global registry → not found.
+      // Tenant wins on collision so a tenant can ship a custom impl that
+      // shadows a global tool. The MCP layer already folds its tools into
+      // tenantRegistry under namespaced names ("<server>.<tool>"), so it's
+      // covered by the first lookup.
+      const handler =
+        tenantRegistry?.tools?.[call.name] ?? globalToolRegistry.get(call.name);
+
+      // Per-tenant config plumbing: lift the manifest's
+      // `tool_use[i].config` blob into ctx.config so global tools can be
+      // specialised per tenant (api_key_env, subdir, etc.) without code.
+      const toolUseEntry = agent?.tool_use?.find(
+        (t) => (t as { name?: string })?.name === call.name,
+      );
+      const toolConfig =
+        toolUseEntry && typeof toolUseEntry === "object"
+          ? ((toolUseEntry as { config?: Record<string, unknown> }).config ?? undefined)
+          : undefined;
+
+      const callCtx: ToolContext = {
+        agentName: ctx?.agentName ?? agent?.name ?? "unknown",
+        actionName: call.name,
+        subject: ctx?.subject,
+        correlationId: ctx?.correlationId ?? "no-correlation",
+        tenantSlug: ctx?.tenantSlug ?? "unknown",
+        event: ctx?.event,
+        // Each tool sees the prior tool's output as lastResult — gives the
+        // model the option to chain without re-quoting state through the prompt.
+        lastResult:
+          toolCalls.length > 0 ? toolCalls[toolCalls.length - 1]!.output : ctx?.lastResult,
+        config: toolConfig,
+      };
+
+      const startedAt = Date.now();
+      let outputBody: string;
+      let isError = false;
+      let outputData: unknown = null;
+      try {
+        if (!handler) {
+          throw new Error(
+            `tool '${call.name}' not registered for this tenant and not found in global registry`,
+          );
+        }
+        // Merge the model's tool-call input into the context so handlers
+        // that prefer args over ctx.event.data have a single read site.
+        const handlerCtx = { ...callCtx, event: { name: `tool:${call.name}`, data: call.input } };
+        const r = await handler.handler(handlerCtx);
+        outputData = r.data;
+        outputBody = stringifyToolPayload(r.data);
+        totalIn += r.tokensIn ?? 0;
+        totalOut += r.tokensOut ?? 0;
+      } catch (err) {
+        isError = true;
+        outputBody = JSON.stringify({
+          error: String(err instanceof Error ? err.message : err),
+        });
+      }
+      toolCalls.push({
+        id: call.id,
+        name: call.name,
+        input: call.input,
+        output: outputData,
+        isError,
+        durationMs: Date.now() - startedAt,
+      });
+
+      const resultBlock: ToolResultBlock = {
+        type: "tool_result",
+        tool_use_id: call.id,
+        content: outputBody,
+        is_error: isError || undefined,
+      };
+      resultBlocks.push(resultBlock);
+    }
+    messages.push({ role: "tool", content: resultBlocks });
+
+    // Final iteration safety — if we just executed tools but the loop is
+    // about to end, surface a synthetic note so callers can see the budget
+    // was hit instead of a silent prose fallback.
+    if (iter === maxIters - 1) {
+      finalText =
+        `[tool-use loop hit max ${maxIters} iterations without a final text reply]`;
+    }
+  }
+
   return {
-    text: response.text,
-    tokensIn: response.tokensIn ?? 0,
-    tokensOut: response.tokensOut ?? 0,
-    provider: response.provider,
-    model: response.model,
+    text: finalText,
+    tokensIn: totalIn,
+    tokensOut: totalOut,
+    provider: lastProvider,
+    model: lastModel,
+    toolCalls,
   };
+}
+
+/**
+ * One executed tool call, surfaced in the step's `meta.toolCalls` for the
+ * UI's trace tab and for downstream emit payloads.
+ */
+export interface ToolCallTrace {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  output: unknown;
+  isError: boolean;
+  durationMs: number;
+}
+
+function isPlainSchema(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function stringifyToolPayload(v: unknown): string {
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 async function runTenantPrompt(
   ctx: ToolContext,
   prompt: PromptDescriptor,
   agent?: AgentSlots,
+  tenantRegistry?: TenantRegistry,
 ): Promise<StepOutput> {
   const rendered = prompt.template(ctx);
-  const result = await callLLM(rendered, prompt.model, prompt.system, agent);
+  const result = await callLLM(
+    rendered,
+    prompt.model,
+    prompt.system,
+    agent,
+    tenantRegistry,
+    ctx,
+  );
   let validated: unknown = result.text;
   if (prompt.output) {
     try {
@@ -214,6 +444,10 @@ async function runTenantPrompt(
       provider: result.provider,
       model: result.model,
       tenant: true,
+      // Surface the tool-use trace so the UI's IO/TRACE tabs can render
+      // each tool call inline with the LLM turn that spawned it. Empty
+      // array when the model didn't request any tools.
+      toolCalls: result.toolCalls,
     },
   };
 }
@@ -252,9 +486,28 @@ export async function runAction(input: StepInput): Promise<StepOutput> {
   let result: StepOutput;
   switch (action.type) {
     case "tool": {
+      // Same resolution chain as the LLM tool-use loop: tenant override
+      // → global registry → legacy mock runTool fallback. Keeps the two
+      // dispatch paths behaviourally aligned so an action declared as
+      // `type: "tool"` resolves the same way the LLM would have if it
+      // had asked for the tool by name itself.
       const tenantTool = tenantRegistry?.tools?.[action.name];
-      if (tenantTool) {
-        result = await runTenantTool(ctx, tenantTool);
+      const globalTool = !tenantTool ? globalToolRegistry.get(action.name) : undefined;
+      if (tenantTool || globalTool) {
+        // Look up matching tool_use[] entry by action name so per-tenant
+        // config flows the same way it does in the LLM tool-use loop.
+        // tenant-test1's writeWorkflowLog (a `type: "tool"` action with
+        // no LLM loop) relies on this path to receive its subdir/filename
+        // binding from the manifest.
+        const toolUseEntry = agent?.tool_use?.find(
+          (t) => (t as { name?: string })?.name === action.name,
+        );
+        const toolConfig =
+          toolUseEntry && typeof toolUseEntry === "object"
+            ? ((toolUseEntry as { config?: Record<string, unknown> }).config ?? undefined)
+            : undefined;
+        const enrichedCtx: ToolContext = toolConfig ? { ...ctx, config: toolConfig } : ctx;
+        result = await runTenantTool(enrichedCtx, (tenantTool ?? globalTool)!);
       } else {
         const r = await runTool(genericCtx(ctx), action.name);
         result = {
@@ -269,7 +522,7 @@ export async function runAction(input: StepInput): Promise<StepOutput> {
     case "logic": {
       const tenantPrompt = tenantRegistry?.prompts?.[action.name];
       if (tenantPrompt) {
-        result = await runTenantPrompt(ctx, tenantPrompt, agent);
+        result = await runTenantPrompt(ctx, tenantPrompt, agent, tenantRegistry);
       } else {
         // UC-V11-25 / AR-GAP-13 — strict mode. Boot-time validation in
         // `packages/runtime/src/bootstrap.ts` refuses to register a tenant

@@ -58,7 +58,7 @@ services:
       AGENTIC_TENANTS_DIR: /app/data/tenants
       DATABASE_URL: file:/app/data/agentic.db
       INNGEST_BASE_URL: http://inngest:8288
-      WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3500}"
+      WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3599}"
     volumes:
       - agentic-data:/app/data
       - ./models:/app/models:ro
@@ -82,7 +82,7 @@ services:
     container_name: agentic-web
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-3500}:3500"
+      - "${WEB_PORT:-3599}:3599"
     environment:
       NODE_ENV: production
       AGENTIC_API_URL: http://api:3501

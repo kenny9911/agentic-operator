@@ -3,11 +3,9 @@
 /**
  * Events — live event stream + per-event detail with replay (P2-FE-11).
  *
- * Ported from `apps/web/public/portal/views/events.jsx` with Phase 0/1
- * deltas preserved:
- *   - useRaasData() context for agent/event-type metadata
- *   - useEvents() live data via TanStack Query
- *   - Histogram, type-filter list, table, detail panel
+ * Live data via canonical TanStack hooks:
+ *   - useEvents({ limit: 200 }) — event stream + types
+ *   - useDag() — agent triggers/emits for the emitters & listeners panel
  *
  * Layout matches v1_1 events.jsx:51-143:
  *   - Histogram strip (60 buckets, last bucket lime)
@@ -33,10 +31,10 @@ import {
 import { fmtAgo, fmtBytes, fmtTime } from "@/app/portal/lib/format";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { useEvents, type EventRow } from "@/lib/hooks/useEvents";
-import { useRaasData } from "@/lib/hooks/data-context";
-import type { SpaAgent } from "@/lib/spa/types";
+import { useDag, type DagAgent } from "@/lib/hooks/useAgents";
+import { PublishEventModal } from "@/app/portal/components/events/PublishEventModal";
 
-/** Narrowed shape combining /v1/events row + bootstrap fallback fields. */
+/** Narrowed shape of an /v1/events row, normalized for the table + ticker. */
 interface EventItem {
   id: string;
   name: string;
@@ -63,36 +61,34 @@ function fromApiRow(r: EventRow): EventItem {
   };
 }
 
-function fromBootstrap(e: Record<string, unknown>): EventItem {
-  return {
-    id: String(e.id ?? ""),
-    name: String(e.name ?? ""),
-    color: String(e.color ?? "muted"),
-    category: String(e.category ?? "agent"),
-    at: typeof e.at === "number" ? e.at : 0,
-    source: String(e.source ?? "external"),
-    sourceTitle: String(e.sourceTitle ?? "External"),
-    subject: String(e.subject ?? ""),
-    payloadBytes:
-      typeof e.payloadBytes === "number" ? e.payloadBytes : null,
-  };
-}
-
 export default function EventsPage() {
-  const {
-    eventStream: bootstrapEvents,
-    events: eventTypes,
-    agents,
-  } = useRaasData();
-  const { data: apiEvents = [] } = useEvents({ limit: 200 });
+  const eventsQuery = useEvents({ limit: 200 });
+  const dagQuery = useDag();
+  const apiEvents = eventsQuery.data ?? [];
+  const agents = dagQuery.data?.agents ?? [];
 
-  // Prefer live API data; fall back to bootstrap snapshot.
-  const stream = useMemo<EventItem[]>(() => {
-    if (apiEvents.length > 0) return apiEvents.map(fromApiRow);
-    return bootstrapEvents.map((e) =>
-      fromBootstrap(e as Record<string, unknown>),
-    );
-  }, [apiEvents, bootstrapEvents]);
+  // Live stream of events from /v1/events.
+  const stream = useMemo<EventItem[]>(
+    () => apiEvents.map(fromApiRow),
+    [apiEvents],
+  );
+
+  // Event type catalog — derived from the event names actually observed
+  // plus any name an agent declares as emit/trigger via the DAG. This way
+  // the type filter shows every name the tenant cares about, not just
+  // those that have already fired.
+  const eventTypes = useMemo(() => {
+    const names = new Map<string, { name: string; color: string }>();
+    for (const e of stream) {
+      if (!names.has(e.name)) names.set(e.name, { name: e.name, color: e.color });
+    }
+    for (const a of agents) {
+      for (const n of [...a.triggers, ...a.emits]) {
+        if (!names.has(n)) names.set(n, { name: n, color: "muted" });
+      }
+    }
+    return Array.from(names.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [stream, agents]);
 
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [catFilter, setCatFilter] = useState<string>("all");
@@ -101,6 +97,7 @@ export default function EventsPage() {
 
   // Live toggle proxy.
   const [liveStream] = useState(true);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   const filtered = useMemo(() => {
     return stream.filter((e) => {
@@ -157,11 +154,24 @@ export default function EventsPage() {
           ) : null
         }
         action={
-          <Button icon="replay" small>
-            Replay window
-          </Button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <Button icon="replay" small>
+              Replay window
+            </Button>
+            <Button
+              icon="run"
+              tone="primary"
+              small
+              onClick={() => setPublishOpen(true)}
+            >
+              Publish event
+            </Button>
+          </div>
         }
       />
+      {publishOpen && (
+        <PublishEventModal onClose={() => setPublishOpen(false)} />
+      )}
 
       {/* Histogram strip */}
       <div
@@ -293,8 +303,18 @@ export default function EventsPage() {
               </Badge>
             )}
           </div>
-          {filtered.length === 0 ? (
-            <Empty title="No events" hint="Try a broader filter" />
+          {eventsQuery.isError ? (
+            <Empty
+              title="Failed to load events"
+              hint={eventsQuery.error?.message ?? "api unreachable on :3501"}
+            />
+          ) : eventsQuery.isLoading && stream.length === 0 ? (
+            <Empty title="Loading events…" hint="" />
+          ) : filtered.length === 0 ? (
+            <Empty
+              title={stream.length === 0 ? "No events yet" : "No events"}
+              hint={stream.length === 0 ? "Events appear here as agents fire them." : "Try a broader filter"}
+            />
           ) : (
             <table
               style={{
@@ -552,20 +572,20 @@ function EventDetail({
   agents,
 }: {
   event: EventItem;
-  agents: SpaAgent[];
+  agents: DagAgent[];
 }) {
   const tenant = useTenant();
   const emitters = useMemo(
-    () => agents.filter((a) => a.emits?.includes(event.name)),
+    () => agents.filter((a) => a.emits.includes(event.name)),
     [agents, event.name],
   );
   const listeners = useMemo(
-    () => agents.filter((a) => a.triggers?.includes(event.name)),
+    () => agents.filter((a) => a.triggers.includes(event.name)),
     [agents, event.name],
   );
   const source = useMemo(
     () =>
-      agents.find((a) => a.id === event.source) ??
+      agents.find((a) => a.kebabId === event.source) ??
       agents.find((a) => a.name === event.source) ??
       null,
     [agents, event.source],
@@ -618,7 +638,7 @@ function EventDetail({
       <Section title="Source">
         {source ? (
           <Link
-            href={`/portal/${tenant}/agents/${source.id}` as never}
+            href={`/portal/${tenant}/agents/${source.kebabId}` as never}
             style={{ textDecoration: "none" }}
           >
             <button
@@ -687,9 +707,9 @@ function EventDetail({
               event_id: event.id,
               name: event.name,
               ts: new Date(event.at).toISOString(),
-              tenant: "raas",
+              tenant,
               source: source
-                ? { agent_id: source.id, agent: source.name }
+                ? { agent_id: source.kebabId, agent: source.name }
                 : "external",
               subject: event.subject,
             },
@@ -720,12 +740,12 @@ function AgentLinkRow({
   agent,
   tenant,
 }: {
-  agent: SpaAgent;
+  agent: DagAgent;
   tenant: string;
 }) {
   return (
     <Link
-      href={`/portal/${tenant}/agents/${agent.id}` as never}
+      href={`/portal/${tenant}/agents/${agent.kebabId}` as never}
       style={{
         display: "flex",
         alignItems: "center",

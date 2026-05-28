@@ -1,7 +1,7 @@
 /**
  * Playwright config for the Phase 2 pixel-diff harness.
  *
- * Boots `pnpm dev` against the web workspace (port 3500) and runs the
+ * Boots `pnpm dev` against the web workspace (port 3599) and runs the
  * visual specs under `./test/visual/`. The dev server is reused if it's
  * already up, so CI can split the boot into a separate step if needed.
  *
@@ -26,7 +26,7 @@ export default defineConfig({
   workers: 1,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: process.env.PW_BASE_URL ?? "http://localhost:3500",
+    baseURL: process.env.PW_BASE_URL ?? "http://localhost:3599",
     viewport: { width: 1440, height: 900 },
     // Animations are fine to leave on — the screenshot is taken after
     // `await page.waitForLoadState('networkidle')` which gives most CSS
@@ -56,7 +56,7 @@ export default defineConfig({
     ? {
         webServer: {
           command: "pnpm dev",
-          port: 3500,
+          port: 3599,
           reuseExistingServer: true,
           timeout: 120_000,
           cwd: "../..",

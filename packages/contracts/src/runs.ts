@@ -103,3 +103,21 @@ export const ReplayRunResponse = z.object({
   replayed_run: z.string(),
   new_event_id: z.string(),
 });
+
+/**
+ * Response of `POST /v1/runs/:id/cancel` — operator kill-switch.
+ *
+ * `cancelled` is true when this call flipped the row from an active state
+ * (running / waiting / queued) to `cancelled`. It is false on the no-op
+ * idempotent paths (run is already terminal — `ok`, `failed`, or already
+ * `cancelled`). `note` is a human-readable summary of what the route did
+ * (e.g. "Inngest cancel signal sent; manifest fn will exit at next
+ * checkpoint" vs. "Run already terminal; no-op").
+ */
+export const CancelRunResponse = z.object({
+  runId: z.string(),
+  status: RunStatus,
+  cancelled: z.boolean(),
+  note: z.string(),
+});
+export type CancelRunResponse = z.infer<typeof CancelRunResponse>;

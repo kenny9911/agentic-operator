@@ -35,6 +35,15 @@ export async function getDag(tenantSlug: string): Promise<{
 
   // Prefer the LIVE deployment's workflow_version (correct for daily ops).
   // Fall back to most-recently-created workflow_version if no live deployment.
+  //
+  // CRITICAL: filter to `target='workflow'`. A tenant can have multiple live
+  // deployments in different lanes (e.g. raas has one `target=workflow` for
+  // the manifest DAG AND one `target=tenant_code` for the code-agent
+  // tarball, see deployments schema enum in packages/db/src/schema.ts:145).
+  // Without this filter the ORDER BY deployedAt picks whichever was deployed
+  // last, which may point at a workflow row with zero agents in the graph
+  // (e.g. wf-aaab4b328451 for raas tenant_code) — leaving the Workflows
+  // canvas blank even though the manifest workflow has 26 agents.
   const liveRow = db
     .select({
       workflowId: workflows.id,
@@ -48,7 +57,11 @@ export async function getDag(tenantSlug: string): Promise<{
     )
     .innerJoin(workflows, eq(workflows.id, workflowVersions.workflowId))
     .where(
-      and(eq(deployments.tenantId, tenant.id), eq(deployments.status, "live")),
+      and(
+        eq(deployments.tenantId, tenant.id),
+        eq(deployments.status, "live"),
+        eq(deployments.target, "workflow"),
+      ),
     )
     .orderBy(desc(deployments.deployedAt))
     .all()[0];

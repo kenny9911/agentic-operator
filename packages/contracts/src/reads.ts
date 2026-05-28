@@ -54,5 +54,13 @@ export const HealthReport = z.object({
       providers: z.number().optional(),
     })
     .optional(),
+  /**
+   * AGENTIC_DEMO_MODE flag (locked 2026-05-26). Surfaced on /health so the
+   * sidebar can render a "DEMO" badge in the UI without depending on the
+   * env reaching the browser. Optional so older api builds (without this
+   * field) still parse cleanly on a newer web client; the web treats
+   * undefined as `false`.
+   */
+  demoMode: z.boolean().optional(),
 });
 export type HealthReport = z.infer<typeof HealthReport>;

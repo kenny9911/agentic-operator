@@ -325,8 +325,8 @@ If `window.RAAS_AUTH_HEADERS` doesn't already exist (used in other views), add i
 | # | Step | Pass criterion |
 |---|---|---|
 | 1 | `pnpm install && pnpm db:migrate && pnpm db:seed && pnpm seed:rich` | No errors |
-| 2 | `pnpm dev` | Web on :3500, API on :3501, Inngest on :8288 |
-| 3 | Open http://localhost:3500/ → Event Tester in sidebar | View renders |
+| 2 | `pnpm dev` | Web on :3599, API on :3501, Inngest on :8288 |
+| 3 | Open http://localhost:3599/ → Event Tester in sidebar | View renders |
 | 4 | Catalog sidebar shows 3 RAAS events | `CLIENT_RULES_PASSED`, `CLIENT_RULES_FAILED`, `AI_INTERVIEW_COMPLETED` |
 | 5 | Select `CLIENT_RULES_PASSED` → form shows 3 typed fields | `client_id`, `candidate_id`, `rules_passed` |
 | 6 | Fill in values, subject `req-test-001`, click Publish | Success toast; event_id pinned |

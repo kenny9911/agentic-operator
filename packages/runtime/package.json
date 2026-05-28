@@ -14,6 +14,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "rotate-logs": "tsx src/log-rotate.ts",
+    "gen:schema": "tsx src/generate-workflow-schema.ts",
+    "gen:schema:check": "tsx src/generate-workflow-schema.ts --check",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {

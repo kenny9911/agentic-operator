@@ -11,15 +11,16 @@
  *   - useStream SSE hook (Phase 1)
  *
  * Tenants list is fetched live via `useTenants()` (TanStack Query against
- * `GET /v1/tenants`). When the api hasn't responded yet, falls back to the
- * static `TENANTS` fixture in `apps/web/lib/tenants.ts` so the sidebar
- * still renders during the initial paint.
+ * `GET /v1/tenants`). 2026-05-26 product rule: production mode = ZERO mock
+ * data. If `/v1/tenants` errors we render an inline banner instead of
+ * falling back to a static fixture — the previous fallback masked an
+ * api-down state by pretending RAAS / SupportFlow / FinanceClose existed
+ * when they didn't.
  */
 
 import type { ReactNode } from "react";
 import { useCallback } from "react";
 import type { RunStreamEvent } from "@agentic/contracts";
-import { TENANTS } from "@/lib/tenants";
 import { useStream } from "@/lib/hooks/useStream";
 import { useTenants } from "@/lib/hooks/useTenants";
 import { Sidebar } from "./sidebar";
@@ -62,31 +63,27 @@ export function PortalChrome({
   // updates without re-subscribing.
   useStream({ onEvent: onStreamEvent });
 
-  // Live tenant list. Fall back to the static fixture so we render
-  // something during the first paint and on api failure (the sidebar is
-  // not allowed to be empty).
+  // Live tenant list. No static fallback — when /v1/tenants errors we
+  // surface a banner so the operator knows the api is unreachable rather
+  // than seeing a misleading switcher full of stale entries.
   const tenantsQuery = useTenants();
   const liveItems = tenantsQuery.data?.items;
-  const tenants: TenantOption[] =
-    liveItems && liveItems.length > 0
-      ? liveItems
-          .filter((t) => t.archivedAt == null)
-          .map((t) => ({
-            id: t.slug,
-            name: t.name,
-            subtitle: t.subtitle ?? undefined,
-            color: t.color ?? "#d0ff00",
-            agentCount: t.agentCount,
-            runs24h: t.runs24h,
-          }))
-      : TENANTS.map((t) => ({
-          id: t.id,
+  const tenants: TenantOption[] = liveItems
+    ? liveItems
+        .filter((t) => t.archivedAt == null)
+        .map((t) => ({
+          id: t.slug,
           name: t.name,
-          subtitle: t.subtitle,
-          color: t.color,
+          subtitle: t.subtitle ?? undefined,
+          color: t.color ?? "#d0ff00",
           agentCount: t.agentCount,
           runs24h: t.runs24h,
-        }));
+        }))
+    : [];
+
+  const apiUnreachable =
+    tenantsQuery.isError ||
+    (!tenantsQuery.isLoading && !tenantsQuery.data);
 
   return (
     <SessionProvider value={user}>
@@ -117,6 +114,7 @@ export function PortalChrome({
           }}
         >
           <TopBar user={{ name: user.name, initials: user.initials }} />
+          {apiUnreachable ? <ApiUnreachableBanner /> : null}
           <div
             id="portal-view-content"
             tabIndex={-1}
@@ -135,5 +133,42 @@ export function PortalChrome({
         <CommandPalette />
       </div>
     </SessionProvider>
+  );
+}
+
+/**
+ * Inline banner shown when `/v1/tenants` is unreachable. Single source of
+ * truth for the "api down" error UX in the portal shell.
+ */
+function ApiUnreachableBanner() {
+  return (
+    <div
+      role="alert"
+      style={{
+        background: "rgba(239, 68, 68, 0.12)",
+        borderBottom: "1px solid rgba(239, 68, 68, 0.35)",
+        color: "var(--text)",
+        padding: "8px 16px",
+        fontSize: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: "rgb(239, 68, 68)",
+          flexShrink: 0,
+        }}
+        aria-hidden
+      />
+      <span>
+        Cannot reach api on <code style={{ fontFamily: "var(--mono)" }}>:3501</code>
+        {" — check that `pnpm dev` is running. The portal will keep retrying."}
+      </span>
+    </div>
   );
 }

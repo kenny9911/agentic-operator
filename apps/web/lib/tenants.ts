@@ -1,8 +1,14 @@
 /**
- * Tenant fixtures for the Sidebar tenant switcher (display-only).
- * Per-tenant data + auth lives in the api.
+ * Tenant type for the Sidebar tenant switcher.
  *
- * To add a tenant: drop a `models/<slug>/` folder and add an entry here.
+ * 2026-05-26 architectural rule: production mode = ZERO mock data.
+ * Per-tenant data + auth lives in the api. If the api is unreachable
+ * the UI should show an error state, not mock data.
+ *
+ * The legacy export `TENANTS` is intentionally empty by design — every
+ * portal view fetches `/v1/tenants` live via `useTenants()`. A stale
+ * static fixture here would re-introduce the "looks like demo, actually
+ * mock fallback" footgun.
  */
 
 export interface Tenant {
@@ -15,32 +21,6 @@ export interface Tenant {
   runs24h: number;
 }
 
-export const TENANTS: Tenant[] = [
-  {
-    id: "raas",
-    name: "RAAS",
-    subtitle: "Recruitment-as-a-Service",
-    color: "#d0ff00",
-    active: true,
-    agentCount: 22,
-    runs24h: 1842,
-  },
-  {
-    id: "support",
-    name: "SupportFlow",
-    subtitle: "Tier-1 ticket triage",
-    color: "#7c9eff",
-    active: false,
-    agentCount: 11,
-    runs24h: 312,
-  },
-  {
-    id: "finance",
-    name: "FinanceClose",
-    subtitle: "Monthly close orchestration",
-    color: "#f5c46b",
-    active: false,
-    agentCount: 8,
-    runs24h: 47,
-  },
-];
+// No static fallback by design. If api is unreachable, UI should show an
+// error state, not mock data.
+export const TENANTS: Tenant[] = [];

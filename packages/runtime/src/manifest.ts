@@ -52,6 +52,23 @@ export const ToolUseEntrySchema = z
     name: z.string(),
     description: z.string().optional(),
     input_schema: z.unknown().optional(),
+    /**
+     * Per-tenant tool configuration. Lifted into `ToolContext.config` at
+     * dispatch time so global tools (RoboHire wrappers, fs.* family, etc.)
+     * can be specialised per tenant without code changes. Example:
+     *
+     *   "tool_use": [
+     *     { "name": "parseResumeApi",
+     *       "config": { "api_key_env": "TENANT_X_RH_KEY",
+     *                   "timeout_ms": 60000 } },
+     *     { "name": "fs.readFromInbox",
+     *       "config": { "subdir": "resumes", "max_bytes": 5242880 } }
+     *   ]
+     *
+     * The shape is intentionally `Record<string, unknown>` — each tool
+     * documents the keys it honours. The runtime never inspects this map.
+     */
+    config: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 

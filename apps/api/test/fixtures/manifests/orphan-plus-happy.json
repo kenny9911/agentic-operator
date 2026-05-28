@@ -1,0 +1,36 @@
+[
+  {
+    "id": "human-orphan",
+    "name": "humanOrphan",
+    "title": "Human Orphan",
+    "description": "Human actor without a taskDefinition tool. Should be dropped when skip resolution is applied.",
+    "actor": ["Human"],
+    "trigger": ["HUMAN_NEEDED"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "askHuman",
+        "description": "Wait for input.",
+        "type": "manual"
+      }
+    ],
+    "triggered_event": ["HUMAN_REPLIED"]
+  },
+  {
+    "id": "agent-ok",
+    "name": "agentOk",
+    "title": "Agent Ok",
+    "description": "Plain Agent. Should survive a skip-the-orphan commit.",
+    "actor": ["Agent"],
+    "trigger": ["AGENT_STARTED"],
+    "actions": [
+      {
+        "order": "1",
+        "name": "doStuff",
+        "description": "Do stuff.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["AGENT_DONE"]
+  }
+]

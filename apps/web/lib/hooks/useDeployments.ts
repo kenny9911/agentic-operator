@@ -1,11 +1,11 @@
 /**
  * useDeployments — TanStack Query wrappers around `/v1/deployments`.
  *
- * Live deployment history + rollback. Replaces the bootstrap-synthesized
- * deployments list (`lib/spa/derive.ts → synthesizeDeployments`) that the
- * v1_1 SPA used for mock data. Tenant scope comes from the bearer
- * (AUTH_MODE=dev resolves it from AGENTIC_DEV_TENANT) — the path itself
- * isn't tenant-prefixed.
+ * Live deployment history + rollback. The pre-2026-05-26 v1_1 SPA used a
+ * bootstrap-synthesized fixture list; that mock fallback was removed when
+ * the "production = zero mock" rule landed. Tenant scope comes from the
+ * bearer (AUTH_MODE=dev resolves it from AGENTIC_DEV_TENANT) — the path
+ * itself isn't tenant-prefixed.
  *
  * Cache shape:
  *   - queryKey ["deployments", "list"]: { list, live }
@@ -19,6 +19,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
+import { tenantHeader } from "./tenant-header";
 
 interface ApiOk<T> {
   ok: true;
@@ -30,13 +31,15 @@ interface ApiErr {
 }
 
 async function callV1<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { headers: initHeaders, ...rest } = init;
   const res = await fetch(path, {
     credentials: "same-origin",
+    ...rest,
     headers: {
       Accept: "application/json",
-      ...(init.headers as Record<string, string> | undefined),
+      ...tenantHeader(),
+      ...(initHeaders as Record<string, string> | undefined),
     },
-    ...init,
   });
   const body = (await res.json()) as ApiOk<T> | ApiErr;
   if (!body.ok) {

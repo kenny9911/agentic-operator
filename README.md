@@ -39,11 +39,29 @@ pnpm seed:rich                # (RF-1.7) loads RAAS historical fixtures + ontolo
 pnpm dev                      # boots web + api + inngest concurrently
 ```
 
-Open <http://localhost:3500>.
+Open <http://localhost:3599>.
 
-- **web** on :3500 — Next.js. All `/v1/*` calls proxy to api.
+- **web** on :3599 — Next.js. All `/v1/*` calls proxy to api.
 - **api** on :3501 — Fastify. Hosts `/v1/*` REST + `/inngest` webhook + `/health`.
 - **inngest** on :8288 — Inngest dev UI; auto-discovers `http://localhost:3501/inngest`.
+
+### Demo mode vs production mode (locked 2026-05-26)
+
+The api has two clean states — no in-between. Toggle with the single env flag `AGENTIC_DEMO_MODE`:
+
+```bash
+# Clean slate — drop accumulated traffic + start over
+pnpm db:wipe-runtime
+
+# Production: ZERO mock/seed data. Dashboard reflects only real events.
+AGENTIC_DEMO_MODE=false pnpm dev
+
+# Demo: seed:rich runs once at boot + an in-process loop fires plausible
+# tenant events every 30s. Sidebar shows a lime "DEMO" pill.
+AGENTIC_DEMO_MODE=true  pnpm dev
+```
+
+See `CLAUDE.md` § Demo mode for the runner cadence and safety gates.
 
 ## Verifying end-to-end
 
@@ -55,7 +73,7 @@ curl -X POST http://localhost:3501/v1/events \
 
 # Watch the chain: ~14 agents run in sequence
 # Inngest UI:    http://localhost:8288
-# Web dashboard: http://localhost:3500
+# Web dashboard: http://localhost:3599
 
 # Chain pauses at jdReview (a manual step) → task appears in the inbox
 curl -X POST http://localhost:3501/v1/tasks/<task-id>/resolve \
@@ -160,7 +178,7 @@ Each app has its own `.env.local`:
 ```sh
 PORT=3501
 HOST=0.0.0.0
-WEB_ORIGIN=http://localhost:3500        # CORS allow-list
+WEB_ORIGIN=http://localhost:3599        # CORS allow-list
 DATABASE_URL=file:../../data/agentic.db
 AGENTIC_LOGS_DIR=../../data/logs
 AGENTIC_ARTIFACTS_DIR=../../data/artifacts

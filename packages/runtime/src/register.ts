@@ -166,6 +166,24 @@ export function registerAgent(
         key: `"${tenantSlug}:" + event.data.subject`,
       },
       retries: 3,
+      // Operator kill switch (POST /v1/runs/:id/cancel). The route emits
+      // `${tenantSlug}/run.cancel` carrying { runId, subject }. We match on
+      // subject because the runId is allocated *inside* the function (the
+      // triggering event doesn't know it yet, and Inngest's `cancelOn.if`
+      // can only compare values already present on the trigger envelope).
+      // Subject is the natural correlation: the concurrency key above
+      // already serialises one run per (tenant, subject), so a cancel keyed
+      // on subject hits exactly the in-flight run the operator clicked
+      // Stop on. Trade-off documented in the route handler: if two runs
+      // share a subject (rare — concurrency cap > 1 + same key), both are
+      // cancelled together. For a kill switch this is the correct safety
+      // posture.
+      cancelOn: [
+        {
+          event: `${tenantSlug}/run.cancel` as `${string}/${string}`,
+          if: `async.data.subject == event.data.subject`,
+        },
+      ],
       // v4: triggers moved into opts (was a separate 2nd arg in v3)
       triggers,
     },
@@ -413,6 +431,24 @@ export function registerAgent(
                 lastResult,
               },
               action,
+              // Hand the step engine the slots it needs for prompt assembly
+              // AND the tool-use loop. `tool_use` is the canonical roster
+              // of advertised tools — the engine cross-references each
+              // entry against `tenantRegistry.tools` before passing it to
+              // the LLM, so a stale declaration silently no-ops instead of
+              // crashing.
+              agent: {
+                name: agent.name,
+                description: agent.description,
+                ontology_instructions: agent.ontology_instructions,
+                tool_use: Array.isArray(agent.tool_use)
+                  ? (agent.tool_use as Array<{
+                      name: string;
+                      description?: string;
+                      input_schema?: unknown;
+                    }>)
+                  : undefined,
+              },
               tenantRegistry: ctx.tenantRegistry,
               autoResolveManual: true,
             });

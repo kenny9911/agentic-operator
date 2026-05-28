@@ -1,29 +1,42 @@
 {
   "entries": [
     {
-      "id": "mdl-2b6ca21043d3",
+      "id": "mdl-26d0f56b53d7",
       "tenantSlug": "raas",
       "provider": "openrouter",
-      "modelName": "anthropic/claude-sonnet-4-5",
-      "alias": "fast-claude",
-      "role": "primary",
-      "dailyCapUsd": 50,
-      "maxOutTokens": 2048,
-      "temperature": 0.2,
-      "addedAt": 1779259478806,
-      "addedBy": "raas"
-    },
-    {
-      "id": "mdl-ca2db632326a",
-      "tenantSlug": "raas",
-      "provider": "openrouter",
-      "modelName": "openai/gpt-4.1-mini",
-      "alias": "openai/gpt-4.1-mini",
+      "modelName": "google/gemini-3-flash-preview",
+      "alias": "google/gemini-3-flash-preview",
       "role": "primary",
       "dailyCapUsd": 30,
       "maxOutTokens": 2048,
       "temperature": 0.2,
-      "addedAt": 1779259792905,
+      "addedAt": 1779731647772,
+      "addedBy": "raas"
+    },
+    {
+      "id": "mdl-586ee9a935ff",
+      "tenantSlug": "raas",
+      "provider": "openrouter",
+      "modelName": "openai/gpt-oss-120b",
+      "alias": "openai/gpt-oss-120b",
+      "role": "primary",
+      "dailyCapUsd": 30,
+      "maxOutTokens": 2048,
+      "temperature": 0.2,
+      "addedAt": 1779731814513,
+      "addedBy": "raas"
+    },
+    {
+      "id": "mdl-cfab5c84cb63",
+      "tenantSlug": "raas",
+      "provider": "openrouter",
+      "modelName": "openai/gpt-4o-mini",
+      "alias": "openai/gpt-4o-mini",
+      "role": "fallback",
+      "dailyCapUsd": 30,
+      "maxOutTokens": 2048,
+      "temperature": 0.2,
+      "addedAt": 1779732153768,
       "addedBy": "raas"
     }
   ]

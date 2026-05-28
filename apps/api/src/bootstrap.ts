@@ -27,16 +27,31 @@ import {
 import type { Inngest, InngestFunction } from "inngest";
 import raasTenant from "@tenants/raas";
 import systemTenant from "@tenants/__system";
+import tenantTest1 from "@tenants/tenant-test1";
+import robohireTenant from "@tenants/robohire";
+import northwindTenant from "@tenants/northwind";
+import insightlabTenant from "@tenants/insightlab";
 import {
   bootstrapCodeAgents,
   setGateway as setAgentGateway,
 } from "@agentic/agents";
 import "@agentic/agents/system";
+import type { TenantRegistry } from "@agentic/agent-kit";
+import { getMcpManager, type McpServerConfig } from "@agentic/mcp";
+import { buildSkillTools, type SkillDescriptor } from "@agentic/skills";
 import { getLLMGateway } from "./services/llm";
 import { metrics } from "./services/metrics";
 import { reconcileImports } from "./services/reconcile-imports";
-import { getDb } from "@agentic/db";
+import { getDb, pruneRolledBackDeployments } from "@agentic/db";
 import { reregisterInngest } from "./services/inngest-registry";
+import {
+  applyDemoModeOverrides,
+  describeDemoMode,
+  describeDemoOverrides,
+  isDemoMode,
+} from "./config/demo-mode.js";
+import { startDemoRunner } from "./services/demo-runner.js";
+import { runSeedRich } from "../scripts/seed-rich.js";
 
 /**
  * v4 typing: TS2742 surfaces because `InngestFunction` references internal
@@ -46,6 +61,13 @@ import { reregisterInngest } from "./services/inngest-registry";
 export interface BootstrapResult {
   inngest: Inngest.Any;
   functions: InngestFunction.Any[];
+  /**
+   * `stop()` for the demo-runner interval timers. No-op when
+   * `AGENTIC_DEMO_MODE` is false (production) or `NODE_ENV=test`. The
+   * server.ts entrypoint wires this into the graceful-shutdown drain so
+   * SIGTERM cleanly clears the timers before `process.exit`.
+   */
+  stopDemoRunner: () => void;
 }
 
 /**
@@ -66,9 +88,32 @@ export interface BootstrapResult {
 const TENANT_REGISTRIES: TenantRegistries = {
   raas: raasTenant,
   __system: systemTenant,
+  "tenant-test1": tenantTest1,
+  robohire: robohireTenant,
+  northwind: northwindTenant,
+  insightlab: insightlabTenant,
 };
 
 export async function bootstrapRuntime(): Promise<BootstrapResult> {
+  // 0. Surface the demo-mode flag at the very top of the boot log so the
+  //    operator can tell at a glance which mode the api is running in
+  //    (production = no mock, demo = seed + loop). The architectural rule
+  //    is locked: a single flag controls all "synthetic-data" behavior.
+  console.log(describeDemoMode());
+
+  // 0a. Apply demo-mode env overrides BEFORE the LLM gateway is constructed.
+  //     When demo mode is ON, this swaps LLM_DEFAULT_PROVIDER → "mock" (and
+  //     model → "mock-model-v1") so the demo runner's 30-sec-tick traffic
+  //     never bills real LLM APIs. The on-disk `.env` is NOT touched —
+  //     flipping AGENTIC_DEMO_MODE=false on the next restart restores the
+  //     original values automatically. Operators can opt back into a real
+  //     provider under demo mode via AGENTIC_DEMO_LLM_PROVIDER /
+  //     AGENTIC_DEMO_LLM_MODEL escape hatches.
+  const overrides = applyDemoModeOverrides();
+  if (overrides.length > 0) {
+    console.log(describeDemoOverrides(overrides));
+  }
+
   // 1. Construct LLM gateway once and wire it into both consumers
   //    (agents package for BaseAgent.run, runtime package for step-engine logic actions).
   const gateway = getLLMGateway();
@@ -89,8 +134,17 @@ export async function bootstrapRuntime(): Promise<BootstrapResult> {
     `[bootstrap] code agents ready — ${codeSummary.agentCount} registered, ${codeSummary.deploymentsWritten} new deployment(s)`,
   );
 
-  // 3. Manifest-driven (RAAS etc) Inngest functions.
-  const tenantFns = await bootstrapAll(TENANT_REGISTRIES);
+  // 3. Expand each tenant registry with MCP-bridged tools + Skills tools
+  //    BEFORE handing the map to `bootstrapAll`. This keeps `@agentic/runtime`
+  //    blissfully unaware of MCP/Skills — the runtime sees a single
+  //    `tenantRegistry.tools` map and dispatches as usual.
+  const expanded: TenantRegistries = {};
+  for (const [slug, base] of Object.entries(TENANT_REGISTRIES)) {
+    expanded[slug] = await expandTenantRegistry(slug, base);
+  }
+
+  // 4. Manifest-driven (RAAS etc) Inngest functions.
+  const tenantFns = await bootstrapAll(expanded);
   const allFns = [helloFn, ...tenantFns];
   console.log(
     `[bootstrap] api serving ${allFns.length} Inngest function(s) (${tenantFns.length} from tenant manifests)`,
@@ -128,5 +182,127 @@ export async function bootstrapRuntime(): Promise<BootstrapResult> {
     console.warn("[bootstrap] reconcileImports failed", err);
   }
 
-  return { inngest, functions: allFns };
+  // 4b. Deployment-history retention. Every (re)deploy correctly tombstones
+  //     the prior live row, but forced re-bootstraps + legacy churn leave the
+  //     Deployments page flooded with near-identical rolled_back rows. Cap
+  //     each (tenant, target, note) group to the most recent N tombstones,
+  //     keeping all live/pending rows and every distinct-note history entry.
+  //     Idempotent; runs every boot so the table stays bounded. Skipped under
+  //     NODE_ENV=test so vitest's deployment row-count assertions don't flake.
+  if (process.env.NODE_ENV !== "test") {
+    try {
+      const pruned = pruneRolledBackDeployments();
+      if (pruned.deleted > 0) {
+        console.log(
+          `[bootstrap] deployment history pruned — removed ${pruned.deleted} rolled_back row(s), kept ${pruned.after} (≤${pruned.retainPerNote} per tenant/target/note)`,
+        );
+      }
+    } catch (err) {
+      console.warn("[bootstrap] pruneRolledBackDeployments failed", err);
+    }
+  }
+
+  // 5. Demo-mode hydration + runner. Gated entirely by AGENTIC_DEMO_MODE
+  //    (NEVER auto-enabled from NODE_ENV). Two parts:
+  //      a. Seed the rich RAAS fixtures (idempotent — every helper skips
+  //         rows that already exist by primary key). The seed has to run
+  //         AFTER bootstrapAll so the canonical agents/agent_versions
+  //         rows exist for the RAAS workflow it overlays metadata onto.
+  //      b. Start the periodic event/task-resolve runner that keeps the
+  //         dashboard alive with synthetic traffic. The returned `stop`
+  //         is plumbed through to the Fastify onClose hook in server.ts
+  //         so SIGTERM clears the intervals cleanly.
+  //
+  //    The demo-runner module itself also no-ops on NODE_ENV=test and
+  //    when the flag is off — defense in depth so an accidental import
+  //    in a future module can't spin up background traffic.
+  let stopDemoRunner: () => void = () => {};
+  if (isDemoMode()) {
+    try {
+      const seedResult = await runSeedRich({
+        logger: {
+          info: (msg) => console.log(msg),
+          warn: (msg) => console.warn(msg),
+        },
+      });
+      if (!seedResult.ok) {
+        console.warn(
+          `[bootstrap] demo seed degraded — reason=${seedResult.reason ?? "unknown"}; demo runner will still start but may have nothing to do`,
+        );
+      }
+    } catch (err) {
+      console.warn("[bootstrap] demo seed threw; continuing", err);
+    }
+    const runner = startDemoRunner({
+      info: (msg) => console.log(msg),
+      warn: (msg) => console.warn(msg),
+      error: (msg) => console.error(msg),
+    });
+    stopDemoRunner = runner.stop;
+  }
+
+  return { inngest, functions: allFns, stopDemoRunner };
+}
+
+/**
+ * Merge MCP-bridged tools (one shim per advertised MCP tool, name
+ * qualified as `<server>.<tool>`) and Skills tools (`skills.list_skills`,
+ * `skills.load_skill`) into the tenant's existing tools map. Native tools
+ * declared in the tenant package WIN on name collisions so a tenant can
+ * override an MCP shim by re-defining it locally.
+ *
+ * MCP failures are tolerated when the server config has `optional: true`
+ * (the default in McpServerConfigSchema) — the bootstrap log captures the
+ * failure but the rest of the tenant still registers. A non-optional
+ * MCP failure propagates through `bootstrapAll`'s per-tenant try/catch
+ * so other tenants still boot.
+ */
+async function expandTenantRegistry(
+  slug: string,
+  base: TenantRegistry | undefined,
+): Promise<TenantRegistry | undefined> {
+  if (!base) return base;
+
+  // --- MCP servers -------------------------------------------------------
+  const mcpConfigs = (base.mcpServers ?? []) as McpServerConfig[];
+  let mcpTools: Record<string, import("@agentic/agent-kit").ToolDescriptor> = {};
+  if (mcpConfigs.length > 0) {
+    const mgr = getMcpManager();
+    try {
+      await mgr.connectAll(mcpConfigs);
+      mcpTools = mgr.toolMap();
+      const statuses = mgr.describe();
+      const summary = statuses
+        .map((s) => `${s.name}=${s.connected ? `ok(${s.toolCount})` : "fail"}`)
+        .join(", ");
+      console.log(`[bootstrap] mcp(${slug}): ${summary}`);
+    } catch (err) {
+      console.warn(`[bootstrap] mcp(${slug}): connectAll failed`, err);
+    }
+  }
+
+  // --- Skills ------------------------------------------------------------
+  const skillDescriptors = (base.skills ?? []) as SkillDescriptor[];
+  let skillTools: Record<string, import("@agentic/agent-kit").ToolDescriptor> = {};
+  if (skillDescriptors.length > 0) {
+    skillTools = buildSkillTools(skillDescriptors);
+    console.log(
+      `[bootstrap] skills(${slug}): ${skillDescriptors.length} skill(s) — ${skillDescriptors
+        .map((s) => s.name)
+        .join(", ")}`,
+    );
+  }
+
+  if (mcpConfigs.length === 0 && skillDescriptors.length === 0) return base;
+
+  return {
+    ...base,
+    tools: {
+      // MCP + Skills tools first, native tenant tools last so the tenant
+      // always wins on collisions.
+      ...mcpTools,
+      ...skillTools,
+      ...(base.tools ?? {}),
+    },
+  };
 }

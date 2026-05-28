@@ -227,7 +227,7 @@ pnpm -r build
 For E2E, in one terminal:
 
 ```bash
-pnpm dev   # boots api :3501 + web :3500 + inngest :8288
+pnpm dev   # boots api :3501 + web :3599 + inngest :8288
 ```
 
 In another:

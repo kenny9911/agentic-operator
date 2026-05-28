@@ -6,6 +6,7 @@ import { getRawSqlite } from "@agentic/db";
 import type { HealthReport } from "@agentic/contracts";
 import { CURRENT_SCHEMA_VERSION } from "@agentic/runtime";
 import { getLLMGateway } from "../services/llm";
+import { isDemoMode } from "../config/demo-mode.js";
 
 /** apps/api/package.json — used for the `version` field on the report. */
 const apiPackageJsonPath = path.resolve(
@@ -54,6 +55,11 @@ export async function healthRoute(app: FastifyInstance) {
       sqlite,
       disk,
       llmGateway,
+      // AGENTIC_DEMO_MODE — surfaced so the web sidebar can render a "DEMO"
+      // badge without reading the api env. Read lazily on every /health
+      // request so a hot-reload of the env (uncommon in prod) takes effect
+      // without a restart. The web treats undefined as false.
+      demoMode: isDemoMode(),
     };
     return reply.status(ok ? 200 : 503).send(report);
   });

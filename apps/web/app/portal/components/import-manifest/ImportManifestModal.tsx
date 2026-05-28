@@ -16,6 +16,7 @@
  */
 
 import { useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type {
   ManifestImportOverwriteRequired,
   ManifestImportPreview,
@@ -32,7 +33,8 @@ import {
   type IconName,
 } from "@/app/portal/components";
 import { fmtBytes } from "@/lib/format";
-import { useRaasData } from "@/lib/hooks/data-context";
+import { useDag, type DagAgent } from "@/lib/hooks/useAgents";
+import { tenantHeader } from "@/lib/hooks/tenant-header";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { toast } from "@/app/portal/components/toast";
 import { OverwriteConfirmModal } from "./OverwriteConfirmModal";
@@ -70,6 +72,19 @@ const IMPORT_STEPS = [
   { id: "preview", label: "Preview", icon: "workflow" as IconName, hint: "Imported graph" },
   { id: "deploy", label: "Deploy", icon: "deploy" as IconName, hint: "Stage / prod" },
 ];
+
+// Static workflow ontology labels — mirrors the dashboard funnel so the
+// preview mini-graph reads naturally for RAAS-style staged pipelines.
+const STAGE_LABELS: Record<number, string> = {
+  0: "Intake",
+  1: "Analyze",
+  2: "JD",
+  3: "Publish",
+  4: "Resume",
+  5: "Match & Interview",
+  6: "Package",
+  7: "Submit",
+};
 
 /**
  * UI-side projection of the real `ManifestImportPreview` from the api. The
@@ -189,6 +204,16 @@ export function ImportManifestModal({
   // Fallback to the tenant in the URL when the caller didn't override.
   const urlTenant = useTenant();
   const slug = tenantSlug ?? urlTenant;
+  const queryClient = useQueryClient();
+  // After a successful commit, invalidate every query whose data the new
+  // manifest touches so the Workflows canvas, Agents list, and DAG
+  // reload without a hard refresh.
+  const refetchManifestDependents = () => {
+    void queryClient.invalidateQueries({ queryKey: ["agents"] as const });
+    void queryClient.invalidateQueries({ queryKey: ["workflows"] as const });
+    void queryClient.invalidateQueries({ queryKey: ["events"] as const });
+    void queryClient.invalidateQueries({ queryKey: ["deployments"] as const });
+  };
 
   const [step, setStep] = useState(0);
   const [source, setSource] = useState<"file" | "paste" | "url" | "git">("file");
@@ -207,6 +232,12 @@ export function ImportManifestModal({
   const [noteText, setNoteText] = useState("");
   const [committing, setCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
+  // Specific issues returned by a blocking_issues commit response — the api
+  // ships these alongside the top-level error so the operator can see WHICH
+  // agents need attention instead of the bare "commit refused" line.
+  const [commitIssues, setCommitIssues] = useState<
+    Array<{ path: string; message: string; severity: string; code: string }>
+  >([]);
   const [overwriteRequired, setOverwriteRequired] =
     useState<ManifestImportOverwriteRequired | null>(null);
   // Validate-step error surface (replaces the silent mock).
@@ -279,7 +310,10 @@ export function ImportManifestModal({
           {
             method: "POST",
             credentials: "same-origin",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              ...tenantHeader(),
+            },
             body: JSON.stringify({ url }),
           },
         );
@@ -347,7 +381,10 @@ export function ImportManifestModal({
         {
           method: "POST",
           credentials: "same-origin",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...tenantHeader(),
+          },
           body: JSON.stringify({
             mode: "validate",
             workflow: nextWorkflow,
@@ -403,6 +440,7 @@ export function ImportManifestModal({
       return;
     }
     setCommitError(null);
+    setCommitIssues([]);
     setCommitting(true);
 
     // Map the resolve-step UI's single `resolution.model` into the
@@ -430,7 +468,10 @@ export function ImportManifestModal({
         {
           method: "POST",
           credentials: "same-origin",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...tenantHeader(),
+          },
           body: JSON.stringify({
             mode: "commit",
             workflow: workflowRaw,
@@ -452,13 +493,24 @@ export function ImportManifestModal({
       if (!res.ok) {
         const errObj =
           body && typeof body === "object"
-            ? (body as { error?: { code?: string; message?: string } })
+            ? (body as {
+                error?: { code?: string; message?: string; hint?: string };
+                issues?: Array<{
+                  path: string;
+                  message: string;
+                  severity: string;
+                  code: string;
+                }>;
+              })
             : {};
         const detail =
           errObj.error?.message ??
           errObj.error?.code ??
           `HTTP ${res.status}`;
         setCommitError(detail);
+        setCommitIssues(
+          Array.isArray(errObj.issues) ? errObj.issues : [],
+        );
         setCommitting(false);
         return;
       }
@@ -473,6 +525,10 @@ export function ImportManifestModal({
       });
       setOverwriteRequired(null);
       setCommitting(false);
+      // Invalidate dependent TanStack caches so the Workflows canvas and
+      // Agents list reflect the freshly committed manifest without a hard
+      // refresh.
+      refetchManifestDependents();
       // Legacy SPA exposes `window.refreshWorkflowsView` — call it when
       // we're mounted on top of the SPA, otherwise let the App Router
       // page refresh on its own (TanStack Query invalidations downstream).
@@ -623,7 +679,12 @@ export function ImportManifestModal({
           {step === 1 && (validating ? <ValidatingState /> : <ValidateStep parsed={parsed} />)}
           {step === 2 && parsed && <DiffStep parsed={parsed} />}
           {step === 3 && parsed && (
-            <ResolveStep parsed={parsed} resolution={resolution} setResolution={setResolution} />
+            <ResolveStep
+              parsed={parsed}
+              resolution={resolution}
+              setResolution={setResolution}
+              workflowRaw={workflowRaw}
+            />
           )}
           {step === 4 && parsed && <PreviewStep parsed={parsed} />}
           {step === 5 && parsed && (
@@ -724,9 +785,47 @@ export function ImportManifestModal({
               borderTop: "1px solid rgba(255,100,112,0.32)",
               fontSize: 12,
               color: "var(--red)",
+              maxHeight: 220,
+              overflow: "auto",
             }}
           >
-            {commitError}
+            <div style={{ fontWeight: 500, marginBottom: commitIssues.length ? 6 : 0 }}>
+              {commitError}
+            </div>
+            {commitIssues.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
+                {commitIssues.map((iss, i) => (
+                  <li key={i} style={{ marginBottom: 2 }}>
+                    <span
+                      className="mono"
+                      style={{ color: "var(--text-3)", marginRight: 6 }}
+                    >
+                      {iss.path}
+                    </span>
+                    <span style={{ color: "var(--text-2)" }}>{iss.message}</span>
+                    <span
+                      className="mono"
+                      style={{ color: "var(--text-3)", marginLeft: 6 }}
+                    >
+                      [{iss.code}]
+                    </span>
+                  </li>
+                ))}
+                {commitIssues.length > 0 && (
+                  <li
+                    style={{
+                      listStyle: "none",
+                      marginTop: 6,
+                      color: "var(--amber)",
+                    }}
+                  >
+                    Go Back to <strong>Resolve</strong> and select{" "}
+                    <strong>Skip agent</strong> for the affected paths to drop
+                    them from this import.
+                  </li>
+                )}
+              </ul>
+            )}
           </div>
         )}
       </div>
@@ -1262,13 +1361,78 @@ function ResolveStep({
   parsed,
   resolution,
   setResolution,
+  workflowRaw,
 }: {
   parsed: ParsedManifest;
   resolution: { model: string };
   setResolution: (r: { model: string }) => void;
+  workflowRaw: unknown;
 }) {
+  // Map agent indices that the current resolution mode will drop. Skip
+  // mode drops every conflicted agent; fallback drops only the
+  // block-severity conflicts that have no auto-fix (since fallback maps
+  // them to skip server-side).
+  const rawConflicts = parsed.raw.conflicts ?? [];
+  const dropIdx = new Set<number>();
+  for (const c of rawConflicts) {
+    const m = c.path.match(/^agents\[(\d+)\]/);
+    if (!m) continue;
+    const idx = Number(m[1]);
+    if (resolution.model === "skip") {
+      dropIdx.add(idx);
+    } else if (
+      resolution.model === "fallback" &&
+      c.severity === "block" &&
+      !c.auto_fix
+    ) {
+      dropIdx.add(idx);
+    }
+  }
+  const workflowArr = Array.isArray(workflowRaw)
+    ? (workflowRaw as Array<{ id?: string; name?: string; title?: string }>)
+    : [];
+  const dropNames: string[] = [];
+  for (const idx of Array.from(dropIdx).sort((a, b) => a - b)) {
+    const a = workflowArr[idx];
+    if (!a) continue;
+    dropNames.push(a.name ?? a.id ?? `agents[${idx}]`);
+  }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {dropNames.length > 0 && (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            padding: "10px 12px",
+            background: "rgba(255,181,71,0.08)",
+            border: "1px solid rgba(255,181,71,0.32)",
+            borderRadius: 4,
+            fontSize: 11.5,
+            color: "var(--text-2)",
+          }}
+        >
+          <Icon name="alert" size={11} style={{ color: "var(--amber)", marginTop: 2 }} />
+          <div>
+            <div style={{ color: "var(--text)", fontWeight: 500, marginBottom: 2 }}>
+              {dropNames.length}{" "}
+              {dropNames.length === 1 ? "agent" : "agents"} will be dropped from
+              this import
+            </div>
+            <div style={{ color: "var(--text-3)", fontFamily: "var(--mono)", fontSize: 11 }}>
+              {dropNames.slice(0, 8).join(", ")}
+              {dropNames.length > 8 ? ` · +${dropNames.length - 8} more` : ""}
+            </div>
+            <div style={{ color: "var(--text-3)", marginTop: 4 }}>
+              {resolution.model === "skip"
+                ? "Every conflicted agent is removed. Switch to “Use fallback” to keep agents whose conflicts have an auto-fix."
+                : "These conflicts have no auto-fix, so “Use fallback” drops the agent. Edit the manifest to add the missing field (e.g. a `taskDefinition` tool for Human agents) if you want them in."}
+            </div>
+          </div>
+        </div>
+      )}
       <Panel
         title={`Conflicts to resolve · ${parsed.conflicts.length}`}
         subtitle="The manifest references things this workspace doesn't have. Pick how to handle each."
@@ -1293,7 +1457,7 @@ function ResolveStep({
             <div style={{ display: "flex", gap: 0, border: "1px solid var(--border-2)", borderRadius: 4, overflow: "hidden", width: "fit-content" }}>
               <ResolveOption value="fallback" current={resolution.model} setCurrent={(v) => setResolution({ ...resolution, model: v })} label="Use fallback" hint="claude-sonnet-4-5" />
               <ResolveOption value="connect" current={resolution.model} setCurrent={(v) => setResolution({ ...resolution, model: v })} label="Connect OpenAI" hint="adds gpt-4.1" />
-              <ResolveOption value="skip" current={resolution.model} setCurrent={(v) => setResolution({ ...resolution, model: v })} label="Skip agent" hint="don't import" />
+              <ResolveOption value="skip" current={resolution.model} setCurrent={(v) => setResolution({ ...resolution, model: v })} label="Skip agent" hint="drops the agent" />
             </div>
           </div>
         ))}
@@ -1357,7 +1521,26 @@ function ResolveLine({ ok, label, hint }: { ok: boolean; label: string; hint: st
 }
 
 function PreviewStep({ parsed }: { parsed: ParsedManifest }) {
-  const { stages, agents } = useRaasData();
+  // Source of truth for the preview mini-graph: the live workflow DAG.
+  // Stages are derived from the indices actually used by tenant agents
+  // (mirrors the dashboard funnel logic) so non-RAAS tenants render too.
+  const { data: dag } = useDag();
+  const dagAgents: DagAgent[] = dag?.agents ?? [];
+  const stages = useMemo(() => {
+    const used = new Set<number>();
+    for (const a of dagAgents) used.add(a.stage);
+    return Array.from(used)
+      .sort((x, y) => x - y)
+      .map((id) => ({ id, label: STAGE_LABELS[id] ?? `Stage ${id}` }));
+  }, [dagAgents]);
+  // Mini-graph wants {id, name, actor, stage}; DagAgent already carries
+  // these fields (with the id from the kebabId form).
+  const agents = dagAgents.map((a) => ({
+    id: a.kebabId,
+    name: a.name,
+    actor: a.actor,
+    stage: a.stage,
+  }));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <Panel title="Imported workflow" subtitle={parsed.workflow.version} padded>

@@ -1,13 +1,40 @@
 /**
- * @agentic/tools — first-party tool implementations.
+ * @agentic/tools — first-party tool implementations + global registry.
  *
- * v1 ships mock implementations sufficient to exercise the runtime end-to-end
- * against the RAAS demo workload. Real implementations (HTTP fetch, LLM
- * calls, channel adapters) come post-v1.
+ * Two surfaces:
  *
- * All tools are async, accept a typed input, return a typed output. They are
- * deliberately small and observable so the step engine can record I/O refs.
+ *  1. **Global tool registry** (the canonical, configuration-driven surface) —
+ *     `globalToolRegistry: Map<string, ToolDescriptor>` and
+ *     `listGlobalTools(): ToolCatalogEntry[]` from `./registry`.
+ *     Any agent in any tenant can reference these tools by name in its
+ *     manifest's `tool_use[]`; no code change needed per tenant. Per-tenant
+ *     configuration (API keys, paths) flows through `tool_use[].config`
+ *     into `ctx.config`.
+ *
+ *  2. **Legacy `runTool` fallback** (kept for back-compat) — the original
+ *     mock dispatcher used by `type: "tool"` manifest actions that don't
+ *     have an explicit tool binding. Returns canned responses so legacy
+ *     workflows still execute even without real implementations. New work
+ *     should use the global registry; this section will be removed once
+ *     all `type: "tool"` actions migrate to named tools.
  */
+
+// ─── (1) global registry — canonical surface ───────────────────────────────
+
+export {
+  globalToolRegistry,
+  listGlobalTools,
+  type ToolCatalogEntry,
+} from "./registry";
+
+// Re-export the category sub-packages so external consumers can import
+// the descriptors directly when they want (e.g. for tests).
+export * as robohire from "./robohire";
+export * as fs from "./fs";
+export * as http from "./http";
+export * as meta from "./meta";
+
+// ─── (2) legacy runTool fallback — used by step-engine's type:"tool" path ──
 
 export interface ToolContext {
   agentName: string;
@@ -22,49 +49,11 @@ export interface ToolResult<T = unknown> {
   meta?: Record<string, unknown>;
 }
 
-// ─── http.fetch — pretend HTTP fetch ────────────────────────────────────────
-
-export async function httpFetch(
-  ctx: ToolContext,
-  args: { url: string; method?: string; body?: unknown },
-): Promise<ToolResult<{ status: number; body: unknown }>> {
-  await delay(120 + jitter(80));
-  return {
-    ok: true,
-    data: { status: 200, body: { mock: true, echoed: args } },
-    meta: { tool: "http.fetch" },
-  };
-}
-
-// ─── channel.publish — mock external channel publish ────────────────────────
-
-export async function channelPublish(
-  ctx: ToolContext,
-  args: { channel: string; payload: unknown },
-): Promise<ToolResult<{ delivered: boolean; channel: string }>> {
-  await delay(180 + jitter(120));
-  return {
-    ok: true,
-    data: { delivered: true, channel: args.channel },
-    meta: { tool: "channel.publish" },
-  };
-}
-
-// ─── Generic dispatch — used by step-engine ─────────────────────────────────
-
 export type ToolName = "http.fetch" | "channel.publish";
 
 /**
- * Best-effort tool dispatch by action name. The RAAS manifest doesn't name
- * a specific tool per `type: "tool"` action — it just describes intent in
- * `description`. For v1 we pick a sensible default tool based on the action
- * name's hint words; real wiring lands when each action declares an explicit
- * `tool` field.
- *
- * Note: `llm.call` has been removed from this dispatch. Logic-type actions
- * now route through the LLM gateway (see packages/runtime/src/step-engine.ts);
- * tool-type actions that are LLM-flavored should declare a `logic` type
- * instead, or invoke the gateway explicitly via a tenant tool.
+ * Mock dispatcher kept for back-compat with `type: "tool"` actions that
+ * don't have an explicit tool binding. See module-level docs above.
  */
 export async function runTool(
   ctx: ToolContext,
@@ -82,15 +71,36 @@ export async function runTool(
   }
 }
 
+export async function httpFetch(
+  _ctx: ToolContext,
+  args: { url: string; method?: string; body?: unknown },
+): Promise<ToolResult<{ status: number; body: unknown }>> {
+  await delay(120 + jitter(80));
+  return {
+    ok: true,
+    data: { status: 200, body: { mock: true, echoed: args } },
+    meta: { tool: "http.fetch" },
+  };
+}
+
+export async function channelPublish(
+  _ctx: ToolContext,
+  args: { channel: string; payload: unknown },
+): Promise<ToolResult<{ delivered: boolean; channel: string }>> {
+  await delay(180 + jitter(120));
+  return {
+    ok: true,
+    data: { delivered: true, channel: args.channel },
+    meta: { tool: "channel.publish" },
+  };
+}
+
 function guessTool(name: string): ToolName {
   const low = name.toLowerCase();
   if (low.includes("publish") || low.includes("notify") || low.includes("alert"))
     return "channel.publish";
-  // Default: http.fetch for any unknown tool intent.
   return "http.fetch";
 }
-
-// ─── tiny helpers ───────────────────────────────────────────────────────────
 
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));

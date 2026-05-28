@@ -11,6 +11,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { AGENT_KEYS, COUNT_KEYS } from "./useStream";
+import { tenantHeader } from "./tenant-header";
 
 interface ApiOk<T> {
   ok: true;
@@ -22,13 +23,15 @@ interface ApiErr {
 }
 
 async function callV1<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { headers: initHeaders, ...rest } = init;
   const res = await fetch(path, {
     credentials: "same-origin",
+    ...rest,
     headers: {
       Accept: "application/json",
-      ...(init.headers as Record<string, string> | undefined),
+      ...tenantHeader(),
+      ...(initHeaders as Record<string, string> | undefined),
     },
-    ...init,
   });
   const body = (await res.json()) as ApiOk<T> | ApiErr;
   if (!body.ok) {
@@ -150,11 +153,20 @@ export function useInvokeAgent() {
       if (vars.testRun) sp.set("testRun", "1");
       const qs = sp.toString();
       const path = `/v1/agents/${encodeURIComponent(vars.name)}/invoke${qs ? `?${qs}` : ""}`;
+      // The route returns one of two shapes:
+      //   * code-agent (sync):  { runId, status: 'ok'|'failed', output, ... }
+      //   * manifest fallback:  { kind: 'manifest', status: 'queued', eventId, eventName, correlationId, ... }
+      // Both are typed here so callers can branch without `as` casts.
       return callV1<{
         runId?: string;
         run_id?: string;
         result?: unknown;
         status?: string;
+        kind?: "code" | "manifest";
+        eventId?: string;
+        eventName?: string;
+        subject?: string;
+        correlationId?: string;
       }>(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

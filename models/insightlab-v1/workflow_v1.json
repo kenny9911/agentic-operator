@@ -1,0 +1,70 @@
+[
+  {
+    "id": "topic-tag-agent",
+    "name": "topicTagAgent",
+    "title": "Topic Tag Agent",
+    "description": "Subscribes ARTICLE_SUBMITTED. Loads the topic-taxonomy skill, classifies the article along the canonical taxonomy, and extracts named entities. Emits ARTICLE_TAGGED carrying the original article text plus the tagging payload so downstream agents have full context.",
+    "actor": ["Agent"],
+    "trigger": ["ARTICLE_SUBMITTED"],
+    "tool_use": [
+      { "name": "skills.list_skills", "description": "Discover skills." },
+      { "name": "skills.load_skill", "description": "Load 'topic-taxonomy' for the canonical codes." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "tagArticle",
+        "description": "Classify the article and extract entities. Emit ARTICLE_TAGGED with the merged payload.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["ARTICLE_TAGGED"]
+  },
+  {
+    "id": "claim-extract-agent",
+    "name": "claimExtractAgent",
+    "title": "Claim Extract Agent",
+    "description": "Subscribes ARTICLE_TAGGED. Loads the claim-extraction skill, identifies 3–7 consequential factual claims with confidence + verification queries, and emits CLAIMS_EXTRACTED with the merged context.",
+    "actor": ["Agent"],
+    "trigger": ["ARTICLE_TAGGED"],
+    "tool_use": [
+      { "name": "skills.list_skills" },
+      { "name": "skills.load_skill", "description": "Load 'claim-extraction' for the confidence ladder + schema." }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "extractClaims",
+        "description": "Extract claims with confidence and verification queries. Emit CLAIMS_EXTRACTED.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["CLAIMS_EXTRACTED"]
+  },
+  {
+    "id": "brief-agent",
+    "name": "briefAgent",
+    "title": "Brief Agent",
+    "description": "Subscribes CLAIMS_EXTRACTED. Loads the brief-template skill, assembles a self-contained HTML analyst brief, persists it via writeBriefToDisk, and emits BRIEF_GENERATED with the file path.",
+    "actor": ["Agent"],
+    "trigger": ["CLAIMS_EXTRACTED"],
+    "tool_use": [
+      { "name": "skills.list_skills" },
+      { "name": "skills.load_skill", "description": "Load 'brief-template' for the HTML skeleton." },
+      {
+        "name": "writeBriefToDisk",
+        "description": "Persist the assembled HTML brief to data/briefs/<tenant>/<briefId>.html.",
+        "config": { "subdir": "briefs", "id_prefix": "brief", "lang": "en" }
+      }
+    ],
+    "actions": [
+      {
+        "order": "1",
+        "name": "buildBrief",
+        "description": "Assemble the HTML brief from the upstream payload, persist, emit BRIEF_GENERATED.",
+        "type": "logic"
+      }
+    ],
+    "triggered_event": ["BRIEF_GENERATED"]
+  }
+]

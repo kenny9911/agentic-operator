@@ -7,7 +7,7 @@ import {
   Icon,
   ModalOverlay,
 } from "@/app/portal/components";
-import { useRaasData } from "@/lib/hooks/data-context";
+import { useTenants } from "@/lib/hooks/useTenants";
 
 const WORKFLOW_TEMPLATES = [
   { id: "raas", name: "RAAS · Recruitment", desc: "22-agent pipeline: sync → JD → match → submit", agents: 22, events: 33, color: "#d0ff00" },
@@ -19,7 +19,13 @@ const WORKFLOW_TEMPLATES = [
 ];
 
 export function NewWorkflowModal({ onClose }: { onClose: () => void }) {
-  const { tenants } = useRaasData();
+  const tenantsQuery = useTenants();
+  // Tenant switcher dropdown. Empty list while the query is in-flight or
+  // when the api is unreachable — chrome.tsx surfaces the api-down banner
+  // so we don't double-warn here.
+  const tenants = (tenantsQuery.data?.items ?? []).filter(
+    (t) => t.archivedAt == null,
+  );
   const [path, setPath] = useState<"blank" | "template" | "import">("template");
   const [name, setName] = useState("");
   const [id, setId] = useState("");
@@ -98,7 +104,7 @@ export function NewWorkflowModal({ onClose }: { onClose: () => void }) {
                 }}
               >
                 {tenants.map((t) => (
-                  <option key={t.id} value={t.id}>
+                  <option key={t.slug} value={t.slug}>
                     {t.name}
                   </option>
                 ))}

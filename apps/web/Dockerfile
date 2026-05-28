@@ -15,7 +15,7 @@
 #   docker build -f apps/web/Dockerfile -t agentic-web:dev .
 #
 # Run:
-#   docker run --rm -p 3500:3500 -e AGENTIC_API_URL=http://api:3501 agentic-web:dev
+#   docker run --rm -p 3599:3599 -e AGENTIC_API_URL=http://api:3501 agentic-web:dev
 
 # --- base ----------------------------------------------------------------
 FROM node:26-slim AS base
@@ -59,7 +59,7 @@ RUN pnpm --filter @agentic/web build
 # --- runtime -------------------------------------------------------------
 FROM node:26-slim AS runtime
 ENV NODE_ENV=production
-ENV PORT=3500
+ENV PORT=3599
 ENV HOSTNAME=0.0.0.0
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN apt-get update \
@@ -76,10 +76,10 @@ COPY --from=build --chown=agentic:agentic /app/apps/web/.next/static /app/apps/w
 COPY --from=build --chown=agentic:agentic /app/apps/web/public /app/apps/web/public
 
 USER agentic
-EXPOSE 3500
+EXPOSE 3599
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+ (process.env.PORT||3500) +'/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" || exit 1
+  CMD node -e "fetch('http://127.0.0.1:'+ (process.env.PORT||3599) +'/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "apps/web/server.js"]

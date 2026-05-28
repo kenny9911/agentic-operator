@@ -34,6 +34,7 @@ import {
   listFleet,
   updateFleetEntry,
 } from "../../services/model-fleet";
+import { listAvailableModels } from "../../services/model-discovery";
 
 function isProviderId(s: string): s is ProviderId {
   return (PROVIDER_IDS as readonly string[]).includes(s);
@@ -154,6 +155,98 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
     const result = await testProviderKey(id, key);
     return reply.ok(result);
   });
+
+  // ── Live model discovery ────────────────────────────────────────────────
+  // The Settings "browse models" picker calls this to populate the checkbox
+  // list. Merges three sources:
+  //   1. live: provider's /models endpoint (when supported + key present)
+  //   2. catalog: PROVIDER_MODEL_CATALOG (provides ctx + pricing metadata)
+  //   3. fleet:  this tenant's already-added entries (so the UI can disable
+  //              checkboxes for models already in the fleet)
+  // When discovery fails or isn't supported, falls back to the catalog so
+  // the user can still pick something.
+  app.get<{ Params: { id: string } }>(
+    "/llm/providers/:id/available-models",
+    async (req, reply) => {
+      const auth = requireAuth(req);
+      const id = req.params.id;
+      if (!isProviderId(id)) {
+        return reply.fail("bad_request", `Unknown provider: ${id}`, 400);
+      }
+      const key = getProviderKey(id, auth.tenantId) ?? "";
+      const live = await listAvailableModels(id, key);
+      const catalog = PROVIDER_MODEL_CATALOG[id];
+      const catalogByName = new Map(catalog.map((m) => [m.name, m]));
+      const fleetSet = new Set(
+        listFleet(auth.tenantSlug)
+          .filter((e) => e.provider === id)
+          .map((e) => e.modelName),
+      );
+
+      type Merged = {
+        id: string;
+        contextLength: number | null;
+        inputPricePerMTok: number | null;
+        outputPricePerMTok: number | null;
+        vision: boolean;
+        tools: boolean;
+        reasoning: boolean;
+        inFleet: boolean;
+        /** Where this row came from. */
+        origin: "live" | "catalog";
+      };
+
+      const merged: Merged[] = [];
+      const seen = new Set<string>();
+
+      // First pass: every live-discovered model (origin=live), with live
+      // values taking precedence over catalog (the upstream is authoritative
+      // for pricing/capabilities). Catalog only fills holes where live
+      // didn't return the field — e.g. plain OpenAI /models has no pricing.
+      for (const m of live.models) {
+        seen.add(m.id);
+        const cat = catalogByName.get(m.id);
+        merged.push({
+          id: m.id,
+          contextLength: m.contextLength ?? cat?.ctx ?? null,
+          inputPricePerMTok: m.inputPricePerMTok ?? cat?.inP ?? null,
+          outputPricePerMTok: m.outputPricePerMTok ?? cat?.outP ?? null,
+          vision: m.vision ?? cat?.vision ?? false,
+          tools: m.tools ?? cat?.tools ?? false,
+          reasoning: cat?.reasoning ?? false,
+          inFleet: fleetSet.has(m.id),
+          origin: "live",
+        });
+      }
+
+      // Second pass: catalog entries that the live list didn't cover. This
+      // ensures we always show at least the curated models even when the
+      // provider can't be queried (no key, network error, unsupported).
+      for (const cat of catalog) {
+        if (seen.has(cat.name)) continue;
+        merged.push({
+          id: cat.name,
+          contextLength: cat.ctx,
+          inputPricePerMTok: cat.inP,
+          outputPricePerMTok: cat.outP,
+          vision: cat.vision,
+          tools: cat.tools,
+          reasoning: cat.reasoning,
+          inFleet: fleetSet.has(cat.name),
+          origin: "catalog",
+        });
+      }
+
+      merged.sort((a, b) => a.id.localeCompare(b.id));
+
+      return reply.ok({
+        provider: id,
+        source: live.source,
+        message: live.message,
+        models: merged,
+      });
+    },
+  );
 
   // ── Model fleet ─────────────────────────────────────────────────────────
   app.get("/llm/fleet", async (req, reply) => {

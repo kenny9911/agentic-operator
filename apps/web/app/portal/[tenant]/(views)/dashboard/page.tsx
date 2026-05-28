@@ -3,20 +3,18 @@
 /**
  * Dashboard — control plane overview (P2-FE-07).
  *
- * Ported from `apps/web/public/portal/views/dashboard.jsx` with Phase 0/1
- * deltas preserved:
- *   - useRaasData() context replaces window.RAAS_* (D-9 → P1-FE-03)
- *   - testRun TEST badge in Active runs table (D-8)
- *   - Live ticker advances on 1.5s clock when liveStream is on
+ * Live data via canonical TanStack hooks:
+ *   - useAgents() — workflow agents
+ *   - useRuns({ limit: 200 }) — recent runs (active filter + 24h aggregates)
+ *   - useEvents({ limit: 200 }) — event ticker + sparkline
+ *   - useTasks() — pending human tasks panel
+ *   - useDag() — workflow stages for the funnel + agent stage indices
+ *   - useHealth() — runtime status footer
  *
- * Layout matches v1_1 dashboard.jsx:60-141:
- *   - 5 KPI cards
- *   - Active runs + Agent activity (1.4fr column)
- *   - Event stream + Pending tasks + Runtime (1fr column)
- *   - Stage funnel (full-width below)
+ * No bootstrap snapshot — every panel reflects the live tenant.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ActorTag,
@@ -30,6 +28,7 @@ import {
   eventTone,
   Th,
   Td,
+  useToast,
   type StatusName,
 } from "@/app/portal/components";
 import {
@@ -39,12 +38,39 @@ import {
   fmtTime,
 } from "@/app/portal/lib/format";
 import { useTenant } from "@/app/portal/lib/use-tenant";
-import { useRaasData } from "@/lib/hooks/data-context";
-import type { SpaAgent } from "@/lib/spa/types";
-import { useRuns, type RunListRow } from "@/lib/hooks/useRuns";
+import {
+  useAgents,
+  useDag,
+  type AgentListRow,
+  type DagAgent,
+} from "@/lib/hooks/useAgents";
+import { useEvents, type EventRow } from "@/lib/hooks/useEvents";
+import { useTasks, type TaskRow } from "@/lib/hooks/useTasks";
+import {
+  useRuns,
+  useCancelRun,
+  type RunListRow,
+} from "@/lib/hooks/useRuns";
 import { useHealth, fmtBytes } from "@/lib/hooks/useHealth";
 
-/** Narrowed view of an event-stream item (the context types it loosely). */
+/**
+ * Stage label catalog — static workflow ontology. The /v1/workflows/dag
+ * payload returns numeric `stage` indices for each agent; this map keeps
+ * the funnel readable. Tenants without staged pipelines get an empty
+ * stages array and the funnel panel hides itself.
+ */
+const STAGE_LABELS: Record<number, string> = {
+  0: "Intake",
+  1: "Analyze",
+  2: "JD",
+  3: "Publish",
+  4: "Resume",
+  5: "Match & Interview",
+  6: "Package",
+  7: "Submit",
+};
+
+/** Narrowed view of an event row for the ticker. */
 interface EventItem {
   id: string;
   name: string;
@@ -54,9 +80,15 @@ interface EventItem {
   source: string;
   sourceTitle: string;
   subject: string;
+  consumers: Array<{
+    runId: string;
+    agentName: string | null;
+    agentTitle: string | null;
+    status: string;
+  }>;
 }
 
-/** Narrowed view of a task row (the context types it loosely). */
+/** Narrowed view of a task row for the pending-tasks panel. */
 interface TaskItem {
   id: string;
   title: string;
@@ -64,34 +96,32 @@ interface TaskItem {
   status: string;
   createdAt: number | null;
   awaitingFrom: string | null;
-  agentId?: string;
   type: string;
 }
 
-function asEventItem(e: Record<string, unknown>): EventItem {
+function fromEventRow(e: EventRow): EventItem {
   return {
-    id: String(e.id ?? ""),
-    name: String(e.name ?? ""),
-    color: String(e.color ?? "muted"),
-    category: String(e.category ?? "agent"),
-    at: typeof e.at === "number" ? e.at : 0,
-    source: String(e.source ?? "external"),
-    sourceTitle: String(e.sourceTitle ?? "External"),
-    subject: String(e.subject ?? ""),
+    id: e.id,
+    name: e.name,
+    color: e.color ?? "muted",
+    category: e.category ?? "agent",
+    at: e.receivedAt ? Date.parse(e.receivedAt) : 0,
+    source: e.sourceAgentName ?? "external",
+    sourceTitle: e.sourceAgentTitle ?? e.sourceAgentName ?? "External",
+    subject: e.subject ?? "",
+    consumers: e.consumers ?? [],
   };
 }
 
-function asTaskItem(t: Record<string, unknown>): TaskItem {
+function fromTaskRow(t: TaskRow): TaskItem {
   return {
-    id: String(t.id ?? ""),
-    title: String(t.title ?? ""),
-    priority: String(t.priority ?? "med"),
-    status: String(t.status ?? "open"),
-    createdAt: typeof t.createdAt === "number" ? t.createdAt : null,
-    awaitingFrom:
-      typeof t.awaitingFrom === "string" ? t.awaitingFrom : null,
-    agentId: typeof t.agentId === "string" ? t.agentId : undefined,
-    type: String(t.type ?? ""),
+    id: t.id,
+    title: t.title,
+    priority: t.priority ?? "med",
+    status: t.status,
+    createdAt: t.createdAt ? Date.parse(t.createdAt) : null,
+    awaitingFrom: t.awaitingRole,
+    type: t.type,
   };
 }
 
@@ -110,56 +140,97 @@ const STATUS_TO_DOT: Record<string, StatusName> = {
 // ─── Page (live tick state + liveStream wiring) ──────────────────────────────
 
 export default function DashboardPage() {
-  const { agents, stages, tasks, eventStream } = useRaasData();
+  const agentsQuery = useAgents();
+  const dagQuery = useDag();
+  const tasksQuery = useTasks();
+  const eventsQuery = useEvents({ limit: 200 });
+  const runsQuery = useRuns({ limit: 200 });
+
+  const agents = agentsQuery.data ?? [];
+  const dagAgents = dagQuery.data?.agents ?? [];
+  // Derive the funnel's stage set from the live DAG: the set of stage
+  // indices actually used by this tenant's agents. Tenants without staged
+  // pipelines get an empty list and the funnel panel hides itself.
+  const stages = useMemo(() => {
+    const used = new Set<number>();
+    for (const a of dagAgents) used.add(a.stage);
+    return Array.from(used)
+      .sort((a, b) => a - b)
+      .map((id) => ({ id, label: STAGE_LABELS[id] ?? `Stage ${id}` }));
+  }, [dagAgents]);
+
   const events = useMemo(
-    () => eventStream.map((e) => asEventItem(e as Record<string, unknown>)),
-    [eventStream],
+    () => (eventsQuery.data ?? []).map(fromEventRow),
+    [eventsQuery.data],
   );
   const taskItems = useMemo(
-    () => tasks.map((t) => asTaskItem(t as Record<string, unknown>)),
-    [tasks],
+    () => (tasksQuery.data ?? []).map(fromTaskRow),
+    [tasksQuery.data],
   );
-
-  // Live run data over TanStack Query — invalidated by useStream SSE.
-  const { data: liveRuns = [] } = useRuns({ limit: 200 });
+  const liveRuns = runsQuery.data ?? [];
 
   // Live-stream toggle proxy — Phase 2 will wire this through Tweaks panel.
   // Falls back to true (matching the v1_1 default) until the toggle exists.
   const [liveStream] = useState(true);
 
+  // First-load gate — render a single empty state until the primary queries
+  // resolve so panels don't flash zero-state placeholders.
+  const isPrimaryLoading =
+    agentsQuery.isLoading || runsQuery.isLoading || eventsQuery.isLoading;
+  const primaryError =
+    agentsQuery.error ?? runsQuery.error ?? eventsQuery.error ?? null;
+
   return (
     <DashboardView
       agents={agents}
+      dagAgents={dagAgents}
       stages={stages}
       tasks={taskItems}
       eventStream={events}
       liveRuns={liveRuns}
       liveStream={liveStream}
+      loading={isPrimaryLoading}
+      error={primaryError}
     />
   );
 }
 
 interface DashboardViewProps {
-  agents: SpaAgent[];
+  agents: AgentListRow[];
+  dagAgents: DagAgent[];
   stages: { id: number; label: string }[];
   tasks: TaskItem[];
   eventStream: EventItem[];
   liveRuns: RunListRow[];
   liveStream: boolean;
+  loading: boolean;
+  error: Error | null;
 }
 
 function DashboardView({
   agents,
+  dagAgents,
   stages,
   tasks,
   eventStream,
   liveRuns,
   liveStream,
+  loading,
+  error,
 }: DashboardViewProps) {
   const tenant = useTenant();
 
-  // Live runs (from /v1/runs) override the snapshot from /api/spa/bootstrap —
-  // they auto-invalidate on every SSE event.
+  // Hydration gate. The dashboard is heavily time-dependent (Date.now() in
+  // sparkline bucketing, fmtAgo/fmtTime in the ticker, the 1.5s `tickerIdx`
+  // interval) and reads react-query state that can differ between SSR and
+  // the first client paint. Rather than scatter `suppressHydrationWarning`
+  // across every consumer, we render a deterministic skeleton until the
+  // component mounts on the client — server HTML and first-client HTML
+  // match exactly, then the real dashboard takes over on the next tick.
+  const [hasMounted, setHasMounted] = useState(false);
+  useEffect(() => setHasMounted(true), []);
+
+  // Live runs (from /v1/runs) auto-invalidate on every SSE event.
   const active = liveRuns.filter((r) => r.status === "running");
   const failed24 = liveRuns.filter((r) => r.status === "failed").length;
   const ok24 = liveRuns.filter((r) => r.status === "ok").length;
@@ -189,7 +260,7 @@ function DashboardView({
   // Per-agent activity over the last hour.
   const agentActivity = useMemo(() => {
     interface Bucket {
-      agent: SpaAgent;
+      agent: AgentListRow;
       runs: number;
       errors: number;
       lastRun: number;
@@ -209,24 +280,35 @@ function DashboardView({
     return Array.from(m.values()).sort((a, b) => b.runs - a.runs);
   }, [agents, liveRuns]);
 
-  // Live ticker state — advances every 1.5s when liveStream is on.
-  const [tickerIdx, setTickerIdx] = useState(0);
-  useEffect(() => {
-    if (!liveStream || eventStream.length === 0) return;
-    const id = setInterval(
-      () => setTickerIdx((i) => (i + 1) % eventStream.length),
-      1500,
-    );
-    return () => clearInterval(id);
-  }, [liveStream, eventStream.length]);
-
+  // Newest-first stable window. The previous implementation rotated
+  // `tickerIdx` every 1.5s and sliced from there, which made the panel
+  // appear to "scroll" even when nothing new was arriving — visually
+  // indistinguishable from a fresh event. The list is now sorted by
+  // received-at and clamped to 14 distinct rows; new events naturally
+  // appear at the top when the underlying query invalidates, and the
+  // brand-new row gets the entry animation (see `latestEventId` below).
   const recentEvents = useMemo(() => {
-    const slice = eventStream.slice(tickerIdx, tickerIdx + 14);
-    if (slice.length < 14) {
-      slice.push(...eventStream.slice(0, 14 - slice.length));
+    if (eventStream.length === 0) return [];
+    const sorted = [...eventStream].sort((a, b) => b.at - a.at);
+    const out: EventItem[] = [];
+    const seen = new Set<string>();
+    for (const e of sorted) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+      if (out.length >= 14) break;
     }
-    return slice;
-  }, [eventStream, tickerIdx]);
+    return out;
+  }, [eventStream]);
+
+  // Track only the most recently arrived event id so we can animate just
+  // that row, not the whole list. Updated when the head of the sorted
+  // window changes — i.e. only on a real new arrival, not on every render.
+  const [latestEventId, setLatestEventId] = useState<string | null>(null);
+  useEffect(() => {
+    const head = recentEvents[0]?.id ?? null;
+    if (head && head !== latestEventId) setLatestEventId(head);
+  }, [recentEvents, latestEventId]);
 
   const tokensTotal = useMemo(
     () =>
@@ -238,11 +320,79 @@ function DashboardView({
   );
   const tokensEstCost = (tokensTotal / 1000) * 0.01;
 
+  // Cancel mutation — used by the per-row cancel button and the
+  // panel-level "Cancel all". `useCancelRun` already invalidates the runs
+  // list + counts on settle, so panels repaint without manual refetch.
+  const cancelRun = useCancelRun();
+  const toast = useToast();
+
+  const handleCancel = useCallback(
+    (runId: string) => {
+      cancelRun.mutate(runId, {
+        onSuccess: (data) => {
+          toast({
+            tone: data.cancelled ? "signal" : "default",
+            title: data.cancelled
+              ? `Run ${runId} cancelling`
+              : `Run ${runId} already ${data.status}`,
+            description: data.note,
+          });
+        },
+        onError: (err) => {
+          toast({
+            tone: "red",
+            title: `Cancel failed`,
+            description: err instanceof Error ? err.message : String(err),
+          });
+        },
+      });
+    },
+    [cancelRun, toast],
+  );
+
+  const handleCancelAll = useCallback(() => {
+    if (active.length === 0) return;
+    const ids = active.map((r) => r.id);
+    toast({
+      tone: "amber",
+      title: `Cancelling ${ids.length} active run${ids.length === 1 ? "" : "s"}`,
+      description: ids.slice(0, 4).join(", ") + (ids.length > 4 ? "…" : ""),
+    });
+    for (const id of ids) cancelRun.mutate(id);
+  }, [active, cancelRun, toast]);
+
+  // dagAgents is currently only used to derive `stages`. Marking the prop as
+  // intentionally unread keeps the contract documented without introducing
+  // an unused-variable lint warning.
+  void dagAgents;
+
+  // First-paint skeleton — see `hasMounted` comment above. We deliberately
+  // mirror the loading branch below so the eventual hydrated paint replaces
+  // a friendly empty state rather than a flash of nothing.
+  if (!hasMounted) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        <ViewHeader
+          title="Dashboard"
+          subtitle="Live state of all agent runs, events, and queues across the active tenant."
+          badge={
+            <Badge tone="signal">
+              <span className="live-dot" style={{ width: 5, height: 5 }} /> LIVE
+            </Badge>
+          }
+        />
+        <div style={{ padding: 20 }}>
+          <Empty title="Loading dashboard…" hint="" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <ViewHeader
         title="Dashboard"
-        subtitle="Live state of the RAAS workload. All agent runs, events, and queues across the active tenant."
+        subtitle="Live state of all agent runs, events, and queues across the active tenant."
         badge={
           <Badge tone="signal">
             <span className="live-dot" style={{ width: 5, height: 5 }} /> LIVE
@@ -259,6 +409,20 @@ function DashboardView({
           </>
         }
       />
+
+      {error && (
+        <div style={{ padding: 20 }}>
+          <Empty
+            title="Failed to load dashboard"
+            hint={error.message || "api unreachable on :3501"}
+          />
+        </div>
+      )}
+      {!error && loading && agents.length === 0 && liveRuns.length === 0 && (
+        <div style={{ padding: 20 }}>
+          <Empty title="Loading dashboard…" hint="" />
+        </div>
+      )}
 
       <div style={{ flex: 1, overflow: "auto", padding: 20 }}>
         {/* Top KPI row */}
@@ -281,7 +445,7 @@ function DashboardView({
           <KPICard
             label="Events / hr"
             value={fmtNum(eventStream.length)}
-            sub="+12% vs 24h avg"
+            sub={`${fmtNum(eventStream.length)} in window`}
             tone="up"
             spark={buckets}
           />
@@ -324,18 +488,36 @@ function DashboardView({
               title="Active runs"
               subtitle={`${active.length} running`}
               action={
-                <Link
-                  href={`/portal/${tenant}/runs` as never}
-                  style={{ textDecoration: "none" }}
-                >
-                  <Button small icon="external" tone="ghost">
-                    View all
-                  </Button>
-                </Link>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {active.length > 0 && (
+                    <Button
+                      small
+                      icon="x"
+                      tone="danger"
+                      onClick={handleCancelAll}
+                      disabled={cancelRun.isPending}
+                    >
+                      Cancel all
+                    </Button>
+                  )}
+                  <Link
+                    href={`/portal/${tenant}/runs` as never}
+                    style={{ textDecoration: "none" }}
+                  >
+                    <Button small icon="external" tone="ghost">
+                      View all
+                    </Button>
+                  </Link>
+                </div>
               }
               padded={false}
             >
-              <RunTable rows={active} tenant={tenant} />
+              <RunTable
+                rows={active}
+                tenant={tenant}
+                onCancel={handleCancel}
+                cancelPendingIds={cancelRun.isPending ? cancelRun.variables : undefined}
+              />
             </Panel>
 
             <Panel
@@ -374,7 +556,11 @@ function DashboardView({
               padded={false}
               style={{ minHeight: 320 }}
             >
-              <EventTicker events={recentEvents} live={liveStream} />
+              <EventTicker
+                events={recentEvents}
+                live={liveStream}
+                latestEventId={latestEventId}
+              />
             </Panel>
 
             <Panel
@@ -401,12 +587,16 @@ function DashboardView({
           </div>
         </div>
 
-        {/* Bottom: stage funnel */}
-        <div style={{ marginTop: 12 }}>
-          <Panel title="RAAS funnel · last 24h" padded>
-            <StageFunnel stages={stages} />
-          </Panel>
-        </div>
+        {/* Bottom: stage funnel — only show if the tenant has stages defined.
+            Avoids leaking the RAAS-specific funnel title for tenants that
+            don't have a staged pipeline (e.g. northwind, robohire). */}
+        {stages.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <Panel title="Stage funnel · last 24h" padded>
+              <StageFunnel stages={stages} />
+            </Panel>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -499,7 +689,17 @@ function KPICard({
 
 // ─── Active runs table ───────────────────────────────────────────────────────
 
-function RunTable({ rows, tenant }: { rows: RunListRow[]; tenant: string }) {
+function RunTable({
+  rows,
+  tenant,
+  onCancel,
+  cancelPendingIds,
+}: {
+  rows: RunListRow[];
+  tenant: string;
+  onCancel?: (id: string) => void;
+  cancelPendingIds?: string;
+}) {
   if (rows.length === 0)
     return <Empty title="No active runs" hint="Quiet — system idle" />;
   return (
@@ -519,6 +719,7 @@ function RunTable({ rows, tenant }: { rows: RunListRow[]; tenant: string }) {
           <col style={{ width: 88 }} />
           <col style={{ width: 150 }} />
           <col style={{ width: 60 }} />
+          {onCancel && <col style={{ width: 78 }} />}
         </colgroup>
         <thead>
           <tr
@@ -535,11 +736,18 @@ function RunTable({ rows, tenant }: { rows: RunListRow[]; tenant: string }) {
             <Th>Subject</Th>
             <Th>Step</Th>
             <Th style={{ textAlign: "right" }}>Dur</Th>
+            {onCancel && <Th style={{ textAlign: "right" }}>Action</Th>}
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <RunTableRow key={r.id} row={r} tenant={tenant} />
+            <RunTableRow
+              key={r.id}
+              row={r}
+              tenant={tenant}
+              onCancel={onCancel}
+              cancelling={cancelPendingIds === r.id}
+            />
           ))}
         </tbody>
       </table>
@@ -547,7 +755,17 @@ function RunTable({ rows, tenant }: { rows: RunListRow[]; tenant: string }) {
   );
 }
 
-function RunTableRow({ row, tenant }: { row: RunListRow; tenant: string }) {
+function RunTableRow({
+  row,
+  tenant,
+  onCancel,
+  cancelling,
+}: {
+  row: RunListRow;
+  tenant: string;
+  onCancel?: (id: string) => void;
+  cancelling?: boolean;
+}) {
   // Detect a TEST run — RunListRow doesn't surface testRun yet (Phase 2
   // backend wiring lands in Cleanup); falling back to the SPA snapshot row.
   const testRun = (row as { testRun?: boolean }).testRun === true;
@@ -650,6 +868,19 @@ function RunTableRow({ row, tenant }: { row: RunListRow; tenant: string }) {
           {fmtDur(row.durationMs)}
         </span>
       </Td>
+      {onCancel && (
+        <Td style={{ textAlign: "right" }}>
+          <Button
+            small
+            icon="x"
+            tone="danger"
+            onClick={() => onCancel(row.id)}
+            disabled={cancelling}
+          >
+            {cancelling ? "…" : "Cancel"}
+          </Button>
+        </Td>
+      )}
     </tr>
   );
 }
@@ -657,7 +888,7 @@ function RunTableRow({ row, tenant }: { row: RunListRow; tenant: string }) {
 // ─── Agent activity ──────────────────────────────────────────────────────────
 
 interface AgentActivity {
-  agent: SpaAgent;
+  agent: AgentListRow;
   runs: number;
   errors: number;
   lastRun: number;
@@ -686,7 +917,7 @@ function AgentActivityGrid({
         return (
           <Link
             key={agent.id}
-            href={`/portal/${tenant}/agents/${agent.id}` as never}
+            href={`/portal/${tenant}/agents/${agent.kebabId}` as never}
             style={{
               padding: "10px 12px",
               background: "var(--panel)",
@@ -769,63 +1000,134 @@ function AgentActivityGrid({
 function EventTicker({
   events,
   live,
+  latestEventId,
 }: {
   events: EventItem[];
   live: boolean;
+  latestEventId: string | null;
 }) {
   return (
     <div style={{ maxHeight: 380, overflow: "auto" }}>
-      {events.map((e, i) => (
+      {events.map((e) => (
         <div
-          key={e.id + ":" + i}
+          key={e.id}
           style={{
             display: "grid",
             gridTemplateColumns: "62px 1fr auto",
             gap: 10,
-            alignItems: "center",
+            alignItems: "start",
             padding: "8px 14px",
             borderBottom: "1px solid var(--border)",
             fontSize: 12,
-            animation: i === 0 && live ? "tick 0.4s ease-out" : "none",
+            // Animate only the genuinely-new head row, and only when live
+            // streaming is enabled. Older rows are static — no idle scroll.
+            animation:
+              live && e.id === latestEventId ? "tick 0.4s ease-out" : "none",
           }}
         >
           <span
             className="mono"
-            style={{ color: "var(--text-3)", fontSize: 10.5 }}
+            style={{ color: "var(--text-3)", fontSize: 10.5, marginTop: 2 }}
           >
             {fmtTime(e.at)}
           </span>
           <div
             style={{
               display: "flex",
-              alignItems: "center",
-              gap: 8,
+              flexDirection: "column",
+              gap: 4,
               minWidth: 0,
             }}
           >
-            <Badge tone={eventTone(e.color)} style={{ fontSize: 9.5 }}>
-              {e.name}
-            </Badge>
-            <span style={{ color: "var(--text-3)", fontSize: 11 }}>·</span>
-            <span
+            <div
               style={{
-                color: "var(--text-2)",
-                fontSize: 11,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                minWidth: 0,
               }}
             >
-              {e.sourceTitle}
-            </span>
+              <Badge tone={eventTone(e.color)} style={{ fontSize: 9.5 }}>
+                {e.name}
+              </Badge>
+              <span style={{ color: "var(--text-3)", fontSize: 11 }}>·</span>
+              <span
+                style={{
+                  color: "var(--text-2)",
+                  fontSize: 11,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {e.sourceTitle}
+              </span>
+            </div>
+            <EventConsumerStrip consumers={e.consumers} />
           </div>
           <span
             className="mono"
-            style={{ color: "var(--text-3)", fontSize: 10.5 }}
+            style={{ color: "var(--text-3)", fontSize: 10.5, marginTop: 2 }}
           >
             {e.subject}
           </span>
         </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Renders the subscriber chips under each event row. Three states:
+ *   - no consumers at all  → muted "no subscribers" (event went nowhere)
+ *   - some still running   → animated dot per consumer
+ *   - all terminal         → "✓ consumed by …" with the final status tone
+ *
+ * Status mapping mirrors STATUS_TO_DOT at the top of this file.
+ */
+function EventConsumerStrip({
+  consumers,
+}: {
+  consumers: EventItem["consumers"];
+}) {
+  if (!consumers || consumers.length === 0) {
+    return (
+      <span style={{ fontSize: 10.5, color: "var(--text-4)" }}>
+        no subscribers
+      </span>
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 10.5,
+        color: "var(--text-3)",
+      }}
+    >
+      <span>consumed by</span>
+      {consumers.map((c) => (
+        <span
+          key={c.runId}
+          title={`${c.agentName ?? "(unknown agent)"} · run ${c.runId} · ${c.status}`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "1px 6px",
+            borderRadius: 3,
+            border: "1px solid var(--border)",
+            background: "var(--panel-2)",
+          }}
+        >
+          <StatusDot status={STATUS_TO_DOT[c.status] ?? "idle"} size={6} />
+          <span style={{ color: "var(--text-2)" }}>
+            {c.agentTitle || c.agentName || "agent"}
+          </span>
+        </span>
       ))}
     </div>
   );
@@ -1010,10 +1312,8 @@ function SystemHealth() {
 // ─── Stage funnel ────────────────────────────────────────────────────────────
 
 function StageFunnel({ stages }: { stages: { id: number; label: string }[] }) {
-  // FE-P0-4 sub-fix 4a: removed hardcoded `[1842, 1731, …]` magic numbers.
   // Render 0 per stage until the forthcoming /v1/funnel endpoint ships.
-  // `useRaasData()` does not currently expose funnel counts (see
-  // lib/hooks/data-context.tsx — RaasData has no `funnel` field).
+  // None of the live hooks expose per-stage funnel counts today.
   const counts = stages.map(() => 0);
   const max = 1;
   if (stages.length === 0) {

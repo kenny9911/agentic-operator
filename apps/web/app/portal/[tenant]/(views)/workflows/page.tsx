@@ -12,12 +12,17 @@
  *   - NewWorkflowModal (template / blank / import paths)
  *   - ImportManifestModal hook
  *
- * Data source: useRaasData() (Phase 1 P1-FE-03). Stages, agents, events,
- * eventStream all come from one snapshot bootstrap. Live updates (run.*, event.emitted)
- * flow through useStream() at the layout root.
+ * Data sources (all live, no bootstrap snapshot):
+ *   - useDag()             → agents + workflowVersion (from /v1/workflows/dag)
+ *   - useEvents({limit})   → event catalog metadata (color/category) +
+ *                            live event stream for the inspector
+ *
+ * Stages are derived from the live DAG's `stage` indices (see STAGE_LABELS
+ * below) so each tenant's funnel reflects its own agents. Live updates
+ * (run.*, event.emitted) flow through useStream() at the layout root.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ActorTag,
@@ -28,18 +33,18 @@ import {
   ViewHeader,
   useToast,
 } from "@/app/portal/components";
-import { useRaasData } from "@/lib/hooks/data-context";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { useDirty } from "@/app/portal/lib/dirty-context";
 import {
   CANVAS_H,
   CANVAS_W,
   COL_W,
-  LAYOUT,
   NODE_H,
   NODE_W,
   PAD_X,
+  autoPackLayout,
   colorVar,
+  getLayout,
   nodePos,
 } from "@/app/portal/components/workflows/layout";
 import {
@@ -49,6 +54,7 @@ import {
   EditDraftBanner,
   EditToolbar,
   EventInspector,
+  type EventCatalogItem,
 } from "@/app/portal/components/workflows/inspectors";
 import { NewWorkflowModal } from "@/app/portal/components/workflows/NewWorkflowModal";
 import { ImportManifestModal } from "@/app/portal/components/import-manifest/ImportManifestModal";
@@ -65,6 +71,25 @@ import {
   type WorkflowDraft,
 } from "@/app/portal/components/workflows/draft";
 import { useDeployManifest } from "@/lib/hooks/useManifest";
+import { useDag } from "@/lib/hooks/useAgents";
+import { useEvents } from "@/lib/hooks/useEvents";
+
+/**
+ * Stage label catalog — static workflow ontology. Mirrors the dashboard's
+ * STAGE_LABELS map (see `dashboard/page.tsx`) so the workflow funnel
+ * column headers match the dashboard funnel labels. Tenants whose agents
+ * use stage indices outside this map get a generic "Stage N" label.
+ */
+const STAGE_LABELS: Record<number, string> = {
+  0: "Intake",
+  1: "Analyze",
+  2: "JD",
+  3: "Publish",
+  4: "Resume",
+  5: "Match & Interview",
+  6: "Package",
+  7: "Submit",
+};
 
 interface EdgeMeta {
   src: string;
@@ -73,11 +98,64 @@ interface EdgeMeta {
 }
 
 export default function WorkflowsPage() {
-  const { agents: baseAgents, events, stages } = useRaasData();
   const router = useRouter();
   const tenant = useTenant();
   const toast = useToast();
   const deploy = useDeployManifest();
+  // Real DAG metadata (workflowVersion) — replaces the previously hardcoded
+  // "raas · v2026.05.16-a" badge so the header reflects the live tenant
+  // workflow. The DAG payload is also the source of truth for the agent
+  // list rendered on the canvas.
+  const dagQuery = useDag();
+  const workflowVersion = dagQuery.data?.workflowVersion ?? "";
+  const baseAgents = useMemo(
+    () => dagQuery.data?.agents ?? [],
+    [dagQuery.data?.agents],
+  );
+
+  // Live event catalog — `/v1/events` dedup'd by name so the workflow's
+  // event-color map and inspector "available events" hint always reflect
+  // what's actually been emitted (plus what the manifest declares — agents
+  // surface their emit/trigger names through the DAG payload regardless of
+  // whether the event has ever fired).
+  const eventsQuery = useEvents({ limit: 200 });
+  const events = useMemo<EventCatalogItem[]>(() => {
+    const map = new Map<string, EventCatalogItem>();
+    // Seed from the event ledger so colors/categories that the api has seen
+    // win over a derived fallback.
+    for (const row of eventsQuery.data ?? []) {
+      if (map.has(row.name)) continue;
+      map.set(row.name, {
+        name: row.name,
+        color: row.color ?? "muted",
+        category: row.category ?? "agent",
+      });
+    }
+    // Also include every event referenced by an agent's triggers/emits —
+    // tenants whose workflow hasn't fired any events yet still need their
+    // event names available to the inspector legend.
+    for (const a of baseAgents) {
+      for (const n of [...a.triggers, ...a.emits]) {
+        if (map.has(n)) continue;
+        map.set(n, { name: n, color: "muted", category: "agent" });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+  }, [eventsQuery.data, baseAgents]);
+
+  // Derive the funnel's stage set from the live DAG: the set of stage
+  // indices actually used by this tenant's agents. Tenants without staged
+  // pipelines (every agent at stage 0 or 99) collapse to a single entry
+  // and the canvas hides the per-stage column dividers naturally.
+  const stages = useMemo(() => {
+    const used = new Set<number>();
+    for (const a of baseAgents) used.add(a.stage);
+    return Array.from(used)
+      .sort((a, b) => a - b)
+      .map((id) => ({ id, label: STAGE_LABELS[id] ?? `Stage ${id}` }));
+  }, [baseAgents]);
 
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
@@ -89,6 +167,11 @@ export default function WorkflowsPage() {
   const [showImport, setShowImport] = useState(false);
   // Live stream — placeholder for tweaks-panel wiring (Phase 2).
   const liveStream = true;
+  // Scroll container for the canvas viewport. The canvas is wider than the
+  // viewport when LAYOUT places nodes deep into the stage grid; this ref
+  // lets us scroll the leftmost node into view after data loads so the
+  // user actually sees their imported workflow.
+  const canvasScrollRef = useRef<HTMLDivElement | null>(null);
 
   // While editing, the canvas reads the *applied* draft so the operator
   // sees their changes immediately. Outside edit mode it's the bootstrap.
@@ -176,6 +259,25 @@ export default function WorkflowsPage() {
     }
   }
 
+  // Auto-pack any agents whose kebab-id isn't in the hand-tuned LAYOUT map
+  // (the LAYOUT only covers RAAS). Pure derived state — same `agents` ->
+  // same fallback positions; existing LAYOUT entries always win in
+  // `getLayout` so RAAS visual fidelity is unaffected. We key entirely on
+  // `kebabId` so the LAYOUT map (whose keys are kebab slugs like "1-1" or
+  // "matcher-agent") and the auto-packed fallback share the same id space.
+  const autoFallback = useMemo(
+    () =>
+      autoPackLayout(
+        agents.map((a) => ({
+          id: a.kebabId,
+          stage: a.stage ?? 0,
+          triggers: a.triggers ?? [],
+          emits: a.emits ?? [],
+        })),
+      ),
+    [agents],
+  );
+
   // Build edges: for each agent's emitted event, find listeners.
   const edges = useMemo<EdgeMeta[]>(() => {
     const out: EdgeMeta[] = [];
@@ -183,14 +285,21 @@ export default function WorkflowsPage() {
       (src.emits || []).forEach((evName) => {
         const listeners = agents.filter((a) => a.triggers.includes(evName));
         listeners.forEach((dst) => {
-          if (LAYOUT[src.id] && LAYOUT[dst.id]) {
-            out.push({ src: src.id, dst: dst.id, event: evName });
+          // Edge only renders when BOTH endpoints have a known position —
+          // hand-tuned (LAYOUT) or auto-packed (autoFallback). For RAAS
+          // this never falls through to the auto path; for other tenants
+          // the auto path supplies both endpoints.
+          if (
+            getLayout(src.kebabId, autoFallback) &&
+            getLayout(dst.kebabId, autoFallback)
+          ) {
+            out.push({ src: src.kebabId, dst: dst.kebabId, event: evName });
           }
         });
       });
     });
     return out;
-  }, [agents]);
+  }, [agents, autoFallback]);
 
   const evColor = useMemo(() => {
     const m: Record<string, string> = {};
@@ -227,6 +336,27 @@ export default function WorkflowsPage() {
   }, [selectedAgent, selectedEvent, edges]);
 
   const dim = Boolean(selectedAgent || selectedEvent);
+
+  // After data loads, scroll the canvas so the leftmost node is visible.
+  // The canvas reserves room for all RAAS stages (0..7) at fixed COL_W;
+  // a small workflow with only stage-5 nodes would otherwise render past
+  // the viewport's right edge and look empty. Only nudges scroll when the
+  // canvas is still at the leftmost position so we don't clobber a
+  // user-initiated scroll on subsequent data updates.
+  useEffect(() => {
+    const el = canvasScrollRef.current;
+    if (!el || el.scrollLeft !== 0) return;
+    const positioned = agents
+      .map((a) => getLayout(a.kebabId, autoFallback))
+      .filter((p): p is { stage: number; lane: number } => Boolean(p));
+    if (positioned.length === 0) return;
+    const minStage = positioned.reduce(
+      (acc, p) => Math.min(acc, p.stage),
+      Number.POSITIVE_INFINITY,
+    );
+    const targetX = Math.max(0, PAD_X + minStage * COL_W - 40);
+    if (targetX > 0) el.scrollLeft = targetX;
+  }, [agents, autoFallback]);
 
   function navAgent(id: string) {
     router.push(`/portal/${tenant}/agents/${id}` as never);
@@ -271,19 +401,19 @@ export default function WorkflowsPage() {
         subtitle={
           editing ? (
             <>
-              Editing draft of <span className="mono" style={{ color: "var(--text)" }}>raas</span> · changes won&apos;t affect live runs until you deploy.
+              Editing draft of <span className="mono" style={{ color: "var(--text)" }}>{tenant}</span> · changes won&apos;t affect live runs until you deploy.
             </>
           ) : (
-            "The RAAS agent graph — nodes are agents, edges are events. Click any node or event to trace its flow."
+            "Agent graph — nodes are agents, edges are events. Click any node or event to trace its flow."
           )
         }
         badge={
           editing ? (
             <Badge tone="amber">
-              <Icon name="alert" size={9} /> DRAFT · raas@2026.05.18-draft
+              <Icon name="alert" size={9} /> DRAFT · {tenant}
             </Badge>
           ) : (
-            <Badge tone="muted">raas · v2026.05.16-a</Badge>
+            <Badge tone="muted">{tenant}{workflowVersion ? ` · ${workflowVersion}` : ""}</Badge>
           )
         }
         action={
@@ -366,6 +496,7 @@ export default function WorkflowsPage() {
       >
         {/* Canvas */}
         <div
+          ref={canvasScrollRef}
           style={{
             position: "relative",
             overflow: "auto",
@@ -456,8 +587,8 @@ export default function WorkflowsPage() {
                 ))}
               </defs>
               {edges.map((e, i) => {
-                const s = nodePos(e.src);
-                const d = nodePos(e.dst);
+                const s = nodePos(e.src, autoFallback);
+                const d = nodePos(e.dst, autoFallback);
                 const sx = s.x + NODE_W;
                 const sy = s.y + NODE_H / 2;
                 const dx = d.x;
@@ -515,12 +646,12 @@ export default function WorkflowsPage() {
             {/* Agent nodes */}
             <div style={{ position: "absolute", top: 30, left: 0, width: CANVAS_W, height: CANVAS_H }}>
               {agents.map((a) => {
-                const p = nodePos(a.id);
-                const isSel = selectedAgent === a.id;
-                const isHi = highlighted.nodes.has(a.id);
+                const p = nodePos(a.kebabId, autoFallback);
+                const isSel = selectedAgent === a.kebabId;
+                const isHi = highlighted.nodes.has(a.kebabId);
                 const showDim = dim && !isHi;
-                const isAdded = editing && (a.id === "10-1" || a.id === "14-1");
-                const isModified = editing && (a.id === "2" || a.id === "12");
+                const isAdded = editing && (a.kebabId === "10-1" || a.kebabId === "14-1");
+                const isModified = editing && (a.kebabId === "2" || a.kebabId === "12");
                 const borderColor = isSel
                   ? "var(--signal)"
                   : isAdded
@@ -536,15 +667,15 @@ export default function WorkflowsPage() {
                   : isModified
                     ? ", draft modification"
                     : "";
-                const nodeLabel = `${a.actor} node: ${a.title}, id ${a.id}${stateSuffix}`;
+                const nodeLabel = `${a.actor} node: ${a.title}, id ${a.kebabId}${stateSuffix}`;
                 return (
                   <button
-                    key={a.id}
+                    key={a.kebabId}
                     aria-label={nodeLabel}
                     aria-pressed={isSel}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setSelectedAgent(isSel ? null : a.id);
+                      setSelectedAgent(isSel ? null : a.kebabId);
                       setSelectedEvent(null);
                     }}
                     style={{
@@ -579,7 +710,7 @@ export default function WorkflowsPage() {
                           color: "var(--text-3)",
                         }}
                       >
-                        {a.id}
+                        {a.kebabId}
                       </span>
                     </div>
                     <div
@@ -636,7 +767,7 @@ export default function WorkflowsPage() {
           {selectedAgent && editing ? (
             <AgentEditor
               agent={
-                agents.find((a) => a.id === selectedAgent) ?? agents[0]!
+                agents.find((a) => a.kebabId === selectedAgent) ?? agents[0]!
               }
               events={events}
               draft={draft.agents[selectedAgent]}
@@ -671,7 +802,7 @@ export default function WorkflowsPage() {
             />
           ) : selectedAgent ? (
             <AgentInspector
-              agent={agents.find((a) => a.id === selectedAgent)}
+              agent={agents.find((a) => a.kebabId === selectedAgent)}
               onClose={() => setSelectedAgent(null)}
               onOpenFull={() => navAgent(selectedAgent)}
             />

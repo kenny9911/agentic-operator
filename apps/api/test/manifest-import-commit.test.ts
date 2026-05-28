@@ -20,10 +20,10 @@ import {
   agents,
   agentVersions,
   apiTokens,
+  auditLog,
   deployments,
   deployments as deploymentsTable,
   eventListeners,
-  events,
   getDb,
   tenants,
   workflows,
@@ -207,12 +207,17 @@ describe("manifest-import: commit mode", () => {
       }
     }
 
-    // WORKFLOW_DEPLOYED audit event
+    // Manifest-commit audit row. The `events` table is reserved for the
+    // Inngest ledger now (see manifest-import.ts §Observability); commit
+    // audit traffic lives in `audit_log` with action="manifest.import.commit".
     const auditEv = db
       .select()
-      .from(events)
+      .from(auditLog)
       .where(
-        and(eq(events.tenantId, tenantId), eq(events.name, "WORKFLOW_DEPLOYED")),
+        and(
+          eq(auditLog.tenantId, tenantId),
+          eq(auditLog.action, "manifest.import.commit"),
+        ),
       )
       .all();
     expect(auditEv.length).toBeGreaterThanOrEqual(1);
@@ -252,5 +257,162 @@ describe("manifest-import: commit mode", () => {
       )
       .all();
     expect(live).toHaveLength(1);
+  });
+
+  // Regression: re-validate + re-commit of an identical-content manifest
+  // used to crash on `SQLITE_CONSTRAINT_UNIQUE:
+  // workflow_versions.workflow_id, workflow_versions.version`. The pending
+  // wfv's promotion UPDATE collided with the prior commit's `auto-<hash>`
+  // row. The fix redirects the pending deployment at the existing wfv and
+  // drops the orphan pending wfv inside the same atomic tx.
+  it("re-validate + re-commit of an identical manifest reuses the prior wfv", async () => {
+    const workflow = await loadFixture("happy-v2.json");
+    const db = getDb();
+
+    // Ensure prior live wfv exists with version auto-<hash>.
+    const priorLive = db
+      .select()
+      .from(deployments)
+      .where(
+        and(
+          eq(deployments.tenantId, tenantId),
+          eq(deployments.target, "workflow"),
+          eq(deployments.status, "live"),
+        ),
+      )
+      .all()[0]!;
+    const priorWfvId = priorLive.versionId;
+    const priorWfvRow = db
+      .select()
+      .from(workflowVersions)
+      .where(eq(workflowVersions.id, priorWfvId))
+      .all()[0]!;
+    expect(priorWfvRow.version).toMatch(/^auto-/);
+
+    // Phase A: re-validate creates a NEW pending wfv with `pending-<dpl>`.
+    const v = await env.fetch(`/v1/tenants/${slug}/manifest-import`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "validate", workflow }),
+    });
+    expect(v.status).toBe(200);
+    const vBody = (await v.json()) as {
+      ok: boolean;
+      data: { deployment_id: string; workflow_version_id: string };
+    };
+    const newDpl = vBody.data.deployment_id;
+    const pendingWfvId = vBody.data.workflow_version_id;
+    expect(pendingWfvId).not.toBe(priorWfvId);
+    const pendingRow = db
+      .select()
+      .from(workflowVersions)
+      .where(eq(workflowVersions.id, pendingWfvId))
+      .all()[0]!;
+    expect(pendingRow.version).toBe(`pending-${newDpl}`);
+
+    // Phase B: commit. Pre-fix this returned 500 with the UNIQUE error.
+    const c = await env.fetch(`/v1/tenants/${slug}/manifest-import`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "commit",
+        workflow,
+        deployment_id: newDpl,
+        confirm_overwrite: true,
+      }),
+    });
+    expect(c.status).toBe(200);
+    const cBody = (await c.json()) as CommitEnvelope;
+    expect(cBody.ok).toBe(true);
+    expect(cBody.data!.ok).toBe(true);
+    // The commit should redirect at the existing wfv, not the orphan pending.
+    expect(cBody.data!.workflow_version_id).toBe(priorWfvId);
+    expect(cBody.data!.deployment_id).toBe(newDpl);
+    expect(cBody.data!.prior_deployment_id).toBe(priorLive.id);
+
+    // The orphaned pending wfv must be gone (cascade-safe — no agent_versions
+    // had been written against it yet).
+    const orphan = db
+      .select()
+      .from(workflowVersions)
+      .where(eq(workflowVersions.id, pendingWfvId))
+      .all();
+    expect(orphan).toHaveLength(0);
+
+    // Still exactly one live deployment.
+    const live = db
+      .select()
+      .from(deployments)
+      .where(
+        and(
+          eq(deployments.tenantId, tenantId),
+          eq(deployments.target, "workflow"),
+          eq(deployments.status, "live"),
+        ),
+      )
+      .all();
+    expect(live).toHaveLength(1);
+    expect(live[0]!.versionId).toBe(priorWfvId);
+  });
+
+  // Regression: a `skip` resolution on an agent-level structural blocker
+  // used to be a no-op in `applyResolutions`, so the re-lint at commit time
+  // reproduced the orphan_actor / broken_subflow block and the deploy was
+  // refused with the bare "commit refused" line. The fix drops the agent
+  // at `agents[N]` whenever the resolution path matches that prefix,
+  // matching the wizard's "Skip agent · don't import" chip semantics.
+  it("skip resolution on agents[N] drops the agent and commit succeeds", async () => {
+    const workflow = await loadFixture("orphan-plus-happy.json");
+
+    // Sanity: a raw commit (no resolutions) is refused with orphan_actor.
+    const refused = await env.fetch(`/v1/tenants/${slug}/manifest-import`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "commit",
+        workflow,
+        confirm_overwrite: true,
+      }),
+    });
+    expect(refused.status).toBe(400);
+    const refusedBody = (await refused.json()) as {
+      ok: boolean;
+      error?: { code?: string };
+    };
+    expect(refusedBody.ok).toBe(false);
+    expect(refusedBody.error?.code).toBe("blocking_issues");
+
+    // With a `skip` resolution at agents[0].tool_use the commit should land.
+    const res = await env.fetch(`/v1/tenants/${slug}/manifest-import`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "commit",
+        workflow,
+        confirm_overwrite: true,
+        conflict_resolutions: [
+          { path: "agents[0].tool_use", action: "skip" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CommitEnvelope;
+    expect(body.ok).toBe(true);
+
+    // Only the non-orphan agent should land in agent_versions for this wfv.
+    const db = getDb();
+    const wfvId = body.data!.workflow_version_id;
+    const agvRows = db
+      .select({ agentId: agentVersions.agentId })
+      .from(agentVersions)
+      .where(eq(agentVersions.workflowVersionId, wfvId))
+      .all();
+    expect(agvRows).toHaveLength(1);
+    const survivor = db
+      .select({ kebabId: agents.kebabId })
+      .from(agents)
+      .where(eq(agents.id, agvRows[0]!.agentId))
+      .all()[0]!;
+    expect(survivor.kebabId).toBe("agent-ok");
   });
 });

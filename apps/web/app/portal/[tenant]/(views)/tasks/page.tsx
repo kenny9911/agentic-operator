@@ -3,10 +3,12 @@
 /**
  * Tasks — human-in-the-loop inbox + per-task review surface (P2-FE-12).
  *
- * Ported from `apps/web/public/portal/views/tasks.jsx`. Preserves ALL 6
- * payload renderers (audit 01 §4.6):
+ * Preserves ALL 6 payload renderers (audit 01 §4.6):
  *   - jdReview / packageReview / resumeFix / requirementReClarification
  *     / packageSupplement / manualPublish
+ *
+ * Live data via canonical TanStack hooks (useTasks + useAgents). No
+ * bootstrap snapshot.
  */
 
 import { useMemo, useState } from "react";
@@ -22,11 +24,10 @@ import {
   FilterChip,
 } from "@/app/portal/components";
 import { fmtAgo } from "@/app/portal/lib/format";
-import { useTasks } from "@/lib/hooks/useTasks";
-import { useRaasData } from "@/lib/hooks/data-context";
-import type { SpaAgent } from "@/lib/spa/types";
+import { useTasks, type TaskRow as ApiTaskRow } from "@/lib/hooks/useTasks";
+import { useDag, type DagAgent } from "@/lib/hooks/useAgents";
 
-// Local narrow types for the task records (the API/context shape is loose).
+// Local narrow types for the task records the page renders.
 interface TaskItem {
   id: string;
   type: string;
@@ -35,51 +36,38 @@ interface TaskItem {
   status: string;
   createdAt: number | null;
   awaitingFrom: string | null;
-  agentId?: string;
   payload: Record<string, unknown>;
 }
 
-function fromApiOrBootstrap(t: Record<string, unknown>): TaskItem {
-  const createdRaw = t.createdAt;
-  let createdAt: number | null = null;
-  if (typeof createdRaw === "number") createdAt = createdRaw;
-  else if (typeof createdRaw === "string") {
-    const n = Date.parse(createdRaw);
-    if (Number.isFinite(n)) createdAt = n;
-  }
-  // payload may be in payloadJson (API) or payload (bootstrap)
-  const payloadRaw =
-    (t.payloadJson as Record<string, unknown> | undefined) ??
-    (t.payload as Record<string, unknown> | undefined) ??
-    {};
+function fromApi(t: ApiTaskRow): TaskItem {
+  const createdAt = t.createdAt ? Date.parse(t.createdAt) : null;
+  const payload =
+    (t.payloadJson as Record<string, unknown> | null | undefined) ?? {};
   return {
-    id: String(t.id ?? ""),
-    type: String(t.type ?? ""),
-    title: String(t.title ?? ""),
-    priority: String(t.priority ?? "med"),
-    status: String(t.status ?? "open"),
-    createdAt,
-    awaitingFrom:
-      typeof t.awaitingFrom === "string"
-        ? t.awaitingFrom
-        : typeof t.awaitingRole === "string"
-          ? t.awaitingRole
-          : null,
-    agentId: typeof t.agentId === "string" ? t.agentId : undefined,
-    payload: payloadRaw,
+    id: t.id,
+    type: t.type,
+    title: t.title,
+    priority: t.priority ?? "med",
+    status: t.status,
+    createdAt: Number.isFinite(createdAt) ? createdAt : null,
+    awaitingFrom: t.awaitingRole,
+    payload,
   };
 }
 
 export default function TasksPage() {
-  // Live tasks via TanStack Query — kept in sync by useStream invalidation.
-  const { data: apiTasks = [] } = useTasks();
-  const { tasks: bootstrapTasks, agents } = useRaasData();
+  // Live tasks + workflow DAG via TanStack Query — kept in sync by useStream
+  // cache invalidation. DAG carries triggers/emits per agent so the task
+  // detail can render "will emit on approve" / "downstream listeners".
+  const tasksQuery = useTasks();
+  const dagQuery = useDag();
+  const apiTasks = tasksQuery.data ?? [];
+  const dagAgents = dagQuery.data?.agents ?? [];
 
-  const tasks = useMemo<TaskItem[]>(() => {
-    if (apiTasks.length > 0)
-      return apiTasks.map((t) => fromApiOrBootstrap(t as unknown as Record<string, unknown>));
-    return bootstrapTasks.map((t) => fromApiOrBootstrap(t as Record<string, unknown>));
-  }, [apiTasks, bootstrapTasks]);
+  const tasks = useMemo<TaskItem[]>(
+    () => apiTasks.map(fromApi),
+    [apiTasks],
+  );
 
   const [filter, setFilter] = useState<"all" | "high" | "med" | "low">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -137,8 +125,18 @@ export default function TasksPage() {
             ))}
           </div>
           <div style={{ flex: 1, overflow: "auto" }}>
-            {filtered.length === 0 ? (
-              <Empty title="Inbox zero" hint="No tasks at this priority" />
+            {tasksQuery.isError ? (
+              <Empty
+                title="Failed to load tasks"
+                hint={tasksQuery.error?.message ?? "api unreachable on :3501"}
+              />
+            ) : tasksQuery.isLoading && tasks.length === 0 ? (
+              <Empty title="Loading tasks…" hint="" />
+            ) : filtered.length === 0 ? (
+              <Empty
+                title={tasks.length === 0 ? "No human tasks yet" : "No tasks at this priority"}
+                hint={tasks.length === 0 ? "Tasks appear here when an agent emits a HUMAN_TASK event." : ""}
+              />
             ) : (
               filtered.map((t) => (
                 <TaskRow
@@ -154,7 +152,7 @@ export default function TasksPage() {
 
         <div style={{ overflow: "auto", minHeight: 0 }}>
           {selected ? (
-            <TaskDetail task={selected} agents={agents} />
+            <TaskDetail task={selected} agents={dagAgents} />
           ) : (
             <Empty title="Inbox zero" hint="No pending human tasks" />
           )}
@@ -248,11 +246,17 @@ function TaskDetail({
   agents,
 }: {
   task: TaskItem;
-  agents: SpaAgent[];
+  agents: DagAgent[];
 }) {
-  const agent = task.agentId
-    ? (agents.find((a) => a.id === task.agentId) ?? null)
-    : null;
+  // /v1/tasks payload doesn't carry an agent reference today; surface the
+  // closest match by `awaitingRole` (if a Human agent with that title
+  // exists). Otherwise the panel falls back to the literal role string.
+  const agent =
+    agents.find(
+      (a) =>
+        a.actor === "Human" &&
+        (a.title === task.awaitingFrom || a.name === task.awaitingFrom),
+    ) ?? null;
 
   return (
     <div style={{ padding: 24, maxWidth: 920 }}>
