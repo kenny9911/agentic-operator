@@ -76,12 +76,30 @@ export const matchResumeApi = defineTool({
       );
     }
 
-    const upstream = (res.data ?? {}) as MatchResumeBody;
+    // RoboHire wraps the analysis under an envelope:
+    //   { success: true, data: { overallMatchScore, overallFit, ... }, requestId, savedAs }
+    // Earlier this normalizer read `res.data.overallMatchScore` directly,
+    // one level too shallow, so `matchScore` was ALWAYS null — the LLM only
+    // ever got a real score when it happened to dig it out of the `raw` blob
+    // itself (inconsistently). Unwrap the `data` envelope here. We tolerate
+    // the flat shape too in case a future endpoint stops wrapping.
+    const envelope = (res.data ?? {}) as Record<string, unknown>;
+    const upstream = (
+      envelope.data && typeof envelope.data === "object" ? envelope.data : envelope
+    ) as MatchResumeBody & { score?: number; verdict?: string };
+
+    // Score can appear as `overallMatchScore.score` OR a flat top-level
+    // `score`; verdict/recommendation live under `overallFit`. Coalesce.
+    const matchScore =
+      upstream.overallMatchScore?.score ??
+      (typeof upstream.score === "number" ? upstream.score : null);
     const normalized = {
-      matchScore: upstream.overallMatchScore?.score ?? null,
-      verdict: upstream.overallFit?.verdict ?? null,
+      matchScore,
+      verdict: upstream.overallFit?.verdict ?? upstream.verdict ?? null,
       hiringRecommendation: upstream.overallFit?.hiringRecommendation ?? null,
       summary: upstream.overallFit?.summary ?? null,
+      // Hand the LLM the UNWRAPPED analysis so the batch-match prompt's
+      // `raw.resumeAnalysis.keyAchievements` path resolves correctly.
       raw: upstream,
     };
 
