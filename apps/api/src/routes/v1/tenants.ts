@@ -150,10 +150,10 @@ function cacheSet(key: string, value: CachedResponse) {
 }
 
 /**
- * The seed user from packages/db/src/seed.ts. We attach the new tenant's admin
- * membership to this user when the caller has no identity (dev mode / token
- * with no `created_by_user_id`). Future P5-TEN-02 work replaces this with the
- * actual user id from the auth context once the token-user link lands.
+ * The seed user from packages/db/src/seed.ts. It remains the fallback when the
+ * caller has no browser identity (dev mode / bearer token). Cookie sessions
+ * carry a canonical user id and tenant creation must grant that user access to
+ * the tenant they just created.
  */
 const SEED_ADMIN_EMAIL = "ops@agentic.local";
 
@@ -515,12 +515,13 @@ export async function tenantsRoutes(app: FastifyInstance): Promise<void> {
         req.query?.include_archived === "1" ||
         req.query?.include_archived === "true";
 
-      const operatorUserId = resolveOperatorUserId();
+      const operatorUserId = auth.userId ?? resolveOperatorUserId();
       const items = await listTenantsWithCounts({
         includeArchived,
-        // Pre-platform-admin: in dev/op mode show every tenant. Once RBAC
-        // lands we filter by membership for non-admin callers.
-        forUserId: null,
+        // Dev remains the cross-tenant operator surface. A signed browser
+        // session only sees tenants where that user has a membership, which
+        // also keeps the switcher from offering an unusable destination.
+        forUserId: auth.via === "cookie" ? auth.userId : null,
       });
 
       return reply.ok({
@@ -557,6 +558,65 @@ export async function tenantsRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  // ── GET /v1/tenants/:slug/access ──────────────────────────────────────
+  // Used by the Next.js preference route before it signs a browser session
+  // for another tenant. This check prevents a malformed deep link or a
+  // client-crafted preference request from locking the session to a tenant
+  // that does not exist or that the current user cannot access.
+  app.get<{ Params: { slug: string } }>(
+    "/tenants/:slug/access",
+    async (req, reply) => {
+      const auth = requireAuth(req);
+      const slug = req.params.slug;
+      if (!/^[a-z0-9_-]{1,32}$/.test(slug)) {
+        return reply.fail("invalid_slug", `slug "${slug}" is malformed`, 400);
+      }
+
+      const target = getDb()
+        .select({ id: tenants.id, slug: tenants.slug })
+        .from(tenants)
+        .where(and(eq(tenants.slug, slug), isNull(tenants.archivedAt)))
+        .all()[0];
+      if (!target) {
+        return reply.fail(
+          "tenant_not_found",
+          `no active tenant with slug "${slug}"`,
+          404,
+        );
+      }
+
+      if (auth.via === "dev") {
+        return reply.ok({ tenantSlug: target.slug, role: "admin" as const });
+      }
+
+      if (!auth.userId) {
+        return reply.fail(
+          "forbidden",
+          "browser tenant switching requires a user session",
+          403,
+        );
+      }
+      const membership = getDb()
+        .select({ role: memberships.role })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.userId, auth.userId),
+            eq(memberships.tenantId, target.id),
+          ),
+        )
+        .all()[0];
+      if (!membership) {
+        return reply.fail(
+          "forbidden",
+          `the current user cannot access tenant "${slug}"`,
+          403,
+        );
+      }
+      return reply.ok({ tenantSlug: target.slug, role: membership.role });
+    },
+  );
+
   // ── POST /v1/tenants ───────────────────────────────────────────────────
   app.post("/tenants", async (req, reply) => {
     const auth = requireAuth(req);
@@ -584,7 +644,7 @@ export async function tenantsRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const operatorUserId = resolveOperatorUserId();
+    const operatorUserId = auth.userId ?? resolveOperatorUserId();
     let result: CreateResult;
     try {
       result = await performCreate(req, body, operatorUserId, auth.tenantSlug);

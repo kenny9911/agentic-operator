@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --config=playwright.e2e.config.ts",
     "clean": "rm -rf .next .turbo node_modules"
   },
   "dependencies": {

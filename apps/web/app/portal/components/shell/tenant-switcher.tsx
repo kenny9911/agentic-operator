@@ -4,8 +4,8 @@
  * TenantSwitcher — dropdown of available tenants with active highlight.
  *
  * Ported from v1_1 app.jsx:181-238. Behaviour:
- *   - Tenant is in the URL (P2-FE-25); selecting one calls `useTenantNavigate`
- *     to push `/portal/<new-slug>/<rest>`.
+ *   - Tenant is in the URL (P2-FE-25); selecting one persists the choice and
+ *     reloads `/portal/<new-slug>/<rest>` so no prior-tenant state survives.
  *   - "New tenant" opens the 4-step `TenantCreateModal`, then optionally
  *     shows the bootstrap token reveal, then auto-launches the
  *     `ImportManifestModal` so the operator can populate the new tenant.
@@ -26,6 +26,8 @@ import {
 } from "./TenantTokenRevealModal";
 import { ImportManifestModal } from "../import-manifest/ImportManifestModal";
 import styles from "./sidebar.module.css";
+
+const CREATED_TENANT_IMPORT_KEY = "agentic.created-tenant-import";
 
 export interface TenantOption {
   id: string;
@@ -60,7 +62,40 @@ export function TenantSwitcher({
     if (!expanded) setOpen(false);
   }, [expanded]);
 
-  function handleCreated(created: TenantCreateResponse) {
+  // Tenant creation performs a full navigation before import so the old
+  // screen can never run with the new tenant's browser session. A tab-scoped,
+  // non-secret marker restores the import modal after that navigation.
+  useEffect(() => {
+    if (!activeId) return;
+    try {
+      if (
+        window.sessionStorage.getItem(CREATED_TENANT_IMPORT_KEY) !== activeId
+      ) {
+        return;
+      }
+      window.sessionStorage.removeItem(CREATED_TENANT_IMPORT_KEY);
+      setImportForSlug(activeId);
+    } catch {
+      // Storage-disabled browsers still switch safely; the operator can open
+      // the import flow from the selected tenant afterward.
+    }
+  }, [activeId]);
+
+  async function switchToCreatedTenant(slug: string, name: string) {
+    try {
+      window.sessionStorage.setItem(CREATED_TENANT_IMPORT_KEY, slug);
+    } catch {
+      // The marker is convenience only and contains no credentials.
+    }
+    if (await navigate(slug)) return;
+    toast({
+      tone: "red",
+      title: "Tenant created, switch incomplete",
+      description: `Could not activate ${name}. Select it from the tenant menu to retry.`,
+    });
+  }
+
+  async function handleCreated(created: TenantCreateResponse) {
     setCreateOpen(false);
     queryClient.invalidateQueries({ queryKey: TENANTS_KEYS.all });
     router.refresh();
@@ -71,7 +106,6 @@ export function TenantSwitcher({
       title: "Tenant provisioned",
       description: `${name} (${slug}) is ready`,
     });
-    navigate(slug);
     if (created.token?.plaintext) {
       setTokenReveal({
         slug,
@@ -80,8 +114,15 @@ export function TenantSwitcher({
         scopes: created.token.scopes ?? [],
       });
     } else {
-      setImportForSlug(slug);
+      await switchToCreatedTenant(slug, name);
     }
+  }
+
+  function finishTokenReveal() {
+    if (!tokenReveal) return;
+    const { slug, name } = tokenReveal;
+    setTokenReveal(null);
+    void switchToCreatedTenant(slug, name);
   }
 
   if (!active) {
@@ -100,11 +141,7 @@ export function TenantSwitcher({
         {tokenReveal && (
           <TenantTokenRevealModal
             payload={tokenReveal}
-            onClose={() => {
-              const slug = tokenReveal.slug;
-              setTokenReveal(null);
-              setImportForSlug(slug);
-            }}
+            onClose={finishTokenReveal}
           />
         )}
         {importForSlug && (
@@ -202,8 +239,16 @@ export function TenantSwitcher({
               role="option"
               aria-selected={t.id === active.id}
               onClick={() => {
-                if (t.id !== active.id) navigate(t.id);
                 setOpen(false);
+                if (t.id === active.id) return;
+                void navigate(t.id).then((switched) => {
+                  if (switched) return;
+                  toast({
+                    tone: "red",
+                    title: "Tenant switch failed",
+                    description: `Could not activate ${t.name}. Please try again.`,
+                  });
+                });
               }}
               style={{
                 display: "flex",
@@ -276,11 +321,7 @@ export function TenantSwitcher({
       {tokenReveal && (
         <TenantTokenRevealModal
           payload={tokenReveal}
-          onClose={() => {
-            const slug = tokenReveal.slug;
-            setTokenReveal(null);
-            setImportForSlug(slug);
-          }}
+          onClose={finishTokenReveal}
         />
       )}
       {importForSlug && (

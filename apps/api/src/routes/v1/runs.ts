@@ -15,7 +15,12 @@ import {
 } from "@agentic/contracts";
 import { requireAuth } from "../../plugins/auth";
 import { writeAudit } from "../../plugins/audit";
-import { getRun, listRecentRuns, listSteps } from "../../queries/runs";
+import {
+  getRun,
+  getRunUsageSummary,
+  listRecentRuns,
+  listSteps,
+} from "../../queries/runs";
 import {
   finalizeCancelledStudioRun,
   replayStudioRun,
@@ -49,7 +54,8 @@ export async function runsRoutes(app: FastifyInstance) {
     const run = await getRun(auth.tenantSlug, req.params.id);
     if (!run) return reply.fail("not_found", "run not found", 404);
     const steps = await listSteps(run.id);
-    return reply.ok({ run, steps });
+    const usage = getRunUsageSummary(auth.tenantId, run.id);
+    return reply.ok({ run, steps, usage });
   });
 
   // POST /v1/runs/:id/replay

@@ -15,9 +15,10 @@
  *   1. With `AUTH_MODE=dev` + valid header → request scopes to that tenant.
  *   2. With `AUTH_MODE=dev` + header pointing at a non-existent slug →
  *      falls back to AGENTIC_DEV_TENANT (advisory, never a 401).
- *   3. With `AUTH_MODE=dev` + malformed header → falls back (defense in
+ *   3. With no header, the portal preference cookie scopes EventSource.
+ *   4. With `AUTH_MODE=dev` + malformed header → falls back (defense in
  *      depth; the header is client-controlled).
- *   4. Without `AUTH_MODE=dev` (production / unset) → header is ignored,
+ *   5. Without `AUTH_MODE=dev` (production / unset) → overrides are ignored,
  *      bearer token is the only source of tenant truth.
  *
  * The bearer-only path is verified by the existing TC-6 P0-AUTH-01 suite;
@@ -75,6 +76,31 @@ describe("TC-74: x-agentic-tenant header override", () => {
       process.env.AUTH_MODE = "dev";
       process.env.AGENTIC_DEV_TENANT = "__system";
       const res = await env.fetch("/v1/tenants");
+      const body = (await res.json()) as ViewerEnvelope;
+      expect(body.data?.viewer?.tenantSlug).toBe("__system");
+    });
+
+    it("no header + remembered preference scopes EventSource-style requests", async () => {
+      process.env.AUTH_MODE = "dev";
+      process.env.AGENTIC_DEV_TENANT = "__system";
+      const prefs = encodeURIComponent(JSON.stringify({ tenant: "raas" }));
+      const res = await env.fetch("/v1/tenants", {
+        headers: { cookie: `agentic_prefs=${prefs}` },
+      });
+      const body = (await res.json()) as ViewerEnvelope;
+      expect(body.data?.viewer?.tenantSlug).toBe("raas");
+    });
+
+    it("the explicit URL-derived header wins over a remembered preference", async () => {
+      process.env.AUTH_MODE = "dev";
+      process.env.AGENTIC_DEV_TENANT = "raas";
+      const prefs = encodeURIComponent(JSON.stringify({ tenant: "raas" }));
+      const res = await env.fetch("/v1/tenants", {
+        headers: {
+          [HEADER]: "__system",
+          cookie: `agentic_prefs=${prefs}`,
+        },
+      });
       const body = (await res.json()) as ViewerEnvelope;
       expect(body.data?.viewer?.tenantSlug).toBe("__system");
     });
@@ -142,6 +168,20 @@ describe("TC-74: x-agentic-tenant header override", () => {
       try {
         const res = await env.fetch("/v1/tenants", {
           headers: { [HEADER]: "raas" },
+        });
+        expect(res.status).toBe(401);
+      } finally {
+        process.env.AUTH_MODE = savedMode;
+      }
+    });
+
+    it("AUTH_MODE unset + preference cookie → 401 (cookie cannot unlock)", async () => {
+      const savedMode = process.env.AUTH_MODE;
+      delete process.env.AUTH_MODE;
+      try {
+        const prefs = encodeURIComponent(JSON.stringify({ tenant: "raas" }));
+        const res = await env.fetch("/v1/tenants", {
+          headers: { cookie: `agentic_prefs=${prefs}` },
         });
         expect(res.status).toBe(401);
       } finally {

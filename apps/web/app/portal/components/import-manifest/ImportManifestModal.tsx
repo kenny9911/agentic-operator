@@ -394,7 +394,7 @@ export function ImportManifestModal({
             credentials: "same-origin",
             headers: {
               "content-type": "application/json",
-              ...tenantHeader(),
+              ...tenantHeader(slug),
             },
             body: JSON.stringify({ url }),
           },
@@ -460,7 +460,7 @@ export function ImportManifestModal({
           credentials: "same-origin",
           headers: {
             "content-type": "application/json",
-            ...tenantHeader(),
+            ...tenantHeader(slug),
           },
           body: JSON.stringify({
             mode: "validate",
@@ -552,7 +552,7 @@ export function ImportManifestModal({
           credentials: "same-origin",
           headers: {
             "content-type": "application/json",
-            ...tenantHeader(),
+            ...tenantHeader(slug),
           },
           body: JSON.stringify({
             mode: "commit",
@@ -661,7 +661,10 @@ export function ImportManifestModal({
         {
           method: "POST",
           credentials: "same-origin",
-          headers: { "content-type": "application/json", ...tenantHeader() },
+          headers: {
+            "content-type": "application/json",
+            ...tenantHeader(slug),
+          },
           body: JSON.stringify({
             mode: "validate",
             workflow: workflowRaw,
@@ -698,7 +701,10 @@ export function ImportManifestModal({
       const createResponse = await fetch("/v1/workflows", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", ...tenantHeader() },
+        headers: {
+          "content-type": "application/json",
+          ...tenantHeader(slug),
+        },
         body: JSON.stringify({
           slug: draftTarget.slug,
           name: draftTarget.name,
@@ -813,7 +819,7 @@ export function ImportManifestModal({
           {
             method: "DELETE",
             credentials: "same-origin",
-            headers: tenantHeader(),
+            headers: tenantHeader(slug),
           },
         );
       } catch {

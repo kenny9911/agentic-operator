@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { isTenantSlug, parseRememberedTenant } from "./tenant-preference";
 
 /**
  * User preferences stored in cookies (replaces prototype's tweaks-panel).
@@ -21,7 +22,9 @@ export const DEFAULT_PREFS: Prefs = {
   theme: "dark",
   density: "default",
   accent: "#d0ff00",
-  tenant: "raas",
+  // No tenant is guessed here. `/portal` uses the authenticated session on
+  // first visit, then this field records whichever tenant the user opens.
+  tenant: "",
   liveStream: true,
 };
 
@@ -37,6 +40,31 @@ export async function readPrefs(): Promise<Prefs> {
   } catch {
     return DEFAULT_PREFS;
   }
+}
+
+/** Return only an explicitly remembered, valid tenant (never a default). */
+export async function readRememberedTenant(): Promise<string | null> {
+  const store = await cookies();
+  return parseRememberedTenant(store.get(COOKIE_NAME)?.value);
+}
+
+/** Persist an explicitly selected tenant while retaining all other prefs. */
+export async function writeRememberedTenant(tenant: string): Promise<void> {
+  if (!isTenantSlug(tenant)) {
+    throw new TypeError(`Invalid tenant slug: ${tenant}`);
+  }
+  const store = await cookies();
+  let current: Record<string, unknown> = { ...DEFAULT_PREFS };
+  try {
+    const raw = store.get(COOKIE_NAME)?.value;
+    if (raw) current = { ...current, ...JSON.parse(raw) };
+  } catch {}
+  store.set(COOKIE_NAME, JSON.stringify({ ...current, tenant }), {
+    path: "/",
+    httpOnly: false,
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 365,
+  });
 }
 
 export const ACCENT_DIMS: Record<string, string> = {

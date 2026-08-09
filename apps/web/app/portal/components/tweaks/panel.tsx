@@ -24,8 +24,9 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "../Icon";
+import { toast } from "../toast";
 import { useTweaks, type Tweaks } from "./use-tweaks";
-import { useTenantNavigate } from "../../lib/use-tenant";
+import { useTenant, useTenantNavigate } from "../../lib/use-tenant";
 
 const ACCENT_OPTIONS: { value: string; label: string }[] = [
   { value: "#d0ff00", label: "Lime" },
@@ -46,12 +47,25 @@ export interface TweaksPanelProps {
 export function TweaksPanel({ tenants = [] }: TweaksPanelProps) {
   const [open, setOpen] = useState(false);
   const [tweaks, setTweak] = useTweaks();
+  const activeTenant = useTenant();
   const goTenant = useTenantNavigate();
+
+  // The URL is the tenant source of truth. Mirror it into the legacy tweaks
+  // blob so this secondary selector never falls back to a stale RAAS value.
+  useEffect(() => {
+    if (activeTenant && tweaks.tenant !== activeTenant) {
+      setTweak("tenant", activeTenant);
+    }
+  }, [activeTenant, setTweak, tweaks.tenant]);
 
   // Hotkey: Cmd/Ctrl+Shift+T toggles the panel.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "t") {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        e.key.toLowerCase() === "t"
+      ) {
         e.preventDefault();
         setOpen((v) => !v);
       }
@@ -89,6 +103,7 @@ export function TweaksPanel({ tenants = [] }: TweaksPanelProps) {
           tweaks={tweaks}
           setTweak={setTweak}
           tenants={tenants}
+          activeTenant={activeTenant}
           onClose={() => setOpen(false)}
           onTenantChange={goTenant}
         />
@@ -101,14 +116,16 @@ function PanelBody({
   tweaks,
   setTweak,
   tenants,
+  activeTenant,
   onClose,
   onTenantChange,
 }: {
   tweaks: Tweaks;
   setTweak: ReturnType<typeof useTweaks>[1];
   tenants: TenantOption[];
+  activeTenant: string;
   onClose: () => void;
-  onTenantChange: (next: string) => void;
+  onTenantChange: (next: string) => Promise<boolean>;
 }) {
   return (
     <div
@@ -146,7 +163,9 @@ function PanelBody({
           padding: "10px 8px 10px 14px",
         }}
       >
-        <strong style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".01em" }}>
+        <strong
+          style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".01em" }}
+        >
           Tweaks
         </strong>
         <button
@@ -203,11 +222,17 @@ function PanelBody({
         {tenants.length > 0 && (
           <SelectRow
             label="Active tenant"
-            value={tweaks.tenant}
+            value={activeTenant}
             options={tenants.map((t) => ({ value: t.id, label: t.name }))}
             onChange={(v) => {
-              setTweak("tenant", v);
-              onTenantChange(v);
+              void onTenantChange(v).then((switched) => {
+                if (switched) return;
+                toast({
+                  tone: "red",
+                  title: "Tenant switch failed",
+                  description: "The current tenant is still active.",
+                });
+              });
             }}
           />
         )}
@@ -216,9 +241,7 @@ function PanelBody({
             label="Data source"
             value={tweaks.dataSource}
             options={["json", "neo4j"]}
-            onChange={(v) =>
-              setTweak("dataSource", v as Tweaks["dataSource"])
-            }
+            onChange={(v) => setTweak("dataSource", v as Tweaks["dataSource"])}
             note="Latent — real API is always the source."
           />
         )}
@@ -296,9 +319,7 @@ function RadioRow({
                 padding: "4px 6px",
                 borderRadius: 6,
                 background: active ? "rgba(255,255,255,.9)" : "transparent",
-                boxShadow: active
-                  ? "0 1px 2px rgba(0,0,0,.12)"
-                  : "none",
+                boxShadow: active ? "0 1px 2px rgba(0,0,0,.12)" : "none",
                 color: "#29261b",
                 fontWeight: 500,
                 fontSize: 11.5,

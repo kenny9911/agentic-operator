@@ -32,13 +32,17 @@ export function tenantFromPathname(pathname: string): string | null {
 }
 
 /**
- * Build a headers fragment carrying the URL-derived tenant slug. Returns
- * `{}` when not in a browser or when the URL isn't a `/portal/<slug>/...`
- * path — that keeps the api on its dev fallback (`AGENTIC_DEV_TENANT`) for
- * non-portal pages.
+ * Build a headers fragment carrying the active tenant slug. Most callers use
+ * the URL-derived tenant. Flows that intentionally operate on a new tenant
+ * before changing the URL (manifest import after tenant creation) may pass an
+ * explicit override.
  */
-export function tenantHeader(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  const slug = tenantFromPathname(window.location.pathname);
+export function tenantHeader(overrideTenant?: string): Record<string, string> {
+  const slug =
+    overrideTenant ??
+    (typeof window === "undefined"
+      ? null
+      : tenantFromPathname(window.location.pathname));
+  if (!slug || !/^[a-z0-9_-]{1,32}$/.test(slug)) return {};
   return slug ? { [TENANT_HEADER]: slug } : {};
 }

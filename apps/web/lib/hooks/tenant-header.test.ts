@@ -43,8 +43,9 @@ describe("tenantFromPathname", () => {
     // rather than letting an attacker-controlled value reach the header.
     expect(tenantFromPathname("/portal/x".repeat(50))).not.toBeNull(); // first segment still matches
     // The regex matches up to 32 chars; longer is fine because it stops at /.
-    expect(tenantFromPathname("/portal/12345678901234567890123456789012/dash"))
-      .toBe("12345678901234567890123456789012");
+    expect(
+      tenantFromPathname("/portal/12345678901234567890123456789012/dash"),
+    ).toBe("12345678901234567890123456789012");
   });
 });
 
@@ -73,6 +74,16 @@ describe("tenantHeader", () => {
       location: { pathname: "/portal/hello/dashboard" },
     } as Window);
     expect(tenantHeader()).toEqual({ "x-agentic-tenant": "hello" });
+  });
+
+  it("lets pre-navigation flows explicitly scope a different tenant", () => {
+    vi.stubGlobal("window", {
+      location: { pathname: "/portal/raas/dashboard" },
+    } as Window);
+    expect(tenantHeader("support")).toEqual({
+      "x-agentic-tenant": "support",
+    });
+    expect(tenantHeader("../invalid")).toEqual({});
   });
 
   it("returns the slug for /portal/<slug> without trailing segment", () => {

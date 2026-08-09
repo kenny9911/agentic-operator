@@ -19,6 +19,7 @@ export interface AuthedContext {
 }
 
 const COOKIE_NAME = "agentic_session";
+const PREFS_COOKIE_NAME = "agentic_prefs";
 
 /**
  * UC-V11-29 / PF-GAP-05 — read the session JWT signing secret. Accepts
@@ -126,10 +127,9 @@ function hashToken(token: string): string {
 const DEV_TENANT_HEADER = "x-agentic-tenant";
 
 /**
- * Read the dev-only tenant override from a request. Returns the trimmed
- * slug when the header is present, non-empty, and references an existing
- * (non-archived) tenant; otherwise returns null so callers fall back to
- * `AGENTIC_DEV_TENANT`. NEVER consults this header outside `AUTH_MODE=dev`.
+ * Read the dev-only URL/header tenant override from a request. Returns the
+ * trimmed, well-formed slug or null. Existence is checked by `devTenant`.
+ * NEVER consults this header outside `AUTH_MODE=dev`.
  */
 function devTenantOverride(req: FastifyRequest | null): string | null {
   if (!req) return null;
@@ -145,13 +145,46 @@ function devTenantOverride(req: FastifyRequest | null): string | null {
   return trimmed;
 }
 
+/**
+ * EventSource cannot attach `x-agentic-tenant`. After the web portal records
+ * a tenant switch, use its non-secret preference cookie as the dev-only SSE
+ * fallback. Normal fetches still prefer the explicit URL-derived header.
+ */
+function rememberedDevTenant(req: FastifyRequest | null): string | null {
+  if (!req) return null;
+  const raw = readCookie(req.headers.cookie, PREFS_COOKIE_NAME);
+  if (!raw) return null;
+  const candidates = [raw];
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (decoded !== raw) candidates.push(decoded);
+  } catch {
+    // Malformed cookie encoding falls through to the configured tenant.
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as { tenant?: unknown };
+      const slug = parsed?.tenant;
+      if (typeof slug === "string" && /^[a-z0-9_-]{1,32}$/.test(slug)) {
+        return slug;
+      }
+    } catch {
+      // Try the decoded representation, if present.
+    }
+  }
+  return null;
+}
+
 function devTenant(req: FastifyRequest | null = null): AuthedContext | null {
   const override = devTenantOverride(req);
+  const remembered = rememberedDevTenant(req);
   const fallback = process.env.AGENTIC_DEV_TENANT ?? "raas";
-  // Try the URL-bound tenant first; fall back to the env-pinned slug if it
-  // doesn't resolve. The header is advisory in dev mode — never a 401.
-  const candidates =
-    override && override !== fallback ? [override, fallback] : [fallback];
+  // Try the URL-bound tenant first, then the remembered tenant used by SSE,
+  // and finally the env-pinned slug. All overrides are advisory in dev mode
+  // — an invalid or deleted tenant never turns into a 401.
+  const candidates = [...new Set([override, remembered, fallback])].filter(
+    (slug): slug is string => Boolean(slug),
+  );
   for (const slug of candidates) {
     const t = getDb()
       .select()

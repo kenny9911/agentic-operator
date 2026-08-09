@@ -19,7 +19,8 @@ import {
   type ReasoningSummary,
   type TextVerbosity,
 } from "@agentic/contracts";
-import { Badge, Button, Empty, Splitter } from "@/app/portal/components";
+import { Badge, Button, Empty, Icon, Splitter } from "@/app/portal/components";
+import { fmtDur, fmtNum } from "@/app/portal/lib/format";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import {
   useAgentRunHistory,
@@ -32,9 +33,15 @@ import {
   type CreateAgentRunRequest,
   type RunTraceEvent,
 } from "@/lib/hooks/useAgentStudio";
-import { useCancelRun, useRunArtifacts } from "@/lib/hooks/useRuns";
+import {
+  useCancelRun,
+  useRun,
+  useRunArtifacts,
+  type RunDetail,
+} from "@/lib/hooks/useRuns";
 import { useRunLogStream } from "@/lib/hooks/useRunLogStream";
 import { useAvailableModels } from "@/lib/hooks/useModelFleet";
+import { formatUsdNanos } from "@/lib/format-usd";
 import {
   Field,
   InlineNotice,
@@ -67,10 +74,7 @@ import {
   maxTestSetupWidth,
   testHistoryFitsInline,
   TEST_HISTORY_DEFAULT_WIDTH,
-  TEST_HISTORY_DEFAULT_HEIGHT,
-  TEST_HISTORY_MAX_HEIGHT,
   TEST_HISTORY_MAX_WIDTH,
-  TEST_HISTORY_MIN_HEIGHT,
   TEST_HISTORY_MIN_WIDTH,
   TEST_SETUP_MIN_WIDTH,
 } from "./test-layout";
@@ -256,6 +260,263 @@ function TraceRow({ event }: { event: RunTraceEvent }) {
         {event.durationMs == null ? "" : `${event.durationMs}ms`}
       </span>
     </div>
+  );
+}
+
+function traceEventTitle(event: RunTraceEvent): string {
+  const known: Record<string, string> = {
+    "run.queued": "Run queued",
+    "run.started": "Runtime started",
+    "run.completed": "Run completed",
+    "input.validation": "Inputs validated",
+    "prompt.compiled": "Prompt prepared",
+    "llm.call": "Model call",
+    "llm.output_repair": "Output repair",
+    "output.validation": "Output validated",
+    "output.repair.validation": "Repaired output validated",
+    "output.persisted": "Output saved",
+  };
+  return known[event.name] ?? event.name;
+}
+
+/** Collapse running/terminal updates for one activity in the compact card. */
+function compactProgressEvents(events: RunTraceEvent[]): RunTraceEvent[] {
+  const latest = new Map<string, RunTraceEvent>();
+  for (const event of events) {
+    if (event.name === "llm.reasoning_summary") continue;
+    const iteration =
+      event.data && typeof event.data.iteration === "number"
+        ? `:${event.data.iteration}`
+        : "";
+    const key = `${event.kind}:${event.stepId ?? "run"}:${event.name}${iteration}`;
+    latest.set(key, event);
+  }
+  return Array.from(latest.values()).sort(
+    (left, right) => left.seq - right.seq,
+  );
+}
+
+function RuntimeHint() {
+  return (
+    <span className="agent-studio-runtime-hint">
+      <button
+        type="button"
+        className="agent-studio-runtime-hint__trigger"
+        aria-label="How Test Lab runs are executed"
+        aria-describedby="agent-studio-runtime-hint-content"
+      >
+        <Icon name="info" size={12} />
+      </button>
+      <span
+        id="agent-studio-runtime-hint-content"
+        className="agent-studio-runtime-hint__tooltip"
+        role="tooltip"
+      >
+        <strong>Test Lab uses the real runtime.</strong> Send publishes a
+        runtime event and copies this message into the agent&apos;s prompt
+        input. Structured variables stay separate. Runs, traces, logs, and
+        artifacts are saved in history.
+      </span>
+    </span>
+  );
+}
+
+function RunProgressCard({
+  runId,
+  historyRow,
+  detail,
+  traceEvents,
+  traceLoading,
+  expectedSteps,
+  onOpenTrace,
+}: {
+  runId: string;
+  historyRow: AgentStudioRunRow | undefined;
+  detail: RunDetail | undefined;
+  traceEvents: RunTraceEvent[];
+  traceLoading: boolean;
+  expectedSteps: number;
+  onOpenTrace: () => void;
+}) {
+  const run = detail?.run;
+  const usage = detail?.usage;
+  const status = run?.status ?? historyRow?.status ?? "queued";
+  const live = !isTerminalStatus(status);
+  const startedAt = run?.startedAt ?? historyRow?.startedAt;
+  const startedMs = startedAt ? new Date(startedAt).getTime() : Number.NaN;
+  const durationMs =
+    run?.durationMs ??
+    historyRow?.durationMs ??
+    (live && Number.isFinite(startedMs)
+      ? Math.max(0, Date.now() - startedMs)
+      : null);
+  const steps = detail?.steps ?? [];
+  const completedSteps = steps.filter((step) =>
+    ["ok", "failed", "skipped"].includes(step.status),
+  ).length;
+  const currentStep = [...steps]
+    .reverse()
+    .find((step) => step.status === "running" || step.status === "pending");
+  const progressEvents = compactProgressEvents(traceEvents);
+  const visibleEvents = progressEvents.slice(-6);
+  const latestEvent = progressEvents.at(-1);
+  const totalSteps = Math.max(expectedSteps, steps.length);
+  const tokensIn =
+    usage && usage.attempts > 0
+      ? usage.tokensIn
+      : (run?.tokensIn ?? historyRow?.tokensIn ?? 0);
+  const tokensOut =
+    usage && usage.attempts > 0
+      ? usage.tokensOut
+      : (run?.tokensOut ?? historyRow?.tokensOut ?? 0);
+  const provider =
+    usage?.latestProvider ?? run?.provider ?? historyRow?.provider ?? null;
+  const model = usage?.latestModel ?? run?.model ?? historyRow?.model ?? null;
+  const phase =
+    status === "queued"
+      ? "Waiting for the runtime"
+      : status === "ok"
+        ? "Response completed"
+        : status === "failed"
+          ? "Run failed"
+          : status === "cancelled"
+            ? "Run cancelled"
+            : currentStep
+              ? `Running ${currentStep.name}`
+              : latestEvent?.summary || "Agent is working";
+  const cost =
+    usage?.costUsdNanos != null
+      ? formatUsdNanos(usage.costUsdNanos)
+      : usage?.inFlight
+        ? "Calculating"
+        : usage?.unpricedCalls
+          ? "Unpriced"
+          : "—";
+  const callValue = usage ? fmtNum(usage.logicalCalls) : "—";
+
+  return (
+    <section
+      className={`agent-studio-run-progress agent-studio-run-progress--${status}`}
+      aria-label={`Execution progress for run ${runId}`}
+      aria-live="polite"
+    >
+      <div className="agent-studio-run-progress__header">
+        <div className="agent-studio-run-progress__identity">
+          <span
+            className={`agent-studio-run-progress__pulse${live ? " is-live" : ""}`}
+            aria-hidden="true"
+          />
+          <span>
+            <span className="agent-studio-run-progress__eyebrow">
+              Execution
+            </span>
+            <strong>{phase}</strong>
+          </span>
+        </div>
+        <div className="agent-studio-run-progress__header-meta">
+          <Badge tone={statusTone(status)}>{status}</Badge>
+          <span className="mono">{fmtDur(durationMs)}</span>
+        </div>
+      </div>
+
+      {(provider || model) && (
+        <div className="agent-studio-run-progress__model mono">
+          {provider ?? "default provider"} / {model ?? "default model"}
+        </div>
+      )}
+
+      <div className="agent-studio-run-progress__metrics">
+        <div>
+          <span>Steps</span>
+          <strong>
+            {completedSteps}
+            {totalSteps > 0 ? ` / ${totalSteps}` : ""}
+          </strong>
+        </div>
+        <div>
+          <span>Model calls</span>
+          <strong>{callValue}</strong>
+          {usage && usage.attempts > usage.logicalCalls && (
+            <small>{usage.attempts} attempts</small>
+          )}
+        </div>
+        <div>
+          <span>Tokens</span>
+          <strong>
+            {fmtNum(tokensIn)} in · {fmtNum(tokensOut)} out
+          </strong>
+          {usage &&
+            (usage.cachedInputTokens > 0 || usage.reasoningTokens > 0) && (
+              <small>
+                {usage.cachedInputTokens > 0
+                  ? `${fmtNum(usage.cachedInputTokens)} cached`
+                  : ""}
+                {usage.cachedInputTokens > 0 && usage.reasoningTokens > 0
+                  ? " · "
+                  : ""}
+                {usage.reasoningTokens > 0
+                  ? `${fmtNum(usage.reasoningTokens)} reasoning`
+                  : ""}
+              </small>
+            )}
+        </div>
+        <div>
+          <span>LLM cost</span>
+          <strong>{cost}</strong>
+          {usage && usage.unpricedCalls > 0 && usage.costUsdNanos != null && (
+            <small>
+              + {usage.unpricedCalls} unpriced call
+              {usage.unpricedCalls === 1 ? "" : "s"}
+            </small>
+          )}
+        </div>
+      </div>
+
+      <div className="agent-studio-run-progress__timeline">
+        <div className="agent-studio-run-progress__timeline-heading">
+          <span>Live activity</span>
+          <button type="button" onClick={onOpenTrace}>
+            Open full trace
+          </button>
+        </div>
+        {traceLoading && visibleEvents.length === 0 ? (
+          <div className="agent-studio-run-progress__waiting">
+            Waiting for the first runtime event…
+          </div>
+        ) : visibleEvents.length > 0 ? (
+          <div className="agent-studio-run-progress__events">
+            {progressEvents.length > visibleEvents.length && (
+              <div className="agent-studio-run-progress__earlier mono">
+                +{progressEvents.length - visibleEvents.length} earlier
+                activities
+              </div>
+            )}
+            {visibleEvents.map((event) => (
+              <div
+                className={`agent-studio-run-progress__event agent-studio-run-progress__event--${event.status}`}
+                key={event.id}
+              >
+                <span className="agent-studio-run-progress__event-dot" />
+                <span className="agent-studio-run-progress__event-copy">
+                  <span>
+                    <strong>{traceEventTitle(event)}</strong>
+                    <small>{event.kind.replaceAll("_", " ")}</small>
+                  </span>
+                  {event.summary && <p>{event.summary}</p>}
+                </span>
+                <span className="mono agent-studio-run-progress__event-time">
+                  {event.durationMs == null ? "" : fmtDur(event.durationMs)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="agent-studio-run-progress__waiting">
+            The run was accepted. Detailed activity will appear here.
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -555,14 +816,12 @@ export function TestLab({
   const [temperature, setTemperature] = useState("");
   const [maxTokens, setMaxTokens] = useState("");
   const [timeoutSeconds, setTimeoutSeconds] = useState("");
+  const [setupOpen, setSetupOpen] = useState(false);
   const [setupPanelWidth, setSetupPanelWidth] = useState<number | null>(null);
   const [historyPanelWidth, setHistoryPanelWidth] = useState(
     TEST_HISTORY_DEFAULT_WIDTH,
   );
-  const [historyPanelHeight, setHistoryPanelHeight] = useState(
-    TEST_HISTORY_DEFAULT_HEIGHT,
-  );
-  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [testGridWidth, setTestGridWidth] = useState(1_500);
   const [historyInline, setHistoryInline] = useState(true);
   const createRun = useCreateAgentRun(agentId);
@@ -571,8 +830,10 @@ export function TestLab({
   const selectedHistory =
     session.data?.runs.find((row) => row.id === selectedRunId) ??
     history.data?.items.find((row) => row.id === selectedRunId);
+  const runDetail = useRun(selectedRunId, { live: Boolean(selectedRunId) });
   const runIsLive = Boolean(
-    selectedRunId && !isTerminalStatus(selectedHistory?.status),
+    selectedRunId &&
+    !isTerminalStatus(runDetail.data?.run.status ?? selectedHistory?.status),
   );
   const trace = useRunTrace(selectedRunId, 0, runIsLive);
   const output = useRunOutput(selectedRunId, runIsLive);
@@ -587,7 +848,7 @@ export function TestLab({
   const hadDraft = useRef(Boolean(draft));
   const dispatchInFlightRef = useRef(false);
   const hydratedSessionRef = useRef<string | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const testGridRef = useRef<HTMLDivElement>(null);
   const setupPanelRef = useRef<HTMLElement>(null);
   const artifactFilename = String(
@@ -638,12 +899,13 @@ export function TestLab({
           TEST_SETUP_MIN_WIDTH,
           setupPanelMaxWidth,
         );
-  const setupWidthForBounds =
-    effectiveSetupPanelWidth ??
-    Math.round(
-      setupPanelRef.current?.getBoundingClientRect().width ??
-        TEST_SETUP_MIN_WIDTH,
-    );
+  const setupWidthForBounds = !setupOpen
+    ? 0
+    : (effectiveSetupPanelWidth ??
+      Math.round(
+        setupPanelRef.current?.getBoundingClientRect().width ??
+          TEST_SETUP_MIN_WIDTH,
+      ));
   const historyPanelMaxWidth = maxTestHistoryWidth(
     testGridWidth,
     setupWidthForBounds,
@@ -654,12 +916,6 @@ export function TestLab({
     TEST_HISTORY_MIN_WIDTH,
     historyPanelMaxWidth,
   );
-  const effectiveHistoryPanelHeight = clampPanelWidth(
-    historyPanelHeight,
-    TEST_HISTORY_MIN_HEIGHT,
-    TEST_HISTORY_MAX_HEIGHT,
-  );
-
   useEffect(() => {
     if (sessionId) return;
     if (draft && !hadDraft.current) setTarget("draft");
@@ -723,11 +979,11 @@ export function TestLab({
     setToolPolicy(continuation.toolPolicy);
   }, [session.data?.continuation, sessionId]);
 
-  const activeStatus = isTerminalStatus(selectedHistory?.status)
-    ? selectedHistory!.status
-    : (output.data?.status ??
-      selectedHistory?.status ??
-      (selectedRunId ? "queued" : null));
+  const activeStatus =
+    runDetail.data?.run.status ??
+    output.data?.status ??
+    selectedHistory?.status ??
+    (selectedRunId ? "queued" : null);
   const selectedOutputText =
     output.data?.output == null ? "" : prettyJsonOutput(output.data.output);
   const selectedOutputPlaceholder = !selectedRunId
@@ -873,15 +1129,15 @@ export function TestLab({
 
   useEffect(() => {
     if (resultTab !== "chat") return;
-    chatEndRef.current?.scrollIntoView({
-      block: "end",
-    });
+    const scroller = chatScrollRef.current;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }, [
     activeStatus,
     chatTranscript.length,
     pendingTurn?.runId,
     pendingTurn?.state,
     resultTab,
+    trace.data?.events.length,
   ]);
 
   useEffect(() => {
@@ -889,16 +1145,11 @@ export function TestLab({
   }, [pendingTurnIsPersisted]);
 
   useEffect(() => {
-    if (!isTerminalStatus(selectedHistory?.status)) return;
+    if (!isTerminalStatus(activeStatus)) return;
     void trace.refetch();
     void output.refetch();
     void artifacts.refetch();
-  }, [
-    selectedHistory?.status,
-    trace.refetch,
-    output.refetch,
-    artifacts.refetch,
-  ]);
+  }, [activeStatus, trace.refetch, output.refetch, artifacts.refetch]);
 
   async function run() {
     if (submitDisabled || dispatchInFlightRef.current) return;
@@ -1034,14 +1285,33 @@ export function TestLab({
     createRun.reset();
   }
 
+  function toggleSetupPanel() {
+    setSetupOpen((open) => {
+      const next = !open;
+      if (next && !historyInline) setHistoryOpen(false);
+      return next;
+    });
+  }
+
+  function toggleHistoryPanel() {
+    setHistoryOpen((open) => {
+      const next = !open;
+      if (next && !historyInline) setSetupOpen(false);
+      return next;
+    });
+  }
+
   return (
-    <div className="agent-studio-test-lab" style={{ display: "grid", gap: 14 }}>
-      <InlineNotice tone="signal" title="Test Lab uses the real runtime">
-        Send publishes a runtime event that triggers this agent. Your chat
-        message is copied exactly into the event as the agent&apos;s prompt
-        input. Structured variables stay separate, and every run, trace event,
-        log, and JSON artifact is retained in history.
-      </InlineNotice>
+    <div
+      className="agent-studio-test-lab"
+      style={{
+        display: "flex",
+        height: "100%",
+        minHeight: 0,
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
       {hasPreviewSteps && (
         <InlineNotice tone="amber" title="Preview steps in this definition">
           Delay and subflow steps are recorded in the trace, but delays do not
@@ -1050,11 +1320,12 @@ export function TestLab({
       )}
       <div
         ref={testGridRef}
-        className={`agent-studio-test-grid${historyOpen ? "" : " agent-studio-test-grid--history-closed"}`}
+        className={`agent-studio-test-grid${setupOpen ? "" : " agent-studio-test-grid--setup-closed"}${historyOpen ? "" : " agent-studio-test-grid--history-closed"}`}
         style={
           {
             display: "grid",
-            minHeight: 600,
+            flex: 1,
+            minHeight: 0,
             border: "1px solid var(--border)",
             borderRadius: 7,
             overflow: "hidden",
@@ -1064,7 +1335,6 @@ export function TestLab({
                 ? undefined
                 : `${effectiveSetupPanelWidth}px`,
             "--agent-studio-test-history-width": `${effectiveHistoryPanelWidth}px`,
-            "--agent-studio-test-history-height": `${effectiveHistoryPanelHeight}px`,
           } as CSSProperties
         }
       >
@@ -1072,8 +1342,9 @@ export function TestLab({
           id="agent-studio-test-setup-panel"
           ref={setupPanelRef}
           className="agent-studio-test-setup"
+          aria-hidden={!setupOpen}
           style={{
-            display: "flex",
+            display: setupOpen ? "flex" : "none",
             flexDirection: "column",
             minWidth: 0,
           }}
@@ -1101,23 +1372,33 @@ export function TestLab({
                 Structured inputs and runtime settings
               </div>
             </div>
-            {sessionId ? (
-              <Badge tone="blue">{target} · locked</Badge>
-            ) : (
-              <Segmented
-                ariaLabel="Version to test"
-                value={target}
-                onChange={setTarget}
-                options={[
-                  ...(draft
-                    ? [{ value: "draft" as const, label: "Draft" }]
-                    : []),
-                  ...(liveVersionId
-                    ? [{ value: "live" as const, label: "Live" }]
-                    : []),
-                ]}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {sessionId ? (
+                <Badge tone="blue">{target} · locked</Badge>
+              ) : (
+                <Segmented
+                  ariaLabel="Version to test"
+                  value={target}
+                  onChange={setTarget}
+                  options={[
+                    ...(draft
+                      ? [{ value: "draft" as const, label: "Draft" }]
+                      : []),
+                    ...(liveVersionId
+                      ? [{ value: "live" as const, label: "Live" }]
+                      : []),
+                  ]}
+                />
+              )}
+              <Button
+                small
+                tone="ghost"
+                icon="x"
+                title="Close test setup"
+                ariaLabel="Close test setup"
+                onClick={() => setSetupOpen(false)}
               />
-            )}
+            </div>
           </div>
           <div
             className="agent-studio-test-target-note"
@@ -1661,23 +1942,25 @@ export function TestLab({
           )}
         </section>
 
-        <div className="agent-studio-test-splitter agent-studio-test-splitter--setup">
-          <Splitter
-            axis="x"
-            getValue={() =>
-              effectiveSetupPanelWidth ??
-              Math.round(
-                setupPanelRef.current?.getBoundingClientRect().width ??
-                  TEST_SETUP_MIN_WIDTH,
-              )
-            }
-            setValue={setSetupPanelWidth}
-            min={TEST_SETUP_MIN_WIDTH}
-            max={setupPanelMaxWidth}
-            ariaLabel="Resize Test setup and Conversation panels"
-            ariaControls="agent-studio-test-setup-panel agent-studio-test-conversation-panel"
-          />
-        </div>
+        {setupOpen && (
+          <div className="agent-studio-test-splitter agent-studio-test-splitter--setup">
+            <Splitter
+              axis="x"
+              getValue={() =>
+                effectiveSetupPanelWidth ??
+                Math.round(
+                  setupPanelRef.current?.getBoundingClientRect().width ??
+                    TEST_SETUP_MIN_WIDTH,
+                )
+              }
+              setValue={setSetupPanelWidth}
+              min={TEST_SETUP_MIN_WIDTH}
+              max={setupPanelMaxWidth}
+              ariaLabel="Resize Test setup and Conversation panels"
+              ariaControls="agent-studio-test-setup-panel agent-studio-test-conversation-panel"
+            />
+          </div>
+        )}
 
         <section
           id="agent-studio-test-conversation-panel"
@@ -1710,6 +1993,7 @@ export function TestLab({
                 >
                   Conversation
                 </span>
+                <RuntimeHint />
                 {activeStatus && (
                   <Badge tone={statusTone(activeStatus)}>{activeStatus}</Badge>
                 )}
@@ -1751,9 +2035,24 @@ export function TestLab({
               <Button
                 small
                 tone="ghost"
+                icon="settings"
+                title={setupOpen ? "Hide test setup" : "Show test setup"}
+                onClick={toggleSetupPanel}
+                ariaLabel={setupOpen ? "Hide test setup" : "Show test setup"}
+                ariaControls="agent-studio-test-setup-panel"
+                ariaExpanded={setupOpen}
+              >
+                Setup
+                {missingRequired.length > 0
+                  ? ` · ${missingRequired.length}`
+                  : ""}
+              </Button>
+              <Button
+                small
+                tone="ghost"
                 icon="logs"
                 title={historyOpen ? "Hide run history" : "Show run history"}
-                onClick={() => setHistoryOpen((open) => !open)}
+                onClick={toggleHistoryPanel}
                 ariaLabel={
                   historyOpen ? "Hide run history" : "Show run history"
                 }
@@ -1824,6 +2123,7 @@ export function TestLab({
             )}
           </div>
           <div
+            ref={chatScrollRef}
             role="tabpanel"
             className={
               resultTab === "chat" ? "agent-studio-chat-scroll" : undefined
@@ -1911,7 +2211,17 @@ export function TestLab({
                     />
                   </>
                 )}
-                <div ref={chatEndRef} aria-hidden="true" />
+                {selectedRunId && (
+                  <RunProgressCard
+                    runId={selectedRunId}
+                    historyRow={selectedHistory}
+                    detail={runDetail.data}
+                    traceEvents={trace.data?.events ?? []}
+                    traceLoading={trace.isLoading}
+                    expectedSteps={definition.actions.length}
+                    onOpenTrace={() => setResultTab("trace")}
+                  />
+                )}
               </div>
             ) : !selectedRunId ? (
               <Empty
@@ -2190,7 +2500,10 @@ export function TestLab({
               {missingRequired.length > 0 && (
                 <div className="agent-studio-chat-composer-error">
                   Complete required inputs in Test setup:{" "}
-                  {missingRequired.map((input) => input.label).join(", ")}
+                  {missingRequired.map((input) => input.label).join(", ")}.{" "}
+                  <button type="button" onClick={() => setSetupOpen(true)}>
+                    Open setup
+                  </button>
                 </div>
               )}
               {sessionId && targetUnavailable && (
@@ -2213,30 +2526,16 @@ export function TestLab({
           )}
         </section>
 
-        {historyOpen && (
+        {historyOpen && historyInline && (
           <div className="agent-studio-test-splitter agent-studio-test-splitter--history">
             <Splitter
-              axis={historyInline ? "x" : "y"}
-              getValue={() =>
-                historyInline
-                  ? effectiveHistoryPanelWidth
-                  : effectiveHistoryPanelHeight
-              }
-              setValue={
-                historyInline ? setHistoryPanelWidth : setHistoryPanelHeight
-              }
-              min={
-                historyInline ? TEST_HISTORY_MIN_WIDTH : TEST_HISTORY_MIN_HEIGHT
-              }
-              max={
-                historyInline ? historyPanelMaxWidth : TEST_HISTORY_MAX_HEIGHT
-              }
+              axis="x"
+              getValue={() => effectiveHistoryPanelWidth}
+              setValue={setHistoryPanelWidth}
+              min={TEST_HISTORY_MIN_WIDTH}
+              max={historyPanelMaxWidth}
               invert
-              ariaLabel={
-                historyInline
-                  ? "Resize Conversation and Run history panels"
-                  : "Resize Conversation and Run history rows"
-              }
+              ariaLabel="Resize Conversation and Run history panels"
               ariaControls="agent-studio-test-conversation-panel agent-studio-test-history-panel"
             />
           </div>
@@ -2265,6 +2564,14 @@ export function TestLab({
                 Saved for this agent
               </div>
             </div>
+            <Button
+              small
+              tone="ghost"
+              icon="x"
+              title="Close run history"
+              ariaLabel="Close run history"
+              onClick={() => setHistoryOpen(false)}
+            />
           </div>
           <div style={{ flex: 1, overflow: "auto" }}>
             {history.isLoading ? (
@@ -2295,6 +2602,7 @@ export function TestLab({
                     }
                     setSessionId(row.sessionId ?? undefined);
                     setResultTab("chat");
+                    if (!historyInline) setHistoryOpen(false);
                   }}
                   style={{
                     width: "100%",

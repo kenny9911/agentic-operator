@@ -16,13 +16,7 @@
  * fetched from /v1/* by Phase 1.
  */
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface Tweaks {
   theme: "dark" | "light";
@@ -40,7 +34,7 @@ export const DEFAULT_TWEAKS: Tweaks = {
   density: "default",
   liveStream: true,
   showDebug: false,
-  tenant: "raas",
+  tenant: "",
   accent: "#d0ff00",
   dataSource: "json",
 };
