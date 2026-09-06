@@ -90,7 +90,18 @@ const toolArgumentPath = safeDataPath.refine(
 );
 
 const ToolArgumentSourceSchema = z.union([
-  z.object({ from: toolArgumentPath, required: z.boolean().optional() }).strict(),
+  z.object({
+    from: toolArgumentPath,
+    required: z.boolean().optional(),
+    // Per-action constants merged OVER the resolved object. Validated with the
+    // same finite-JSON rule as `const`, so a `with` block can never smuggle a
+    // non-serialisable value into a tool payload.
+    with: z.record(z.string(), z.unknown()).optional(),
+  }).strict().superRefine((value, ctx) => {
+    if (value.with !== undefined && !isSafeJsonConstant(value.with)) {
+      ctx.addIssue({ code: "custom", path: ["with"], message: "must be finite JSON" });
+    }
+  }),
   z.object({ const: z.unknown() }).strict().superRefine((value, ctx) => {
     if (!Object.prototype.hasOwnProperty.call(value, "const") || !isSafeJsonConstant(value.const)) {
       ctx.addIssue({ code: "custom", path: ["const"], message: "must be an explicit finite JSON constant" });

@@ -108,7 +108,7 @@
     "confirmPlanAndPackage": [
       {
         "event": "PLAN_AND_PACKAGE_CONFIRMED",
-        "payload_from": "event.data",
+        "payload_from": "results.manual-2",
         "when": "results.manual-2.decision == 'approved'"
       },
       {
@@ -153,7 +153,12 @@
     },
     "returnPlanForRectification": {
       "payload": {
-        "from": "results.manual-4"
+        "from": "results.manual-4",
+        "with": {
+          "task_type": "计划整改",
+          "title": "年度计划合规校验未通过，请整改后重新提交",
+          "assignee_role": "计划员"
+        }
       }
     },
     "annotateFrameAndCentralPurchase": {
@@ -163,7 +168,12 @@
     },
     "raisePackagingComplianceAlert": {
       "payload": {
-        "from": "event.data"
+        "from": "event.data",
+        "with": {
+          "task_type": "组包合规预警",
+          "title": "组包方案违反合规规则，请重新编排",
+          "assignee_role": "计划员"
+        }
       }
     },
     "confirmPlanAndPackage": {
@@ -187,6 +197,14 @@
           "title": "需求拆分确认（R2-01）",
           "description": "计划行编号与拆分建议由系统从本轮比对结果带出，不需要手工填写；只需确认是否按建议拆分。",
           "properties": {
+            "decision": {
+              "type": "string",
+              "title": "确认结果（确认后按建议拆分）",
+              "enum": [
+                "approved",
+                "rejected"
+              ]
+            },
             "plan_line_id": {
               "type": "string",
               "title": "计划行编号"
@@ -201,6 +219,7 @@
             }
           },
           "required": [
+            "decision",
             "plan_line_id"
           ]
         }
@@ -215,6 +234,14 @@
           "title": "计划退回整改（R2-04）",
           "description": "审核意见与违规明细由系统带出；整改完成后确认，计划将重新进入合规校验。",
           "properties": {
+            "decision": {
+              "type": "string",
+              "title": "确认结果（确认后重新进入合规校验）",
+              "enum": [
+                "approved",
+                "rejected"
+              ]
+            },
             "audit_opinion_id": {
               "type": "string",
               "title": "审核意见编号"
@@ -225,6 +252,7 @@
             }
           },
           "required": [
+            "decision",
             "audit_opinion_id",
             "rectification_note"
           ]
@@ -240,6 +268,14 @@
           "title": "计划与组包确认（R2-06）",
           "description": "计划编号与组包方案由系统带出，确认人取当前登录人；确认后进入审批提交，驳回则退回组包重排。",
           "properties": {
+            "decision": {
+              "type": "string",
+              "title": "确认结果（驳回则退回组包重排）",
+              "enum": [
+                "approved",
+                "rejected"
+              ]
+            },
             "plan_id": {
               "type": "string",
               "title": "计划编号"
@@ -258,6 +294,7 @@
             }
           },
           "required": [
+            "decision",
             "plan_id",
             "package_scheme_id",
             "confirmed_by"
@@ -267,6 +304,7 @@
       "captureRejectionReason": {
         "task_type": "plan.package-reject-reason",
         "awaiting_role": "计划员",
+        "condition": "results.manual-2.decision == 'rejected'",
         "form_schema": {
           "type": "object",
           "title": "驳回原因（仅驳回时填写）",

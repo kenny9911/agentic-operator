@@ -332,7 +332,15 @@ export function resolveConditionPath(scope: ConditionScope, rawPath: string): { 
 // ── exact generated-plan tool dataflow ───────────────────────────────────────
 
 export type ToolArgumentSource =
-  | { from: string; required?: boolean }
+  /**
+   * `with` shallow-merges caller-authored constants OVER the value resolved
+   * from `from` (which must then resolve to a JSON object). It exists for the
+   * common shape of wrapping one generic backend operation per action: the
+   * event or form supplies the business fields, while the action itself owns
+   * the discriminator the operation requires (e.g. which kind of task to push).
+   * Neither an LLM nor an operator should be inventing that constant.
+   */
+  | { from: string; required?: boolean; with?: Record<string, unknown> }
   | { const: unknown };
 
 export interface ToolResultMap {
@@ -419,6 +427,25 @@ export function materializeToolArguments(
       const cloned = cloneJsonConstant(resolved.value);
       if (!cloned.ok) {
         return { ok: false, error: `tool argument path "${path}" did not resolve to finite JSON`, argument, path };
+      }
+      if (Object.prototype.hasOwnProperty.call(record, "with")) {
+        const overrides = record.with;
+        if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+          return { ok: false, error: `tool argument "${argument}" \`with\` must be an object`, argument, path };
+        }
+        const base = cloned.value;
+        if (!base || typeof base !== "object" || Array.isArray(base)) {
+          return { ok: false, error: `tool argument "${argument}" uses \`with\` but path "${path}" is not an object`, argument, path };
+        }
+        const clonedWith = cloneJsonConstant(overrides);
+        if (!clonedWith.ok) {
+          return { ok: false, error: `tool argument "${argument}" \`with\` is not finite JSON`, argument, path };
+        }
+        args[argument] = {
+          ...(base as Record<string, unknown>),
+          ...(clonedWith.value as Record<string, unknown>),
+        };
+        continue;
       }
       args[argument] = cloned.value;
       continue;

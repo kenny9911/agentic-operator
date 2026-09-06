@@ -322,6 +322,14 @@
         "form_schema": {
           "description": "计划行编号与拆分建议由系统从本轮比对结果带出，不需要手工填写；只需确认是否按建议拆分。",
           "properties": {
+            "decision": {
+              "enum": [
+                "approved",
+                "rejected"
+              ],
+              "title": "确认结果（确认后按建议拆分）",
+              "type": "string"
+            },
             "plan_line_id": {
               "title": "计划行编号",
               "type": "string"
@@ -336,6 +344,7 @@
             }
           },
           "required": [
+            "decision",
             "plan_line_id"
           ],
           "title": "需求拆分确认（R2-01）",
@@ -1523,12 +1532,21 @@
               "title": "审核意见编号",
               "type": "string"
             },
+            "decision": {
+              "enum": [
+                "approved",
+                "rejected"
+              ],
+              "title": "确认结果（确认后重新进入合规校验）",
+              "type": "string"
+            },
             "rectification_note": {
               "title": "整改说明",
               "type": "string"
             }
           },
           "required": [
+            "decision",
             "audit_opinion_id",
             "rectification_note"
           ],
@@ -1554,7 +1572,12 @@
         "result_key": "returnPlanForRectification",
         "tool_arguments": {
           "payload": {
-            "from": "results.manual-4"
+            "from": "results.manual-4",
+            "with": {
+              "assignee_role": "计划员",
+              "task_type": "计划整改",
+              "title": "年度计划合规校验未通过，请整改后重新提交"
+            }
           }
         },
         "type": "tool"
@@ -2092,7 +2115,12 @@
         "result_key": "raisePackagingComplianceAlert",
         "tool_arguments": {
           "payload": {
-            "from": "event.data"
+            "from": "event.data",
+            "with": {
+              "assignee_role": "计划员",
+              "task_type": "组包合规预警",
+              "title": "组包方案违反合规规则，请重新编排"
+            }
           }
         },
         "type": "tool"
@@ -2202,6 +2230,14 @@
               "title": "确认人",
               "type": "string"
             },
+            "decision": {
+              "enum": [
+                "approved",
+                "rejected"
+              ],
+              "title": "确认结果（驳回则退回组包重排）",
+              "type": "string"
+            },
             "package_scheme_id": {
               "title": "组包方案编号",
               "type": "string"
@@ -2216,6 +2252,7 @@
             }
           },
           "required": [
+            "decision",
             "plan_id",
             "package_scheme_id",
             "confirmed_by"
@@ -2231,6 +2268,7 @@
       },
       {
         "awaiting_role": "计划员",
+        "condition": "results.manual-2.decision == 'rejected'",
         "depends_on": [
           "manual-2"
         ],
@@ -2257,8 +2295,7 @@
           "metaerp.invoke"
         ],
         "depends_on": [
-          "manual-2",
-          "manual-3"
+          "manual-2"
         ],
         "description": "写回 Meta ERP：writeOperationLog。",
         "name": "metaerp.invoke",
@@ -2289,7 +2326,7 @@
         ],
         "description": "条件命中时发射事件 PLAN_AND_PACKAGE_CONFIRMED。",
         "emit_event": "PLAN_AND_PACKAGE_CONFIRMED",
-        "emit_payload_from": "event.data",
+        "emit_payload_from": "results.manual-2",
         "name": "emit:PLAN_AND_PACKAGE_CONFIRMED",
         "order": "5",
         "result_key": "emit-PLAN_AND_PACKAGE_CONFIRMED",

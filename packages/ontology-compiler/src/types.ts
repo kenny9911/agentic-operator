@@ -199,6 +199,22 @@ export interface OverlayRuleGate {
 export interface OverlayManualStep {
   awaiting_role?: string;
   form_schema?: Record<string, unknown>;
+  /**
+   * Precondition for surfacing this manual step at all. The runtime evaluates
+   * an action-level `condition` as that action's precondition *before* the
+   * manual task is created, so a false condition means no operator ever sees
+   * the task (see register.ts "A condition authored directly on an ordinary
+   * action is that action's precondition").
+   *
+   * A conditional manual step is OPTIONAL: it neither gates nor poisons the
+   * steps after it. Without this, `depends_on` would propagate its skip to the
+   * ERP write (any skipped dependency skips the dependent), so gating an
+   * optional follow-up question would silently kill the main path.
+   *
+   * Canonical case: a "rejection reason" step that must only be asked when the
+   * preceding approve/reject gate actually came back rejected.
+   */
+  condition?: string;
   /** Typed task class surfaced to the operator. Defaults to the ontology
    * manual-step name, which is exactly what register.ts already falls back to
    * (`action.task_type ?? action.name`), so the default changes no behaviour —
@@ -208,7 +224,10 @@ export interface OverlayManualStep {
 }
 
 export type OverlayToolArgumentSource =
-  | { from: string; required?: boolean }
+  /** `with` merges per-action constants over the resolved object — see the
+   * runtime's ToolArgumentSource for why the action, not the LLM or the
+   * operator, owns an operation's discriminator fields. */
+  | { from: string; required?: boolean; with?: Record<string, unknown> }
   | { const: unknown };
 
 /** One overlay-granted extra tool for a compiled agent. Only names with a

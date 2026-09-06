@@ -704,6 +704,15 @@ function normalizeToolArguments(
     if (hasFrom === hasConst) {
       fail(`overlay tool argument ${actionId}.${argument} must choose exactly one of from/const`);
     }
+    const withOverrides = (spec as { with?: unknown }).with;
+    if (withOverrides !== undefined) {
+      if (!hasFrom) {
+        fail(`overlay tool argument ${actionId}.${argument} may only use \`with\` alongside \`from\``);
+      }
+      if (!withOverrides || typeof withOverrides !== "object" || Array.isArray(withOverrides)) {
+        fail(`overlay tool argument ${actionId}.${argument}.with must be an object`);
+      }
+    }
     out[argument] = spec;
   }
   return out;
@@ -809,10 +818,22 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
   }
 
   // (b) manual steps from ontology action_steps (object_type === "manual").
+  //
+  // `manualKeys` holds only the UNCONDITIONAL steps — those are the ones that
+  // must gate everything after them. A step carrying an overlay `condition` is
+  // optional (see OverlayManualStep.condition): it is deliberately kept out of
+  // downstream `depends_on`, because any skipped dependency skips its dependent
+  // and an un-asked optional question would otherwise cancel the ERP write.
   const manualKeys: string[] = [];
   for (const manualStep of (action.action_steps ?? []).filter((step) => step.object_type === "manual")) {
     const overlayManual = ctx.overlay.manual_steps?.[action.id]?.[manualStep.name];
     const manualKey = identifierKey(`manual-${manualStep.order}`);
+    const manualCondition = overlayManual?.condition?.trim();
+    if (manualCondition !== undefined && manualCondition.length === 0) {
+      fail(
+        `manual step ${action.id}.${manualStep.name} declares an empty overlay condition`,
+      );
+    }
     steps.push({
       order: nextOrder(),
       name: manualStep.name,
@@ -828,11 +849,12 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
       awaiting_role:
         overlayManual?.awaiting_role ?? firstHumanRoleForAction(ctx.model, action.id) ?? "Human",
       result_key: manualKey,
+      ...(manualCondition ? { condition: manualCondition } : {}),
       ...(gateKeys.length || manualKeys.length
         ? { depends_on: [...gateKeys, ...manualKeys] }
         : {}),
     });
-    manualKeys.push(manualKey);
+    if (!manualCondition) manualKeys.push(manualKey);
   }
 
   // (c) the ERP write via metaerp.invoke; (d) result_key = action id slug.
