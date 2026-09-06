@@ -1,0 +1,414 @@
+{
+  "action_maps": [
+    {
+      "action_id": "scanApprovedDemandPlan",
+      "action_name": "scanApprovedDemandPlan",
+      "kind": "prompt",
+      "queries": [
+        "queryPbpHeader",
+        "queryPbpLine"
+      ]
+    },
+    {
+      "action_id": "analyzeDemandMerge",
+      "action_name": "analyzeDemandMerge",
+      "kind": "prompt",
+      "queries": []
+    },
+    {
+      "action_id": "splitOversizedDemand",
+      "action_name": "splitOversizedDemand",
+      "data_changes": [
+        {
+          "target_object": "Procurement_Plan_Line"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/splitDemandLine",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "splitDemandLine"
+    },
+    {
+      "action_id": "verifyInventoryAvailability",
+      "action_name": "verifyInventoryAvailability",
+      "kind": "prompt",
+      "queries": [
+        "queryOnhandQuantity",
+        "queryReservation",
+        "queryItemMinMaxLevel"
+      ]
+    },
+    {
+      "action_id": "createInventoryTransferOrder",
+      "action_name": "createInventoryTransferOrder",
+      "data_changes": [
+        {
+          "target_object": "Stock_Transfer_Request"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/createTransactionOrder",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "createTransactionOrder"
+    },
+    {
+      "action_id": "derivePurchaseSchedule",
+      "action_name": "derivePurchaseSchedule",
+      "kind": "prompt",
+      "queries": [
+        "queryStageCycleConfig"
+      ]
+    },
+    {
+      "action_id": "generateExecutionPlanDraft",
+      "action_name": "generateExecutionPlanDraft",
+      "data_changes": [
+        {
+          "target_object": "Procurement_Plan"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/createPbp",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "createPbp"
+    },
+    {
+      "action_id": "auditAnnualPlanCompliance",
+      "action_name": "auditAnnualPlanCompliance",
+      "kind": "prompt",
+      "queries": [
+        "queryCentralCatalogConfig",
+        "queryAuditThresholdConfig",
+        "queryPoLine",
+        "queryContract"
+      ]
+    },
+    {
+      "action_id": "returnPlanForRectification",
+      "action_name": "returnPlanForRectification",
+      "data_changes": [
+        {
+          "target_object": "Digital_Employee_Task"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/pushTask",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "pushTask"
+    },
+    {
+      "action_id": "recommendPackagingScheme",
+      "action_name": "recommendPackagingScheme",
+      "kind": "prompt",
+      "queries": [
+        "queryAuditThresholdConfig"
+      ]
+    },
+    {
+      "action_id": "annotateFrameAndCentralPurchase",
+      "action_name": "annotateFrameAndCentralPurchase",
+      "data_changes": [
+        {
+          "target_object": "Sourcing_Package_Line"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/createProcPackageLines",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "createProcPackageLines"
+    },
+    {
+      "action_id": "raisePackagingComplianceAlert",
+      "action_name": "raisePackagingComplianceAlert",
+      "data_changes": [
+        {
+          "target_object": "Digital_Employee_Task"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/pushTask",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "pushTask"
+    },
+    {
+      "action_id": "confirmPlanAndPackage",
+      "action_name": "confirmPlanAndPackage",
+      "data_changes": [
+        {
+          "target_object": "Digital_Employee_Operation_Log"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/writeOperationLog",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "writeOperationLog"
+    },
+    {
+      "action_id": "submitPlanForApproval",
+      "action_name": "submitPlanForApproval",
+      "data_changes": [
+        {
+          "target_object": "Procurement_Plan"
+        }
+      ],
+      "endpoint": "/metaerp/openapi/v1/submitApproval",
+      "kind": "external",
+      "method": "POST",
+      "operation_id": "submitApproval"
+    }
+  ],
+  "object_maps": [
+    {
+      "erp_entity": "ss_pbp_header_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPbpHeader"
+      },
+      "object_id": "Procurement_Plan",
+      "object_name": "采购计划"
+    },
+    {
+      "erp_entity": "ss_pbp_line_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPbpLine"
+      },
+      "object_id": "Procurement_Plan_Line",
+      "object_name": "采购计划行"
+    },
+    {
+      "erp_entity": "pr_header_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPr"
+      },
+      "object_id": "Purchase_Requisition",
+      "object_name": "采购申请"
+    },
+    {
+      "erp_entity": "ss_proc_package_header_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryProcPackageHeader"
+      },
+      "object_id": "Sourcing_Package",
+      "object_name": "采购包"
+    },
+    {
+      "erp_entity": "clm_contract_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryContract"
+      },
+      "object_id": "Purchase_Contract",
+      "object_name": "采购合同"
+    },
+    {
+      "erp_entity": "po_header_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPoHeader"
+      },
+      "object_id": "Purchase_Order",
+      "object_name": "采购订单"
+    },
+    {
+      "erp_entity": "cfg_stage_cycle_standard_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryStageCycleConfig"
+      },
+      "object_id": "Stage_Cycle_Standard",
+      "object_name": "采购阶段周期标准"
+    },
+    {
+      "erp_entity": "inv_transaction_order_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryTransactionOrders"
+      },
+      "object_id": "Stock_Transfer_Request",
+      "object_name": "调拨申请"
+    },
+    {
+      "erp_entity": "inv_onhand_balance_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryOnhandQuantity"
+      },
+      "object_id": "Inventory_Onhand_Balance",
+      "object_name": "库存现有量"
+    },
+    {
+      "erp_entity": "inv_reservation_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryReservation"
+      },
+      "object_id": "Inventory_Reservation",
+      "object_name": "库存预留"
+    },
+    {
+      "erp_entity": "inv_min_max_level_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryItemMinMaxLevel"
+      },
+      "object_id": "Inventory_MinMax_Level",
+      "object_name": "库存高低水位"
+    },
+    {
+      "erp_entity": "cfg_central_catalog_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryCentralCatalogConfig"
+      },
+      "object_id": "Central_Purchase_Catalog",
+      "object_name": "集采目录"
+    },
+    {
+      "erp_entity": "cfg_audit_threshold_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryAuditThresholdConfig"
+      },
+      "object_id": "Audit_Threshold_Setting",
+      "object_name": "校验阈值配置"
+    },
+    {
+      "erp_entity": "ss_spa_header_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/querySpaList"
+      },
+      "object_id": "Frame_Agreement",
+      "object_name": "框架协议"
+    },
+    {
+      "erp_entity": "ss_spa_line_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/querySpaLine"
+      },
+      "object_id": "Frame_Agreement_Item",
+      "object_name": "框架协议行"
+    },
+    {
+      "erp_entity": "cfg_purchase_category_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPurchaseCategory"
+      },
+      "object_id": "Purchase_Category",
+      "object_name": "采购品类"
+    },
+    {
+      "erp_entity": "ss_proc_package_line_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryProcPackageLine"
+      },
+      "object_id": "Sourcing_Package_Line",
+      "object_name": "采购包行"
+    },
+    {
+      "erp_entity": "dw_demand_merge_suggestion_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryDemandMergeSuggestions"
+      },
+      "object_id": "Demand_Merge_Suggestion",
+      "object_name": "需求合并建议"
+    },
+    {
+      "erp_entity": "dw_stock_check_result_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryStockCheckResults"
+      },
+      "object_id": "Stock_Check_Result",
+      "object_name": "库存校验结果"
+    },
+    {
+      "erp_entity": "dw_backward_schedule_plan_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryBackwardSchedulePlans"
+      },
+      "object_id": "Backward_Schedule_Plan",
+      "object_name": "倒排工期计划"
+    },
+    {
+      "erp_entity": "dw_backward_schedule_stage_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryBackwardScheduleStages"
+      },
+      "object_id": "Backward_Schedule_Stage",
+      "object_name": "倒排节点计划"
+    },
+    {
+      "erp_entity": "dw_package_scheme_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPackageSchemes"
+      },
+      "object_id": "Package_Scheme",
+      "object_name": "组包方案"
+    },
+    {
+      "erp_entity": "dw_plan_audit_opinion_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPlanAuditOpinions"
+      },
+      "object_id": "Plan_Audit_Opinion",
+      "object_name": "计划审核意见"
+    },
+    {
+      "erp_entity": "dw_plan_audit_finding_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPlanAuditFindings"
+      },
+      "object_id": "Plan_Audit_Finding",
+      "object_name": "审核明细"
+    },
+    {
+      "erp_entity": "dw_packaging_finding_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPackagingFindings"
+      },
+      "object_id": "Packaging_Compliance_Finding",
+      "object_name": "组包合规结论"
+    },
+    {
+      "erp_entity": "dw_employee_task_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryEmployeeTasks"
+      },
+      "object_id": "Digital_Employee_Task",
+      "object_name": "数字员工待办"
+    },
+    {
+      "erp_entity": "dw_operation_log_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryOperationLogs"
+      },
+      "object_id": "Digital_Employee_Operation_Log",
+      "object_name": "数字员工作业留痕"
+    },
+    {
+      "erp_entity": "po_line_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPoLine"
+      },
+      "object_id": "po_line_t",
+      "object_name": "订单行台账（历史价格曲线的样本）"
+    }
+  ]
+}

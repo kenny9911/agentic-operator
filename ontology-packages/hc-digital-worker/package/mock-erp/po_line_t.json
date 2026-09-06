@@ -1,0 +1,28 @@
+{
+  "rows": [
+    {
+      "MATERIAL_CODE": "M-BRK-126",
+      "ORDER_DATE": "2026-04-02",
+      "ORDER_QTY": 6,
+      "PO_HEADER_ID": "PO-2026-20487",
+      "PO_LINE_ID": "POL-2026-20487-01",
+      "UNIT_PRICE": 280000
+    },
+    {
+      "MATERIAL_CODE": "M-BRK-126",
+      "ORDER_DATE": "2026-01-18",
+      "ORDER_QTY": 10,
+      "PO_HEADER_ID": "PO-2026-19902",
+      "PO_LINE_ID": "POL-2026-19902-01",
+      "UNIT_PRICE": 276500
+    },
+    {
+      "MATERIAL_CODE": "M-CAB-240",
+      "ORDER_DATE": "2026-02-25",
+      "ORDER_QTY": 8000,
+      "PO_HEADER_ID": "PO-2026-20110",
+      "PO_LINE_ID": "POL-2026-20110-01",
+      "UNIT_PRICE": 172
+    }
+  ]
+}

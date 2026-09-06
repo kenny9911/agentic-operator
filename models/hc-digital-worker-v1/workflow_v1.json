@@ -1,0 +1,2609 @@
+[
+  {
+    "actions": [
+      {
+        "action_prompt": "【查】每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤掉草稿、已取消、已删除的单据，圈定当日需求合并的作业范围(R2-01)。扫描一次覆盖全集团，替代计划员逐条翻看。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 1 步：**同一轮一次性并发**调用 queryPbpHeader 与 queryPbpLine，不要串行。\n第 2 步：只保留 STATUS=已批准 的计划头，草稿/已取消/已删除一律剔除（R2-01）。\n第 3 步：把计划行按其 PBP_HEADER_ID 归到对应计划头下，行的物料、数量、\n需求到货日期、计划行类型编码原样带出，不得改写编码。\n\nscan_date **原样照抄**触发事件负载里的 scan_date，不得用你认知里的今天。\n\n执行步骤：\n1. anchorScanDate：把本次扫描业务日期锚定为事件携带的 scan_date，作为后续日期差、查重窗口、倒排「当前日期」的唯一定义，禁止各环节各取系统当下时间。\n2. writeScanTrace：记录扫描范围、命中条数、过滤条数与耗时，形成可审计留痕。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan`、`demand_plan_line`、`scanned_line_count`、`coverage_note`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan\": <见字段说明>,\n  \"demand_plan_line\": <见字段说明>,\n  \"scanned_line_count\": <见字段说明>,\n  \"coverage_note\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- scan_batch_id: 扫描批次号。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- scan_date: 扫描业务日期。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- in_scope_line_count: 纳入范围的计划行条数。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- filtered_line_count: 被过滤的计划行条数。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- plan_id: 本批次覆盖的采购计划。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- demand_plan: 本轮纳入的采购计划头列表：[{plan_id, plan_no, business_type, plan_type, status, demand_organization, demand_department, planner, annual_plan_flag, approved_at}]。只含 status='已批准' 的计划，草稿/已取消/已删除一律不得出现。\n- demand_plan_line: 计划行列表（每条归属到其 plan_id）：[{plan_line_id, plan_id, line_type_code, material_code, material_name, quantity, unit, estimated_unit_price, required_arrival_date, inventory_org, split_flag}]。编码一律用 metaERP 返回的原值。\n- scanned_line_count: 本轮纳入的计划行条数（整数）。\n- coverage_note: 本轮范围说明：触发事件带 plan_id 时写明只处理该计划，否则写明已全量纳入所有已批准计划。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "description": "【查】每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤掉草稿、已取消、已删除的单据，圈定当日需求合并的作业范围(R2-01)。扫描一次覆盖全集团，替代计划员逐条翻看。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 1 步：**同一轮一次性并发**调用 queryPbpHeader 与 queryPbpLine，不要串行。\n第 2 步：只保留 STATUS=已批准 的计划头，草稿/已取消/已删除一律剔除（R2-01）。\n第 3 步：把计划行按其 PBP_HEADER_ID 归到对应计划头下，行的物料、数量、\n需求到货日期、计划行类型编码原样带出，不得改写编码。\n\nscan_date **原样照抄**触发事件负载里的 scan_date，不得用你认知里的今天。",
+        "name": "analyze",
+        "order": "1",
+        "result_key": "scanApprovedDemandPlan",
+        "type": "logic"
+      },
+      {
+        "description": "发射事件 APPROVED_DEMAND_PLAN_SCANNED（无条件）。",
+        "emit_event": "APPROVED_DEMAND_PLAN_SCANNED",
+        "emit_payload_from": "results.scanApprovedDemandPlan",
+        "name": "emit:APPROVED_DEMAND_PLAN_SCANNED",
+        "order": "2",
+        "result_key": "emit-APPROVED_DEMAND_PLAN_SCANNED",
+        "type": "emit"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【查】每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤掉草稿、已取消、已删除的单据，圈定当日需求合并的作业范围(R2-01)。扫描一次覆盖全集团，替代计划员逐条翻看。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 1 步：**同一轮一次性并发**调用 queryPbpHeader 与 queryPbpLine，不要串行。\n第 2 步：只保留 STATUS=已批准 的计划头，草稿/已取消/已删除一律剔除（R2-01）。\n第 3 步：把计划行按其 PBP_HEADER_ID 归到对应计划头下，行的物料、数量、\n需求到货日期、计划行类型编码原样带出，不得改写编码。\n\nscan_date **原样照抄**触发事件负载里的 scan_date，不得用你认知里的今天。",
+    "generated": true,
+    "id": "scanApprovedDemandPlan",
+    "inputs": [
+      {
+        "description": "扫描业务日期，全流程「当前日期」的唯一定义。",
+        "id": "scan_date",
+        "kind": "value",
+        "label": "scan_date",
+        "required": true,
+        "schema": {
+          "format": "date",
+          "type": "string"
+        }
+      },
+      {
+        "description": "扫描批次号，用于批内追溯。",
+        "id": "scan_batch_id",
+        "kind": "value",
+        "label": "scan_batch_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "扫描范围：全集团或指定管理单元。",
+        "id": "scan_scope",
+        "kind": "value",
+        "label": "scan_scope",
+        "required": false,
+        "schema": {
+          "examples": [
+            "全集团",
+            "指定管理单元"
+          ],
+          "type": "string"
+        }
+      },
+      {
+        "description": "限定只处理该采购计划；为空时按 BR2-SCAN-01 全量扫描，显式指定时为排障口径、不是抽查。",
+        "id": "plan_id",
+        "kind": "value",
+        "label": "plan_id",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "采购计划编号。",
+        "id": "plan_no",
+        "kind": "value",
+        "label": "plan_no",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "审批通过时间。",
+        "id": "approved_at",
+        "kind": "value",
+        "label": "approved_at",
+        "required": true,
+        "schema": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      {
+        "description": "业务类型。",
+        "id": "business_type",
+        "kind": "value",
+        "label": "business_type",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "name": "scanApprovedDemandPlan",
+    "ontology_instructions": "【目标对象】\n- 采购计划：决策属性 plan_id, plan_no, business_type, plan_category, plan_status, demand_organization, planner, department_leader, division_leader, submitted_at, approved_at, management_unit, plan_start_date, plan_end_date, is_deleted\n- 采购计划行：决策属性 plan_line_id, plan_id, material_code, material_name, quantity, unit, required_arrival_date, original_required_arrival_date, planned_amount, demand_department, usage_scenario, plan_line_no, line_type_code, line_status, management_unit, inventory_organization, category_id, unit_price, default_sourcing_method, central_purchase_level, central_purchase_pattern, is_cancelled, is_deleted, is_split, source_object_type, source_object_line_id, created_at, is_urgent, is_execution_plan_draft, merge_group_id, draft_confirmed_by, draft_confirmed_at\n\n【绑定规则】\n- BR2-SCAN-01 未审批或已取消的需求计划不纳入扫描（guard·mandatory）：plan.plan_status == \"已批准\" && line.is_cancelled == false && line.is_deleted == false\n- BR2-AUDIT-01 数字员工的作业动作未留痕则不予放行（postcondition·mandatory）：log.auditable == true",
+    "retries": 3,
+    "title": "scanApprovedDemandPlan",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json"
+        },
+        "description": "实时查询 Meta ERP。可用操作：queryPbpHeader（查询已审批的采购业务计划头，过滤草稿/已取消/已删除（本体 tool_use 名 queryPbpHeader）。）、queryPbpLine（查询计划行：物料、数量、需求到货日期、计划行类型（本体 tool_use 名 queryPbpLine）。）。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "description": "要调用的 Meta ERP 查询操作",
+              "enum": [
+                "queryPbpHeader",
+                "queryPbpLine"
+              ],
+              "type": "string"
+            },
+            "payload": {
+              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "type": "object"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "read"
+      }
+    ],
+    "trigger": [
+      "DAILY_DEMAND_PLAN_SCAN_SCHEDULED",
+      "DEMAND_PLAN_APPROVED"
+    ],
+    "triggered_event": [
+      "APPROVED_DEMAND_PLAN_SCANNED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "action_prompt": "【析】按「物料编码 + 计划行类型编码」聚类已审批需求计划行，组内两两比需求日期差，算出可合并簇、需拆分行与待确认灰区，并给出合并数量与加权预估单价(R2-01)。把计划员 10-15 分钟一次的人工比对压到分钟级，且口径全集团一致。\n\n【判定步骤】\n\n第 1 步：按 `物料编码 + 计划行类型编码` 聚类，同组内两两比较需求到货日期。\n第 2 步：按天数差分档（阈值取自上游 thresholds_used，缺失时用 30/60 默认值）：\n  ≤30 天 → 可合并 mergeable；>60 天 → 需拆分 split_required；\n  介于两者之间 → 待计划员确认 needs_confirmation。\n第 3 步：可合并组算合并数量之和与**按数量加权**的预估单价：\n  weighted_price = Σ(qty_i × price_i) / Σ(qty_i)，保留两位小数。\n第 4 步：只要有任意一组落在 split_required，就把 split_required 置 true。\n\n组内计划行编号一律用 metaERP 返回的原值，不得自造。\n\n执行步骤：\n1. groupByMergeKey：以合并键 = 物料编码 + 计划行类型编码 对计划行聚类，管理单元与库存组织不同的不并组。\n2. computeDateGap：组内两两计算需求日期差取最大值 max_date_gap_days：≤30 天判可合并(BR2-MERGE-01)，>60 天判需拆分(BR2-MERGE-02)，30~60 天判待计划员确认(BR2-MERGE-03)。\n3. computeMergedQuantityAndPrice：合并数量 = 组内数量求和；预估单价 = 组内单价按数量加权平均；合并后需求日期取组内最早日期；合并金额 = 合并数量 × 加权单价。\n4. scoreMergeConfidence：按物料一致度、类型一致度、日期紧密度加权算出 0~100 的合并匹配度，并生成一句话可读理由，让计划员一眼看懂为什么这么归。\n5. emitMergeAndSplitList：输出可合并清单与需拆分清单：需拆分的走 b2 分支，其余进入库存校验。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`merge_suggestion`、`split_required`、`thresholds_used`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"merge_suggestion\": <见字段说明>,\n  \"split_required\": <见字段说明>,\n  \"thresholds_used\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- merge_suggestion_id: 合并建议标识。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merge_group_id: 合并组编号。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- suggestion_type: 建议结论：可合并/需拆分/待计划员确认。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merged_quantity: 合并数量。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merge_score: 合并匹配度。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- max_date_gap_days: 组内需求日期最大差值。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- plan_line_id: 待拆分的计划行。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- split_reason: 拆分理由。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表，不得改写。\n- merge_suggestion: 合并建议列表：[{merge_suggestion_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。\n- split_required: **必填布尔值**。只要有任意一组 suggestion='split_required' 就填 true，否则 false。工作流据此决定走拆分分支还是直接进库存校验——填错会让整条链路走错方向。\n- thresholds_used: 本次采用的分档阈值：{merge_window_days:number, split_window_days:number}。\n- scan_date: 原样透传上游 scan_date。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "allowed_tools": [],
+        "description": "【析】按「物料编码 + 计划行类型编码」聚类已审批需求计划行，组内两两比需求日期差，算出可合并簇、需拆分行与待确认灰区，并给出合并数量与加权预估单价(R2-01)。把计划员 10-15 分钟一次的人工比对压到分钟级，且口径全集团一致。\n\n【判定步骤】\n\n第 1 步：按 `物料编码 + 计划行类型编码` 聚类，同组内两两比较需求到货日期。\n第 2 步：按天数差分档（阈值取自上游 thresholds_used，缺失时用 30/60 默认值）：\n  ≤30 天 → 可合并 mergeable；>60 天 → 需拆分 split_required；\n  介于两者之间 → 待计划员确认 needs_confirmation。\n第 3 步：可合并组算合并数量之和与**按数量加权**的预估单价：\n  weighted_price = Σ(qty_i × price_i) / Σ(qty_i)，保留两位小数。\n第 4 步：只要有任意一组落在 split_required，就把 split_required 置 true。\n\n组内计划行编号一律用 metaERP 返回的原值，不得自造。",
+        "name": "analyze",
+        "order": "1",
+        "result_key": "analyzeDemandMerge",
+        "type": "logic"
+      },
+      {
+        "condition": "lastResult.split_required == false",
+        "description": "事件 DEMAND_MERGE_ANALYZED 的发射条件。",
+        "name": "emit-when:DEMAND_MERGE_ANALYZED",
+        "order": "2",
+        "result_key": "emit-when-DEMAND_MERGE_ANALYZED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-DEMAND_MERGE_ANALYZED"
+        ],
+        "description": "条件命中时发射事件 DEMAND_MERGE_ANALYZED。",
+        "emit_event": "DEMAND_MERGE_ANALYZED",
+        "emit_payload_from": "results.analyzeDemandMerge",
+        "name": "emit:DEMAND_MERGE_ANALYZED",
+        "order": "3",
+        "result_key": "emit-DEMAND_MERGE_ANALYZED",
+        "type": "emit"
+      },
+      {
+        "condition": "lastResult.split_required == true",
+        "description": "事件 DEMAND_SPLIT_REQUIRED 的发射条件。",
+        "name": "emit-when:DEMAND_SPLIT_REQUIRED",
+        "order": "4",
+        "result_key": "emit-when-DEMAND_SPLIT_REQUIRED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-DEMAND_SPLIT_REQUIRED"
+        ],
+        "description": "条件命中时发射事件 DEMAND_SPLIT_REQUIRED。",
+        "emit_event": "DEMAND_SPLIT_REQUIRED",
+        "emit_payload_from": "results.analyzeDemandMerge",
+        "name": "emit:DEMAND_SPLIT_REQUIRED",
+        "order": "5",
+        "result_key": "emit-DEMAND_SPLIT_REQUIRED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "6",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【析】按「物料编码 + 计划行类型编码」聚类已审批需求计划行，组内两两比需求日期差，算出可合并簇、需拆分行与待确认灰区，并给出合并数量与加权预估单价(R2-01)。把计划员 10-15 分钟一次的人工比对压到分钟级，且口径全集团一致。\n\n【判定步骤】\n\n第 1 步：按 `物料编码 + 计划行类型编码` 聚类，同组内两两比较需求到货日期。\n第 2 步：按天数差分档（阈值取自上游 thresholds_used，缺失时用 30/60 默认值）：\n  ≤30 天 → 可合并 mergeable；>60 天 → 需拆分 split_required；\n  介于两者之间 → 待计划员确认 needs_confirmation。\n第 3 步：可合并组算合并数量之和与**按数量加权**的预估单价：\n  weighted_price = Σ(qty_i × price_i) / Σ(qty_i)，保留两位小数。\n第 4 步：只要有任意一组落在 split_required，就把 split_required 置 true。\n\n组内计划行编号一律用 metaERP 返回的原值，不得自造。",
+    "generated": true,
+    "id": "analyzeDemandMerge",
+    "inputs": [
+      {
+        "description": "扫描批次号。",
+        "id": "scan_batch_id",
+        "kind": "value",
+        "label": "scan_batch_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "扫描业务日期。",
+        "id": "scan_date",
+        "kind": "value",
+        "label": "scan_date",
+        "required": true,
+        "schema": {
+          "format": "date",
+          "type": "string"
+        }
+      },
+      {
+        "description": "纳入范围的计划行条数。",
+        "id": "in_scope_line_count",
+        "kind": "value",
+        "label": "in_scope_line_count",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      {
+        "description": "被过滤的计划行条数。",
+        "id": "filtered_line_count",
+        "kind": "value",
+        "label": "filtered_line_count",
+        "required": false,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      {
+        "description": "本批次覆盖的采购计划。",
+        "id": "plan_id",
+        "kind": "value",
+        "label": "plan_id",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "name": "analyzeDemandMerge",
+    "ontology_instructions": "【目标对象】\n- 需求合并建议：决策属性 merge_suggestion_id, merge_group_id, plan_line_id, merge_key, material_code, line_type_code, suggestion_type, max_date_gap_days, merge_score, merge_reason, merged_quantity, weighted_unit_price, merged_amount, merged_required_date, source_plan_line_ids, source_plan_header_id, source_plan_no, source_plan_line_no, relation_record_id, source_mapping_written, scan_date, suggestion_status, confirmed_by, confirmed_at\n\n【绑定规则】\n- BR2-MERGE-01 同物料同类型且需求日期差不超过30天则合并为一条执行计划（validation·mandatory）：suggestion.max_date_gap_days <= 30\n- BR2-MERGE-02 需求日期差超过60天则不得合并必须拆分（validation·mandatory）：suggestion.max_date_gap_days > 60\n- BR2-MERGE-03 需求日期差在30到60天之间则须计划员确认后才可合并（validation·mandatory）：suggestion.max_date_gap_days > 30 && suggestion.max_date_gap_days <= 60",
+    "retries": 3,
+    "title": "analyzeDemandMerge",
+    "tool_use": [],
+    "trigger": [
+      "APPROVED_DEMAND_PLAN_SCANNED"
+    ],
+    "triggered_event": [
+      "DEMAND_MERGE_ANALYZED",
+      "DEMAND_SPLIT_REQUIRED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "awaiting_role": "计划员",
+        "description": "计划员确认拆分方案(BR2-MERGE-03)；未确认不拆。",
+        "form_schema": {
+          "description": "计划行编号与拆分建议由系统从本轮比对结果带出，不需要手工填写；只需确认是否按建议拆分。",
+          "properties": {
+            "plan_line_id": {
+              "title": "计划行编号",
+              "type": "string"
+            },
+            "remark": {
+              "title": "备注",
+              "type": "string"
+            },
+            "split_reason": {
+              "title": "拆分理由",
+              "type": "string"
+            }
+          },
+          "required": [
+            "plan_line_id"
+          ],
+          "title": "需求拆分确认（R2-01）",
+          "type": "object"
+        },
+        "name": "confirmSplitByPlanner",
+        "order": "1",
+        "result_key": "manual-3",
+        "task_type": "demand.split-confirm",
+        "type": "manual"
+      },
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "depends_on": [
+          "manual-3"
+        ],
+        "description": "写回 Meta ERP：splitDemandLine。",
+        "name": "metaerp.invoke",
+        "order": "2",
+        "result_key": "splitOversizedDemand",
+        "tool_arguments": {
+          "payload": {
+            "from": "results.manual-3"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "condition": "results.manual-3.decision == 'approved'",
+        "depends_on": [
+          "splitOversizedDemand"
+        ],
+        "description": "事件 DEMAND_SPLIT_CONFIRMED 的发射条件。",
+        "name": "emit-when:DEMAND_SPLIT_CONFIRMED",
+        "order": "3",
+        "result_key": "emit-when-DEMAND_SPLIT_CONFIRMED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "splitOversizedDemand",
+          "emit-when-DEMAND_SPLIT_CONFIRMED"
+        ],
+        "description": "条件命中时发射事件 DEMAND_SPLIT_CONFIRMED。",
+        "emit_event": "DEMAND_SPLIT_CONFIRMED",
+        "emit_payload_from": "event.data",
+        "name": "emit:DEMAND_SPLIT_CONFIRMED",
+        "order": "4",
+        "result_key": "emit-DEMAND_SPLIT_CONFIRMED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "5",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent",
+      "Human"
+    ],
+    "description": "【行】对需求日期差超限的组合给出拆分建议，经计划员确认后拆为独立计划行并置拆分标识(R2-01)。拆分要落到单据上、并留下确认痕迹，才不会在下一轮扫描里又被合回去。",
+    "generated": true,
+    "id": "splitOversizedDemand",
+    "inputs": [
+      {
+        "description": "需拆分的合并建议标识。",
+        "id": "merge_suggestion_id",
+        "kind": "value",
+        "label": "merge_suggestion_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "组内需求日期最大差值。",
+        "id": "max_date_gap_days",
+        "kind": "value",
+        "label": "max_date_gap_days",
+        "required": true,
+        "schema": {
+          "type": "number"
+        }
+      },
+      {
+        "description": "待拆分的计划行。",
+        "id": "plan_line_id",
+        "kind": "value",
+        "label": "plan_line_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "拆分理由。",
+        "id": "split_reason",
+        "kind": "value",
+        "label": "split_reason",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "name": "splitOversizedDemand",
+    "ontology_instructions": "【目标对象】\n- 采购计划行：决策属性 plan_line_id, plan_id, material_code, material_name, quantity, unit, required_arrival_date, original_required_arrival_date, planned_amount, demand_department, usage_scenario, plan_line_no, line_type_code, line_status, management_unit, inventory_organization, category_id, unit_price, default_sourcing_method, central_purchase_level, central_purchase_pattern, is_cancelled, is_deleted, is_split, source_object_type, source_object_line_id, created_at, is_urgent, is_execution_plan_draft, merge_group_id, draft_confirmed_by, draft_confirmed_at\n- 需求合并建议：决策属性 merge_suggestion_id, merge_group_id, plan_line_id, merge_key, material_code, line_type_code, suggestion_type, max_date_gap_days, merge_score, merge_reason, merged_quantity, weighted_unit_price, merged_amount, merged_required_date, source_plan_line_ids, source_plan_header_id, source_plan_no, source_plan_line_no, relation_record_id, source_mapping_written, scan_date, suggestion_status, confirmed_by, confirmed_at\n\n【绑定规则】\n- BR2-MERGE-02 需求日期差超过60天则不得合并必须拆分（guard·mandatory）：suggestion.max_date_gap_days > 60\n- BR2-MERGE-03 需求日期差在30到60天之间则须计划员确认后才可合并（approval·mandatory）：suggestion.max_date_gap_days > 30 && suggestion.max_date_gap_days <= 60",
+    "retries": 3,
+    "title": "splitOversizedDemand",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "splitDemandLine"
+        },
+        "description": "splitDemandLine：splitOversizedDemand 写回 metaERP。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "DEMAND_SPLIT_REQUIRED"
+    ],
+    "triggered_event": [
+      "DEMAND_SPLIT_CONFIRMED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "action_prompt": "【析】按物料与库存组织汇总现有量、扣减已预留量得可用量，与最大库存、安全库存两条水位线比对，判出「可调度／需采购／触及安全库存」(R2-02)。跨系统逐物料查库存 3-5 分钟一次的活归零，判断口径也不再因人而异。\n\n【取数与判定步骤】\n\n第 1 步：**同一轮一次性并发**调用 queryOnhandQuantity、queryReservation、\nqueryItemMinMaxLevel 三个接口，不要串行。\n第 2 步：按 `物料编码 + 库存组织` 汇总：\n  可用量 available_qty = 合格现有量 − 已预留量。\n第 3 步：与两条水位线比对，逐条需求判出 stock_check_flag：\n  现有量 ≥ 最大库存 且 非紧急 → `可调度`（转调拨，不建采购计划）；\n  可用量 < 需求量 → `需采购`（进入倒排工期）；\n  可用量 ≥ 需求量 但现有量 < 安全库存 → `触及安全库存`（仍需采购并标注）。\n\n判定必须逐条给出，且写明用到的现有量/预留量/两条水位线的数值。\n\n执行步骤：\n1. classifyStockStatus：判定：现有量合计 ≥ 最大库存且非紧急 → 可调度，硬拦截不建采购计划(BR2-STOCK-01)；可用量 < 需求数量 → 需采购，缺口量 = 需求数量 − 可用量(BR2-STOCK-02)；总量满足但现有量合计 − 安全库存 < 需求数量 → 置 safety_stock_breached 并标记触及安全库存(BR2-STOCK-03)。\n2. suggestPurchaseQuantity：建议采购批量 = 缺口量 + 安全库存回补量，随结论一并推送。\n3. routeByStockStatus：可调度走调拨分支并结束采购路径；需采购与触及安全库存进入倒排工期并推送计划员待办。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`stock_check_result`、`purchase_required`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"stock_check_result\": <见字段说明>,\n  \"purchase_required\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- stock_check_id: 库存校验结论标识。（事件 INVENTORY_AVAILABILITY_VERIFIED 的 payload 段）\n- stock_check_flag: 校验结论：可调度/需采购/触及安全库存。（事件 INVENTORY_AVAILABILITY_VERIFIED 的 payload 段）\n- available_quantity: 可用量。（事件 INVENTORY_AVAILABILITY_VERIFIED 的 payload 段）\n- shortage_quantity: 缺口量。（事件 INVENTORY_AVAILABILITY_VERIFIED 的 payload 段）\n- checked_at: 校验时点。（事件 INVENTORY_AVAILABILITY_VERIFIED 的 payload 段）\n- plan_line_id: 不再新购的计划行。（事件 STOCK_SUFFICIENT_FOR_DEMAND 的 payload 段）\n- material_code: 物料编码。（事件 STOCK_SUFFICIENT_FOR_DEMAND 的 payload 段）\n- onhand_total_quantity: 现有量合计。（事件 STOCK_SUFFICIENT_FOR_DEMAND 的 payload 段）\n- suggested_purchase_quantity: 建议采购批量。（事件 PURCHASE_REQUIRED_CONFIRMED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表。\n- stock_check_result: 逐条需求的库存校验结论：[{stock_check_id, plan_line_id, material_code, inventory_org, onhand_qty:number, reserved_qty:number, available_qty:number, safety_stock_qty:number, max_stock_qty:number, stock_check_flag:'可调度'|'需采购'|'触及安全库存', explanation:string}]。explanation 必须写明用到的数值。\n- purchase_required: **必填布尔值**。只要有任意一条 stock_check_flag 不是 '可调度'，就填 true（需要走采购）；全部为 '可调度' 才填 false（转调拨，采购路径结束）。工作流据此分流。\n- scan_date: 原样透传上游 scan_date。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "description": "【析】按物料与库存组织汇总现有量、扣减已预留量得可用量，与最大库存、安全库存两条水位线比对，判出「可调度／需采购／触及安全库存」(R2-02)。跨系统逐物料查库存 3-5 分钟一次的活归零，判断口径也不再因人而异。\n\n【取数与判定步骤】\n\n第 1 步：**同一轮一次性并发**调用 queryOnhandQuantity、queryReservation、\nqueryItemMinMaxLevel 三个接口，不要串行。\n第 2 步：按 `物料编码 + 库存组织` 汇总：\n  可用量 available_qty = 合格现有量 − 已预留量。\n第 3 步：与两条水位线比对，逐条需求判出 stock_check_flag：\n  现有量 ≥ 最大库存 且 非紧急 → `可调度`（转调拨，不建采购计划）；\n  可用量 < 需求量 → `需采购`（进入倒排工期）；\n  可用量 ≥ 需求量 但现有量 < 安全库存 → `触及安全库存`（仍需采购并标注）。\n\n判定必须逐条给出，且写明用到的现有量/预留量/两条水位线的数值。",
+        "name": "analyze",
+        "order": "1",
+        "result_key": "verifyInventoryAvailability",
+        "type": "logic"
+      },
+      {
+        "description": "发射事件 INVENTORY_AVAILABILITY_VERIFIED（无条件）。",
+        "emit_event": "INVENTORY_AVAILABILITY_VERIFIED",
+        "emit_payload_from": "results.verifyInventoryAvailability",
+        "name": "emit:INVENTORY_AVAILABILITY_VERIFIED",
+        "order": "2",
+        "result_key": "emit-INVENTORY_AVAILABILITY_VERIFIED",
+        "type": "emit"
+      },
+      {
+        "condition": "lastResult.purchase_required == false",
+        "description": "事件 STOCK_SUFFICIENT_FOR_DEMAND 的发射条件。",
+        "name": "emit-when:STOCK_SUFFICIENT_FOR_DEMAND",
+        "order": "3",
+        "result_key": "emit-when-STOCK_SUFFICIENT_FOR_DEMAND",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-STOCK_SUFFICIENT_FOR_DEMAND"
+        ],
+        "description": "条件命中时发射事件 STOCK_SUFFICIENT_FOR_DEMAND。",
+        "emit_event": "STOCK_SUFFICIENT_FOR_DEMAND",
+        "emit_payload_from": "results.verifyInventoryAvailability",
+        "name": "emit:STOCK_SUFFICIENT_FOR_DEMAND",
+        "order": "4",
+        "result_key": "emit-STOCK_SUFFICIENT_FOR_DEMAND",
+        "type": "emit"
+      },
+      {
+        "condition": "lastResult.purchase_required == true",
+        "description": "事件 PURCHASE_REQUIRED_CONFIRMED 的发射条件。",
+        "name": "emit-when:PURCHASE_REQUIRED_CONFIRMED",
+        "order": "5",
+        "result_key": "emit-when-PURCHASE_REQUIRED_CONFIRMED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-PURCHASE_REQUIRED_CONFIRMED"
+        ],
+        "description": "条件命中时发射事件 PURCHASE_REQUIRED_CONFIRMED。",
+        "emit_event": "PURCHASE_REQUIRED_CONFIRMED",
+        "emit_payload_from": "results.verifyInventoryAvailability",
+        "name": "emit:PURCHASE_REQUIRED_CONFIRMED",
+        "order": "6",
+        "result_key": "emit-PURCHASE_REQUIRED_CONFIRMED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "7",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【析】按物料与库存组织汇总现有量、扣减已预留量得可用量，与最大库存、安全库存两条水位线比对，判出「可调度／需采购／触及安全库存」(R2-02)。跨系统逐物料查库存 3-5 分钟一次的活归零，判断口径也不再因人而异。\n\n【取数与判定步骤】\n\n第 1 步：**同一轮一次性并发**调用 queryOnhandQuantity、queryReservation、\nqueryItemMinMaxLevel 三个接口，不要串行。\n第 2 步：按 `物料编码 + 库存组织` 汇总：\n  可用量 available_qty = 合格现有量 − 已预留量。\n第 3 步：与两条水位线比对，逐条需求判出 stock_check_flag：\n  现有量 ≥ 最大库存 且 非紧急 → `可调度`（转调拨，不建采购计划）；\n  可用量 < 需求量 → `需采购`（进入倒排工期）；\n  可用量 ≥ 需求量 但现有量 < 安全库存 → `触及安全库存`（仍需采购并标注）。\n\n判定必须逐条给出，且写明用到的现有量/预留量/两条水位线的数值。",
+    "generated": true,
+    "id": "verifyInventoryAvailability",
+    "inputs": [
+      {
+        "description": "合并建议标识。",
+        "id": "merge_suggestion_id",
+        "kind": "value",
+        "label": "merge_suggestion_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "合并组编号。",
+        "id": "merge_group_id",
+        "kind": "value",
+        "label": "merge_group_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "建议结论：可合并/需拆分/待计划员确认。",
+        "id": "suggestion_type",
+        "kind": "value",
+        "label": "suggestion_type",
+        "required": true,
+        "schema": {
+          "examples": [
+            "可合并",
+            "需拆分",
+            "待计划员确认"
+          ],
+          "type": "string"
+        }
+      },
+      {
+        "description": "合并数量。",
+        "id": "merged_quantity",
+        "kind": "value",
+        "label": "merged_quantity",
+        "required": false,
+        "schema": {
+          "type": "number"
+        }
+      },
+      {
+        "description": "合并匹配度。",
+        "id": "merge_score",
+        "kind": "value",
+        "label": "merge_score",
+        "required": false,
+        "schema": {
+          "type": "number"
+        }
+      },
+      {
+        "description": "拆出的独立计划行条数。",
+        "id": "split_line_count",
+        "kind": "value",
+        "label": "split_line_count",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      {
+        "description": "确认人（计划员）。",
+        "id": "confirmed_by",
+        "kind": "value",
+        "label": "confirmed_by",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "确认时间。",
+        "id": "confirmed_at",
+        "kind": "value",
+        "label": "confirmed_at",
+        "required": true,
+        "schema": {
+          "format": "date-time",
+          "type": "string"
+        }
+      }
+    ],
+    "name": "verifyInventoryAvailability",
+    "ontology_instructions": "【目标对象】\n- 库存校验结果：决策属性 stock_check_id, plan_line_id, merge_suggestion_id, material_code, inventory_organization, demand_quantity, onhand_total_quantity, reserved_total_quantity, available_quantity, max_stock_quantity, safety_stock_quantity, safety_stock_breached, is_urgent_demand, stock_check_flag, shortage_quantity, suggested_purchase_quantity, checked_at\n\n【绑定规则】\n- BR2-STOCK-01 现有量达到最大库存且非紧急则不得新建采购计划须转调拨（guard·mandatory）：check.onhand_total_quantity >= check.max_stock_quantity && check.is_urgent_demand == false\n- BR2-STOCK-02 可用量小于需求数量则标记需采购并生成执行计划草稿（validation·mandatory）：check.available_quantity < check.demand_quantity\n- BR2-STOCK-03 总量满足但扣除安全库存后不足则标记触及安全库存并给出建议批量（validation·mandatory）：check.available_quantity >= check.demand_quantity && check.safety_stock_breached == true",
+    "retries": 3,
+    "title": "verifyInventoryAvailability",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json"
+        },
+        "description": "实时查询 Meta ERP。可用操作：queryOnhandQuantity（按物料+库存组织查合格现有量（本体 tool_use 名 multiOnhandQuantityQuery）。）、queryReservation（查已预留量，用于扣减出可用量。）、queryItemMinMaxLevel（查最大库存与安全库存两条水位线。）。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "description": "要调用的 Meta ERP 查询操作",
+              "enum": [
+                "queryOnhandQuantity",
+                "queryReservation",
+                "queryItemMinMaxLevel"
+              ],
+              "type": "string"
+            },
+            "payload": {
+              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "type": "object"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "read"
+      }
+    ],
+    "trigger": [
+      "DEMAND_MERGE_ANALYZED",
+      "DEMAND_SPLIT_CONFIRMED"
+    ],
+    "triggered_event": [
+      "INVENTORY_AVAILABILITY_VERIFIED",
+      "STOCK_SUFFICIENT_FOR_DEMAND",
+      "PURCHASE_REQUIRED_CONFIRMED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "condition": "input.purchase_required == false",
+        "description": "规则闸口（确定性判定）：现有量达到最大库存且非紧急则不得新建采购计划须转调拨。判假即拦截后续人工/写入/发射步骤。",
+        "name": "rule-gate:BR2-STOCK-01",
+        "order": "1",
+        "result_key": "rule-gate-BR2-STOCK-01",
+        "type": "condition"
+      },
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "depends_on": [
+          "rule-gate-BR2-STOCK-01"
+        ],
+        "description": "写回 Meta ERP：createTransactionOrder。",
+        "name": "metaerp.invoke",
+        "order": "2",
+        "result_key": "createInventoryTransferOrder",
+        "tool_arguments": {
+          "payload": {
+            "from": "event.data"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "depends_on": [
+          "createInventoryTransferOrder"
+        ],
+        "description": "写入成功后发射事件 INVENTORY_TRANSFER_ORDER_CREATED。",
+        "emit_event": "INVENTORY_TRANSFER_ORDER_CREATED",
+        "emit_payload_from": "lastResult",
+        "name": "emit:INVENTORY_TRANSFER_ORDER_CREATED",
+        "order": "3",
+        "result_key": "emit-INVENTORY_TRANSFER_ORDER_CREATED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "4",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【行】库存判为「可调度」时不建采购计划，直接生成调拨申请单，从有货的库点调物资顶上需求(R2-02 硬拦截分支)。与场景一由偏差调整方案落地的调拨共用同一张调拨申请，以调拨缘由区分来路。",
+    "generated": true,
+    "id": "createInventoryTransferOrder",
+    "inputs": [
+      {
+        "description": "判为可调度的库存校验结论。",
+        "id": "stock_check_id",
+        "kind": "value",
+        "label": "stock_check_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "不再新购的计划行。",
+        "id": "plan_line_id",
+        "kind": "value",
+        "label": "plan_line_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "物料编码。",
+        "id": "material_code",
+        "kind": "value",
+        "label": "material_code",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "现有量合计。",
+        "id": "onhand_total_quantity",
+        "kind": "value",
+        "label": "onhand_total_quantity",
+        "required": true,
+        "schema": {
+          "type": "number"
+        }
+      }
+    ],
+    "name": "createInventoryTransferOrder",
+    "ontology_instructions": "【目标对象】\n- 调拨申请：决策属性 transfer_request_id, transfer_no, option_id, chain_id, material_code, transfer_quantity, source_warehouse, target_warehouse, request_status, created_at, expected_arrival_date, actual_arrival_date, returned_at, transfer_reason, stock_check_id, plan_line_id, inventory_organization\n\n【绑定规则】\n- BR2-STOCK-01 现有量达到最大库存且非紧急则不得新建采购计划须转调拨（precondition·mandatory）：check.onhand_total_quantity >= check.max_stock_quantity && check.is_urgent_demand == false\n- BR2-AUDIT-01 数字员工的作业动作未留痕则不予放行（postcondition·mandatory）：log.auditable == true",
+    "retries": 3,
+    "title": "createInventoryTransferOrder",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "createTransactionOrder"
+        },
+        "description": "生成调拨申请单(createTransactionOrder)。入参：物料编码、调拨数量、调出库存组织与库点、调入库存组织与库点、需求日期、来源库存校验结论编号、经办人；出参：调拨单号、单据状态、预计到货日期。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "STOCK_SUFFICIENT_FOR_DEMAND"
+    ],
+    "triggered_event": [
+      "INVENTORY_TRANSFER_ORDER_CREATED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "action_prompt": "【析】以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点的计划完成时间，并判定时间冲突(R2-03)。人工倒排 8-12 分钟一单、口径还各不相同的活归零，冲突当天就暴露。\n\n【倒排步骤（逐字照算，不得凭感觉）】\n\n节点顺序固定：立项1／组包2／分配3／询价4／应答5／评标6／定标7／合同签订8。\n标准周期取自 queryStageCycleConfig 中该 business_type 的行。\n\n  planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)，j 从 k+1 到 8\n\n即最后一个节点（合同签订）的计划完成时间**就是**需求到货日期本身；\n其余节点 = 需求到货日期 减去**它之后**所有节点的标准周期之和，**不含本节点周期**。\n\n正排交叉校验：planned_finish(k) 应等于 planned_finish(k−1) + standard_cycle_days(k)。\n两向一致才置 schedule_derived=true。\n若倒排出的立项计划完成时间早于 scan_date，置 time_conflict=true 并说明缺口天数。\n\n执行步骤：\n1. computeTotalCycle：采购总周期 = 各节点标准周期天数之和；紧急采购改取最短周期天数(BR2-SCHED-02)。\n2. backwardSchedule：以需求到货日期为基准日，按节点顺序号从末节点向前逐级倒推：节点计划完成日期 = 后一节点计划开始日期 − 1 天，节点计划开始日期 = 节点计划完成日期 − 套用周期天数 + 1 天；末节点计划完成日期即需求到货日期。\n3. detectTimeConflict：冲突缺口天数 = 当前日期 + 采购总周期 − 需求到货日期；大于 0 即判定时间冲突(BR2-SCHED-01)。当前日期取本次扫描业务日期，不取系统当下时间。\n4. recommendAdjustScheme：冲突时推荐「缩短周期／调整需求日期／拆分批次」三种方案；紧急采购先走绿色通道按最短周期重算，仍冲突则升级采购部门领导(BR2-SCHED-03)。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`backward_schedule_plan`、`backward_schedule_stage`、`schedule_derived`、`time_conflict`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"backward_schedule_plan\": <见字段说明>,\n  \"backward_schedule_stage\": <见字段说明>,\n  \"schedule_derived\": <见字段说明>,\n  \"time_conflict\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- schedule_plan_id: 倒排计划标识。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- total_cycle_days: 采购总周期天数。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- time_conflict: 是否存在时间冲突。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- green_channel: 是否走紧急绿色通道。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- stage_count: 生成的阶段节点计划条数。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- conflict_gap_days: 冲突缺口天数。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- adjust_scheme: 推荐调整方案：缩短周期/调整需求日期/拆分批次。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- escalated_to_leader: 是否已升级采购部门领导。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表。\n- backward_schedule_plan: 倒排计划：[{schedule_plan_id, plan_line_id, required_arrival_date, business_type, schedule_derived:boolean}]。\n- backward_schedule_stage: 各节点计划完成时间：[{schedule_stage_id, schedule_plan_id, stage_node, stage_sequence:1-8, standard_cycle_days:number, planned_finish_date:'YYYY-MM-DD'}]。按倒排公式逐字计算，并做正排交叉校验。\n- schedule_derived: **必填布尔值**。所有计划行都完成倒排且两向校验一致才填 true。\n- scan_date: 原样透传上游 scan_date。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "description": "【析】以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点的计划完成时间，并判定时间冲突(R2-03)。人工倒排 8-12 分钟一单、口径还各不相同的活归零，冲突当天就暴露。\n\n【倒排步骤（逐字照算，不得凭感觉）】\n\n节点顺序固定：立项1／组包2／分配3／询价4／应答5／评标6／定标7／合同签订8。\n标准周期取自 queryStageCycleConfig 中该 business_type 的行。\n\n  planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)，j 从 k+1 到 8\n\n即最后一个节点（合同签订）的计划完成时间**就是**需求到货日期本身；\n其余节点 = 需求到货日期 减去**它之后**所有节点的标准周期之和，**不含本节点周期**。\n\n正排交叉校验：planned_finish(k) 应等于 planned_finish(k−1) + standard_cycle_days(k)。\n两向一致才置 schedule_derived=true。\n若倒排出的立项计划完成时间早于 scan_date，置 time_conflict=true 并说明缺口天数。",
+        "name": "analyze",
+        "order": "1",
+        "result_key": "derivePurchaseSchedule",
+        "type": "logic"
+      },
+      {
+        "condition": "lastResult.schedule_derived == true",
+        "description": "事件 PURCHASE_SCHEDULE_DERIVED 的发射条件。",
+        "name": "emit-when:PURCHASE_SCHEDULE_DERIVED",
+        "order": "2",
+        "result_key": "emit-when-PURCHASE_SCHEDULE_DERIVED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-PURCHASE_SCHEDULE_DERIVED"
+        ],
+        "description": "条件命中时发射事件 PURCHASE_SCHEDULE_DERIVED。",
+        "emit_event": "PURCHASE_SCHEDULE_DERIVED",
+        "emit_payload_from": "results.derivePurchaseSchedule",
+        "name": "emit:PURCHASE_SCHEDULE_DERIVED",
+        "order": "3",
+        "result_key": "emit-PURCHASE_SCHEDULE_DERIVED",
+        "type": "emit"
+      },
+      {
+        "condition": "lastResult.time_conflict == true",
+        "description": "事件 SCHEDULE_TIME_CONFLICT_DETECTED 的发射条件。",
+        "name": "emit-when:SCHEDULE_TIME_CONFLICT_DETECTED",
+        "order": "4",
+        "result_key": "emit-when-SCHEDULE_TIME_CONFLICT_DETECTED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-SCHEDULE_TIME_CONFLICT_DETECTED"
+        ],
+        "description": "条件命中时发射事件 SCHEDULE_TIME_CONFLICT_DETECTED。",
+        "emit_event": "SCHEDULE_TIME_CONFLICT_DETECTED",
+        "emit_payload_from": "results.derivePurchaseSchedule",
+        "name": "emit:SCHEDULE_TIME_CONFLICT_DETECTED",
+        "order": "5",
+        "result_key": "emit-SCHEDULE_TIME_CONFLICT_DETECTED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "6",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【析】以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点的计划完成时间，并判定时间冲突(R2-03)。人工倒排 8-12 分钟一单、口径还各不相同的活归零，冲突当天就暴露。\n\n【倒排步骤（逐字照算，不得凭感觉）】\n\n节点顺序固定：立项1／组包2／分配3／询价4／应答5／评标6／定标7／合同签订8。\n标准周期取自 queryStageCycleConfig 中该 business_type 的行。\n\n  planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)，j 从 k+1 到 8\n\n即最后一个节点（合同签订）的计划完成时间**就是**需求到货日期本身；\n其余节点 = 需求到货日期 减去**它之后**所有节点的标准周期之和，**不含本节点周期**。\n\n正排交叉校验：planned_finish(k) 应等于 planned_finish(k−1) + standard_cycle_days(k)。\n两向一致才置 schedule_derived=true。\n若倒排出的立项计划完成时间早于 scan_date，置 time_conflict=true 并说明缺口天数。",
+    "generated": true,
+    "id": "derivePurchaseSchedule",
+    "inputs": [
+      {
+        "description": "判为需采购的库存校验结论。",
+        "id": "stock_check_id",
+        "kind": "value",
+        "label": "stock_check_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "需采购的计划行。",
+        "id": "plan_line_id",
+        "kind": "value",
+        "label": "plan_line_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "缺口量。",
+        "id": "shortage_quantity",
+        "kind": "value",
+        "label": "shortage_quantity",
+        "required": true,
+        "schema": {
+          "type": "number"
+        }
+      },
+      {
+        "description": "建议采购批量。",
+        "id": "suggested_purchase_quantity",
+        "kind": "value",
+        "label": "suggested_purchase_quantity",
+        "required": false,
+        "schema": {
+          "type": "number"
+        }
+      }
+    ],
+    "name": "derivePurchaseSchedule",
+    "ontology_instructions": "【目标对象】\n- 倒排工期计划：决策属性 schedule_plan_id, plan_line_id, stock_check_id, business_type, required_arrival_date, total_cycle_days, earliest_start_date, time_conflict, conflict_gap_days, adjust_scheme, green_channel, escalated_to_leader, scheduled_at, schedule_date_basis\n- 倒排节点计划：决策属性 schedule_stage_id, schedule_plan_id, cycle_standard_id, stage_node, stage_sequence, standard_cycle_days, min_cycle_days, applied_cycle_days, planned_start_date, planned_finish_date, derived_by_formula\n\n【绑定规则】\n- BR-PLAN-01 缺周期配置则不予推算计划时间（precondition·mandatory）：standard.standard_cycle_days > 0\n- BR2-SCHED-01 倒排后总周期赶不上需求到货日期则判定时间冲突并预警（validation·mandatory）：schedule.conflict_gap_days > 0\n- BR2-SCHED-02 紧急采购则按最短周期天数走绿色通道并标记（guard·optional）：line.is_urgent == true\n- BR2-SCHED-03 绿色通道重算后仍时间冲突则升级采购部门领导（validation·mandatory）：schedule.green_channel == true && schedule.conflict_gap_days > 0",
+    "retries": 3,
+    "title": "derivePurchaseSchedule",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "queryStageCycleConfig"
+        },
+        "description": "取业务类型对应的各阶段标准周期（本体 tool_use 名 getStageCycleConfig）。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "read"
+      }
+    ],
+    "trigger": [
+      "PURCHASE_REQUIRED_CONFIRMED"
+    ],
+    "triggered_event": [
+      "PURCHASE_SCHEDULE_DERIVED",
+      "SCHEDULE_TIME_CONFLICT_DETECTED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "action_prompt": "你是规则闸口「rule-gate:BR2-MERGE-04」的审查器，对本次触发事件负载执行强制前置校验。\n\n规则 BR2-MERGE-04 · 未写入来源需求行映射则不得生成合并执行计划\n义务文：suggestion.source_mapping_written == true\n背景：如果合并组的来源需求行映射尚未写入采购业务计划关系表，则不得生成合并后的执行计划——一单一档、来源可溯是合并的前提，没有映射就查不回原始需求。\n\n仅输出一个 JSON 对象（不得输出任何其他文本）：\n{\"ruleId\":\"BR2-MERGE-04\",\"status\":\"pass\",\"reason\":\"<判定依据>\"}\n或 {\"ruleId\":\"BR2-MERGE-04\",\"status\":\"violation\",\"reason\":\"<判定依据>\"}\nstatus 只能取小写的 pass 或 violation（严格小写，不接受 PASS/Pass 等变体）；证据不足时判 violation（fail-closed）。",
+        "allowed_tools": [],
+        "description": "规则闸口（LLM 裁决）：未写入来源需求行映射则不得生成合并执行计划。输出严格 JSON 裁决 {ruleId,status,reason}。",
+        "name": "rule-gate:BR2-MERGE-04",
+        "on_error": "terminal",
+        "order": "1",
+        "result_key": "rule-gate-BR2-MERGE-04",
+        "type": "logic"
+      },
+      {
+        "condition": "results.rule-gate-BR2-MERGE-04.status == 'pass' || results.rule-gate-BR2-MERGE-04.status == 'PASS'",
+        "depends_on": [
+          "rule-gate-BR2-MERGE-04"
+        ],
+        "description": "裁决闸口：仅当 BR2-MERGE-04 判定 pass 时放行后续步骤。",
+        "name": "rule-verdict:BR2-MERGE-04",
+        "order": "2",
+        "result_key": "rule-verdict-BR2-MERGE-04",
+        "type": "condition"
+      },
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "depends_on": [
+          "rule-verdict-BR2-MERGE-04"
+        ],
+        "description": "写回 Meta ERP：createPbp。",
+        "name": "metaerp.invoke",
+        "order": "3",
+        "result_key": "generateExecutionPlanDraft",
+        "tool_arguments": {
+          "payload": {
+            "from": "event.data"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "depends_on": [
+          "generateExecutionPlanDraft"
+        ],
+        "description": "写入成功后发射事件 EXECUTION_PLAN_DRAFT_GENERATED。",
+        "emit_event": "EXECUTION_PLAN_DRAFT_GENERATED",
+        "emit_payload_from": "lastResult",
+        "name": "emit:EXECUTION_PLAN_DRAFT_GENERATED",
+        "order": "4",
+        "result_key": "emit-EXECUTION_PLAN_DRAFT_GENERATED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "5",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【行】把合并结论、库存结论与倒排排期落成一条执行计划草稿，写入来源需求行映射，推送计划员确认(R2-01~R2-03)。单条计划编制从约 30 分钟压到确认 2-3 分钟。",
+    "generated": true,
+    "id": "generateExecutionPlanDraft",
+    "inputs": [
+      {
+        "description": "倒排计划标识。",
+        "id": "schedule_plan_id",
+        "kind": "value",
+        "label": "schedule_plan_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "采购总周期天数。",
+        "id": "total_cycle_days",
+        "kind": "value",
+        "label": "total_cycle_days",
+        "required": true,
+        "schema": {
+          "type": "number"
+        }
+      },
+      {
+        "description": "是否存在时间冲突。",
+        "id": "time_conflict",
+        "kind": "value",
+        "label": "time_conflict",
+        "required": true,
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      {
+        "description": "是否走紧急绿色通道。",
+        "id": "green_channel",
+        "kind": "value",
+        "label": "green_channel",
+        "required": false,
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      {
+        "description": "生成的阶段节点计划条数。",
+        "id": "stage_count",
+        "kind": "value",
+        "label": "stage_count",
+        "required": false,
+        "schema": {
+          "type": "integer"
+        }
+      }
+    ],
+    "name": "generateExecutionPlanDraft",
+    "ontology_instructions": "【目标对象】\n- 采购计划：决策属性 plan_id, plan_no, business_type, plan_category, plan_status, demand_organization, planner, department_leader, division_leader, submitted_at, approved_at, management_unit, plan_start_date, plan_end_date, is_deleted\n- 采购计划行：决策属性 plan_line_id, plan_id, material_code, material_name, quantity, unit, required_arrival_date, original_required_arrival_date, planned_amount, demand_department, usage_scenario, plan_line_no, line_type_code, line_status, management_unit, inventory_organization, category_id, unit_price, default_sourcing_method, central_purchase_level, central_purchase_pattern, is_cancelled, is_deleted, is_split, source_object_type, source_object_line_id, created_at, is_urgent, is_execution_plan_draft, merge_group_id, draft_confirmed_by, draft_confirmed_at\n\n【绑定规则】\n- BR2-MERGE-04 未写入来源需求行映射则不得生成合并执行计划（precondition·mandatory）：suggestion.source_mapping_written == true\n- BR2-STOCK-02 可用量小于需求数量则标记需采购并生成执行计划草稿（guard·mandatory）：check.available_quantity < check.demand_quantity\n- BR2-AUDIT-01 数字员工的作业动作未留痕则不予放行（postcondition·mandatory）：log.auditable == true",
+    "retries": 3,
+    "title": "generateExecutionPlanDraft",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "createPbp"
+        },
+        "description": "创建执行计划头行并写来源映射(createPbp)。入参：计划头（业务类型、计划类型、管理单元、计划期）、计划行数组（物料编码、数量、单位、加权单价、需求日期、库存组织、品类、寻源方式）、来源行映射数组（来源计划头ID、来源计划行ID、来源单据号、来源行号）；出参：PBP_HEADER_ID、PBP_NUMBER、计划行ID数组、PBP_REL_ID 数组。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "PURCHASE_SCHEDULE_DERIVED"
+    ],
+    "triggered_event": [
+      "EXECUTION_PLAN_DRAFT_GENERATED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "action_prompt": "【析】需求计划提交审批瞬间并行跑四类校验——集采目录检查、价格异常检测、重复申报查重、技术附件完整性——汇总成结构化审核意见(R2-04/R2-05)。单条审核从 5-8 分钟压到秒级，问题从审批后／审计时发现提前到提交瞬间。\n\n【取数与校验步骤】\n\n第 1 步：**同一轮一次性并发**调用 queryCentralCatalogConfig、queryAuditThresholdConfig、\nqueryPoLine、queryContract 四个接口，不要串行。\n第 2 步：逐条计划行做三项校验：\n  ①【集采】物料在集采目录且 CENTRAL_PURCHASE_FLAG=true，但计划未标集采 → 违规；\n  ②【价格】预估单价相对历史加权均价的偏离比例 > PRICE_DEVIATION_RATIO 阈值 → 违规；\n     历史加权均价 = Σ(ORDER_QTY × UNIT_PRICE) / Σ(ORDER_QTY)，样本取同物料的订单行；\n  ③【必填】物料编码、数量、需求到货日期、库存组织任一为空 → 违规。\n第 3 步：任意一条违规 → audit_passed=false，并逐条给出 finding；全部通过才置 true。\n\n阈值必须取自 queryAuditThresholdConfig 返回值，不得写死。\n\n执行步骤：\n1. checkCentralCatalog：计划行物料命中有效集采目录、而集采层级仍为未标识 → 判「应集采未集采」，标注建议集采级别（一级／二级）并拦截或强制转集采流程(BR2-CENTRAL-01)；一级集采须匹配集团级审批流程模板(BR2-CENTRAL-04)。\n2. gradePriceDeviation：偏差率超过软预警阈值 → 软预警并要求补充说明(BR2-PRICE-01)；超过升级阈值 → 升级需求部门领导(BR2-PRICE-02)；附按管理单元划分的历史价格曲线(BR2-PRICE-03)。\n3. detectDuplicateDemand：按物料编码 + 管理单元 + 库存组织 + 需求日期，检测查重窗口内是否已有未取消的相同需求；命中即标记重复并推送原单号供核对(BR2-DUP-01)。\n4. checkTechnicalAttachment：校验技术附件完整性，缺件即拦截并要求补齐(BR2-ATTACH-01)。\n5. assembleAuditOpinion：四类校验并行执行，逐条记录校验项、结论、命中数据与整改建议；存在硬拦截项时置拦截标志，不进入组包节点。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`audit_opinion`、`audit_finding`、`audit_passed`、`thresholds_used`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"audit_opinion\": <见字段说明>,\n  \"audit_finding\": <见字段说明>,\n  \"audit_passed\": <见字段说明>,\n  \"thresholds_used\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- audit_opinion_id: 审核意见标识。（事件 ANNUAL_PLAN_AUDITED 的 payload 段）\n- audit_result: 审核结论：通过/预警/拦截。（事件 ANNUAL_PLAN_AUDITED 的 payload 段）\n- intercept: 是否存在拦截项。（事件 ANNUAL_PLAN_AUDITED 的 payload 段）\n- finding_count: 审核明细条数。（事件 ANNUAL_PLAN_AUDITED 的 payload 段）\n- audited_at: 审核时点。（事件 ANNUAL_PLAN_AUDITED 的 payload 段）\n- plan_line_id: 被拦截的计划行。（事件 PLAN_AUDIT_INTERCEPTED 的 payload 段）\n- intercept_items: 拦截项清单。（事件 PLAN_AUDIT_INTERCEPTED 的 payload 段）\n- rectify_advice: 整改建议。（事件 PLAN_AUDIT_INTERCEPTED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表。\n- audit_opinion: 审核意见：{audit_opinion_id, plan_id, audited_at, audit_passed:boolean, summary:string}。\n- audit_finding: 违规明细：[{audit_finding_id, audit_opinion_id, plan_line_id, finding_type:'集采未标注'|'价格偏离超限'|'必填项缺失', expected:string, actual:string, explanation:string}]。全部通过时为空数组。\n- audit_passed: **必填布尔值**。三项校验全部通过才填 true；任意一条违规填 false。工作流据此决定放行组包还是退回整改。\n- thresholds_used: 本次采用的阈值：{price_deviation_ratio:number, threshold_ids:[string]}，必须取自 queryAuditThresholdConfig。\n- scan_date: 原样透传上游 scan_date。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "description": "【析】需求计划提交审批瞬间并行跑四类校验——集采目录检查、价格异常检测、重复申报查重、技术附件完整性——汇总成结构化审核意见(R2-04/R2-05)。单条审核从 5-8 分钟压到秒级，问题从审批后／审计时发现提前到提交瞬间。\n\n【取数与校验步骤】\n\n第 1 步：**同一轮一次性并发**调用 queryCentralCatalogConfig、queryAuditThresholdConfig、\nqueryPoLine、queryContract 四个接口，不要串行。\n第 2 步：逐条计划行做三项校验：\n  ①【集采】物料在集采目录且 CENTRAL_PURCHASE_FLAG=true，但计划未标集采 → 违规；\n  ②【价格】预估单价相对历史加权均价的偏离比例 > PRICE_DEVIATION_RATIO 阈值 → 违规；\n     历史加权均价 = Σ(ORDER_QTY × UNIT_PRICE) / Σ(ORDER_QTY)，样本取同物料的订单行；\n  ③【必填】物料编码、数量、需求到货日期、库存组织任一为空 → 违规。\n第 3 步：任意一条违规 → audit_passed=false，并逐条给出 finding；全部通过才置 true。\n\n阈值必须取自 queryAuditThresholdConfig 返回值，不得写死。",
+        "name": "analyze",
+        "order": "1",
+        "result_key": "auditAnnualPlanCompliance",
+        "type": "logic"
+      },
+      {
+        "condition": "lastResult.audit_passed == true",
+        "description": "事件 ANNUAL_PLAN_AUDITED 的发射条件。",
+        "name": "emit-when:ANNUAL_PLAN_AUDITED",
+        "order": "2",
+        "result_key": "emit-when-ANNUAL_PLAN_AUDITED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-ANNUAL_PLAN_AUDITED"
+        ],
+        "description": "条件命中时发射事件 ANNUAL_PLAN_AUDITED。",
+        "emit_event": "ANNUAL_PLAN_AUDITED",
+        "emit_payload_from": "results.auditAnnualPlanCompliance",
+        "name": "emit:ANNUAL_PLAN_AUDITED",
+        "order": "3",
+        "result_key": "emit-ANNUAL_PLAN_AUDITED",
+        "type": "emit"
+      },
+      {
+        "condition": "lastResult.audit_passed == false",
+        "description": "事件 PLAN_AUDIT_INTERCEPTED 的发射条件。",
+        "name": "emit-when:PLAN_AUDIT_INTERCEPTED",
+        "order": "4",
+        "result_key": "emit-when-PLAN_AUDIT_INTERCEPTED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-PLAN_AUDIT_INTERCEPTED"
+        ],
+        "description": "条件命中时发射事件 PLAN_AUDIT_INTERCEPTED。",
+        "emit_event": "PLAN_AUDIT_INTERCEPTED",
+        "emit_payload_from": "results.auditAnnualPlanCompliance",
+        "name": "emit:PLAN_AUDIT_INTERCEPTED",
+        "order": "5",
+        "result_key": "emit-PLAN_AUDIT_INTERCEPTED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "6",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【析】需求计划提交审批瞬间并行跑四类校验——集采目录检查、价格异常检测、重复申报查重、技术附件完整性——汇总成结构化审核意见(R2-04/R2-05)。单条审核从 5-8 分钟压到秒级，问题从审批后／审计时发现提前到提交瞬间。\n\n【取数与校验步骤】\n\n第 1 步：**同一轮一次性并发**调用 queryCentralCatalogConfig、queryAuditThresholdConfig、\nqueryPoLine、queryContract 四个接口，不要串行。\n第 2 步：逐条计划行做三项校验：\n  ①【集采】物料在集采目录且 CENTRAL_PURCHASE_FLAG=true，但计划未标集采 → 违规；\n  ②【价格】预估单价相对历史加权均价的偏离比例 > PRICE_DEVIATION_RATIO 阈值 → 违规；\n     历史加权均价 = Σ(ORDER_QTY × UNIT_PRICE) / Σ(ORDER_QTY)，样本取同物料的订单行；\n  ③【必填】物料编码、数量、需求到货日期、库存组织任一为空 → 违规。\n第 3 步：任意一条违规 → audit_passed=false，并逐条给出 finding；全部通过才置 true。\n\n阈值必须取自 queryAuditThresholdConfig 返回值，不得写死。",
+    "generated": true,
+    "id": "auditAnnualPlanCompliance",
+    "inputs": [
+      {
+        "description": "执行计划头标识。",
+        "id": "plan_id",
+        "kind": "value",
+        "label": "plan_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "执行计划编号。",
+        "id": "plan_no",
+        "kind": "value",
+        "label": "plan_no",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "草稿计划行条数。",
+        "id": "draft_line_count",
+        "kind": "value",
+        "label": "draft_line_count",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      {
+        "description": "对应的合并组编号。",
+        "id": "merge_group_id",
+        "kind": "value",
+        "label": "merge_group_id",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "来源行映射是否已落库。",
+        "id": "source_mapping_written",
+        "kind": "value",
+        "label": "source_mapping_written",
+        "required": true,
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      {
+        "description": "提交审批的计划行标识。",
+        "id": "plan_line_id",
+        "kind": "value",
+        "label": "plan_line_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "提交时间。",
+        "id": "submitted_at",
+        "kind": "value",
+        "label": "submitted_at",
+        "required": true,
+        "schema": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      {
+        "description": "提交人（需求申请人）。",
+        "id": "submitted_by",
+        "kind": "value",
+        "label": "submitted_by",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "待复核的审核意见。",
+        "id": "audit_opinion_id",
+        "kind": "value",
+        "label": "audit_opinion_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "已完成的待办。",
+        "id": "task_id",
+        "kind": "value",
+        "label": "task_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "申请人录入的不按集采采购原因。",
+        "id": "non_central_reason",
+        "kind": "value",
+        "label": "non_central_reason",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "整改回流时间。",
+        "id": "rectified_at",
+        "kind": "value",
+        "label": "rectified_at",
+        "required": true,
+        "schema": {
+          "format": "date-time",
+          "type": "string"
+        }
+      }
+    ],
+    "name": "auditAnnualPlanCompliance",
+    "ontology_instructions": "【目标对象】\n- 计划审核意见：决策属性 audit_opinion_id, plan_id, plan_line_id, audit_result, intercept, finding_count, price_curve, price_curve_attached, rectify_advice, audited_at, opinion_status, rectified_at, submitted_by\n- 审核明细：决策属性 audit_finding_id, audit_opinion_id, plan_line_id, catalog_id, audit_threshold_id, check_item, conclusion, hit_data, threshold_value, actual_value, current_unit_price, historical_avg_price, historical_sample_size, price_deviation_ratio, duplicate_plan_no, duplicate_window_days, duplicate_gap_days, suggested_central_level, non_central_reason, non_central_reason_provided, attachment_complete, escalated_to_demand_leader, rectify_advice\n\n【绑定规则】\n- BR2-THRESH-01 审核与组包的判定阈值必须取自校验阈值配置（precondition·mandatory）：threshold.audit_threshold_id != \"\" && threshold.is_enabled == true\n- BR2-CENTRAL-01 计划行物料命中集采目录而未标识集采层级则判应集采未集采并拦截（validation·mandatory）：line.central_purchase_level != \"未标识\" || catalog.is_enabled == false\n- BR2-CENTRAL-04 标注为一级集采则必须匹配集团级审批流程模板（validation·mandatory）：scheme.central_level != \"一级集采\" || scheme.approve_flow_code != \"\"\n- BR2-PRICE-01 价格偏差率超过20%则软预警并要求补充说明（validation·mandatory）：finding.price_deviation_ratio <= 0.2\n- BR2-PRICE-02 价格偏差率超过50%则升级需求部门领导（validation·mandatory）：finding.price_deviation_ratio <= 0.5\n- BR2-PRICE-03 给出价格预警则必须附按管理单元划分的历史价格曲线（postcondition·mandatory）：opinion.price_curve_attached == true\n- BR2-DUP-01 查重窗口内存在同物料同单元同组织的未取消需求则标记重复申报（validation·mandatory）：finding.duplicate_gap_days > 30 || finding.duplicate_plan_no == \"\"\n- BR2-ATTACH-01 定制设备缺技术附件则拦截并要求补齐（validation·mandatory）：finding.attachment_complete == true",
+    "retries": 3,
+    "title": "auditAnnualPlanCompliance",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json"
+        },
+        "description": "实时查询 Meta ERP。可用操作：queryCentralCatalogConfig（取集采目录，判定是否必须走集中采购（本体 tool_use 名 getCentralCatalogConfig）。）、queryAuditThresholdConfig（取校验阈值：价格偏离、金额上限、必填项（本体 tool_use 名 getAuditThresholdConfig）。）、queryPoLine（取历史订单行，作为价格曲线的样本。）、queryContract（取合同价，作为价格偏离的对照基准（本体 tool_use 名 getContractByQuery）。）。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "input_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "description": "要调用的 Meta ERP 查询操作",
+              "enum": [
+                "queryCentralCatalogConfig",
+                "queryAuditThresholdConfig",
+                "queryPoLine",
+                "queryContract"
+              ],
+              "type": "string"
+            },
+            "payload": {
+              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "type": "object"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "read"
+      }
+    ],
+    "trigger": [
+      "EXECUTION_PLAN_DRAFT_GENERATED",
+      "DEMAND_PLAN_SUBMITTED_FOR_APPROVAL",
+      "PLAN_RECTIFICATION_SUBMITTED"
+    ],
+    "triggered_event": [
+      "ANNUAL_PLAN_AUDITED",
+      "PLAN_AUDIT_INTERCEPTED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "awaiting_role": "计划员",
+        "description": "接收申请人整改结果或原因说明，回流复核。",
+        "form_schema": {
+          "description": "审核意见与违规明细由系统带出；整改完成后确认，计划将重新进入合规校验。",
+          "properties": {
+            "audit_opinion_id": {
+              "title": "审核意见编号",
+              "type": "string"
+            },
+            "rectification_note": {
+              "title": "整改说明",
+              "type": "string"
+            }
+          },
+          "required": [
+            "audit_opinion_id",
+            "rectification_note"
+          ],
+          "title": "计划退回整改（R2-04）",
+          "type": "object"
+        },
+        "name": "acceptRectification",
+        "order": "1",
+        "result_key": "manual-4",
+        "task_type": "plan.rectify",
+        "type": "manual"
+      },
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "depends_on": [
+          "manual-4"
+        ],
+        "description": "写回 Meta ERP：pushTask。",
+        "name": "metaerp.invoke",
+        "order": "2",
+        "result_key": "returnPlanForRectification",
+        "tool_arguments": {
+          "payload": {
+            "from": "results.manual-4"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "depends_on": [
+          "returnPlanForRectification"
+        ],
+        "description": "发射事件 PLAN_RETURNED_FOR_RECTIFICATION（无条件）。",
+        "emit_event": "PLAN_RETURNED_FOR_RECTIFICATION",
+        "emit_payload_from": "event.data",
+        "name": "emit:PLAN_RETURNED_FOR_RECTIFICATION",
+        "order": "3",
+        "result_key": "emit-PLAN_RETURNED_FOR_RECTIFICATION",
+        "type": "emit"
+      },
+      {
+        "condition": "results.manual-4.decision == 'approved'",
+        "depends_on": [
+          "returnPlanForRectification"
+        ],
+        "description": "事件 PLAN_RECTIFICATION_SUBMITTED 的发射条件。",
+        "name": "emit-when:PLAN_RECTIFICATION_SUBMITTED",
+        "order": "4",
+        "result_key": "emit-when-PLAN_RECTIFICATION_SUBMITTED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "returnPlanForRectification",
+          "emit-when-PLAN_RECTIFICATION_SUBMITTED"
+        ],
+        "description": "条件命中时发射事件 PLAN_RECTIFICATION_SUBMITTED。",
+        "emit_event": "PLAN_RECTIFICATION_SUBMITTED",
+        "emit_payload_from": "event.data",
+        "name": "emit:PLAN_RECTIFICATION_SUBMITTED",
+        "order": "5",
+        "result_key": "emit-PLAN_RECTIFICATION_SUBMITTED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "6",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent",
+      "Human"
+    ],
+    "description": "【警】审核命中硬拦截时退回需求申请人整改，给出逐条整改建议并留痕；申请人补齐或说明「不按集采采购原因」后回流复核(R2-04/R2-05)。问题在提交瞬间 100% 拦下，审计风险前置化解。",
+    "generated": true,
+    "id": "returnPlanForRectification",
+    "inputs": [
+      {
+        "description": "含拦截项的审核意见。",
+        "id": "audit_opinion_id",
+        "kind": "value",
+        "label": "audit_opinion_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "被拦截的计划行。",
+        "id": "plan_line_id",
+        "kind": "value",
+        "label": "plan_line_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "拦截项清单。",
+        "id": "intercept_items",
+        "kind": "value",
+        "label": "intercept_items",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "整改建议。",
+        "id": "rectify_advice",
+        "kind": "value",
+        "label": "rectify_advice",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "name": "returnPlanForRectification",
+    "ontology_instructions": "【目标对象】\n- 计划审核意见：决策属性 audit_opinion_id, plan_id, plan_line_id, audit_result, intercept, finding_count, price_curve, price_curve_attached, rectify_advice, audited_at, opinion_status, rectified_at, submitted_by\n- 数字员工待办：决策属性 task_id, task_type, assigned_role, assignee, plan_line_id, related_object_type, related_object_id, task_summary, task_status, created_at, due_at, completed_at, response_note, rejection_reason\n\n【绑定规则】\n- BR2-CENTRAL-03 已录入不按集采采购原因则可继续后续流程并留痕（approval·mandatory）：finding.non_central_reason_provided == true\n- BR2-AUDIT-01 数字员工的作业动作未留痕则不予放行（postcondition·mandatory）：log.auditable == true",
+    "retries": 3,
+    "title": "returnPlanForRectification",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "pushTask"
+        },
+        "description": "pushTask：returnPlanForRectification 写回 metaERP。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "PLAN_AUDIT_INTERCEPTED"
+    ],
+    "triggered_event": [
+      "PLAN_RETURNED_FOR_RECTIFICATION",
+      "PLAN_RECTIFICATION_SUBMITTED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "action_prompt": "【析】按物料→品类→寻源方式→需求日期→采购组五级算匹配度，叠加收货地域相似度与交付周期重叠度做场景聚类，输出 2-3 套组包方案及匹配置信度，同步做类型一致与交货跨度合规校验(R2-06)。组包从凭经验 15-25 分钟变成选方案 1-2 分钟。\n\n【组包步骤】\n\n第 1 步：按 `采购品类 + 需求到货时间窗 + 需求单位` 聚类候选包。\n第 2 步：对每个候选包算包内金额合计与品类数。\n第 3 步：与阈值比对（取自 queryAuditThresholdConfig）：\n  金额合计 > PACKAGE_MAX_AMOUNT → 不合规，须拆包；\n  品类数 > PACKAGE_CATEGORY_MIXED → 不合规，混装超限。\n第 4 步：只要有任意一个候选包不合规，就把 packaging_compliant 置 false，\n并逐条给出 finding；全部合规才置 true。\n\n执行步骤：\n1. scoreCategoryMatch：按物料编码 → 品类 → 建议寻源方式 → 需求日期 → 采购组编号五级依次计算匹配度，层级越靠前权重越高。\n2. clusterByScenario：按收货地域相似度与交付周期重叠度做场景聚类，重叠度不低于阈值的优先合并(BR2-PKG-02)。\n3. checkTypeConsistency：按品类主数据的业务类型判包内是否混有工程/物资/服务，混包即硬拦截(BR2-PKG-01)。\n4. checkDeliverySpan：算包内交货时间跨度（最晚需求日期 − 最早需求日期），超过阈值生成拆包建议(BR2-PKG-03)。\n5. emitTopSchemes：按综合评分排序输出 2-3 套方案，每套列出包内计划行清单与推荐依据；不足两套不推送(BR2-PKG-04)。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`package_scheme`、`packaging_finding`、`packaging_compliant`、`thresholds_used`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"package_scheme\": <见字段说明>,\n  \"packaging_finding\": <见字段说明>,\n  \"packaging_compliant\": <见字段说明>,\n  \"thresholds_used\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- package_scheme_id: 方案标识。（事件 PACKAGING_SCHEME_RECOMMENDED 的 payload 段）\n- scheme_no: 方案编号。（事件 PACKAGING_SCHEME_RECOMMENDED 的 payload 段）\n- match_score: 匹配度评分。（事件 PACKAGING_SCHEME_RECOMMENDED 的 payload 段）\n- sibling_scheme_count: 本批次候选方案数。（事件 PACKAGING_SCHEME_RECOMMENDED 的 payload 段）\n- is_recommended: 是否推荐方案。（事件 PACKAGING_SCHEME_RECOMMENDED 的 payload 段）\n- pkg_finding_id: 合规结论标识。（事件 PACKAGING_COMPLIANCE_VIOLATED 的 payload 段）\n- check_item: 命中的校验项。（事件 PACKAGING_COMPLIANCE_VIOLATED 的 payload 段）\n- conclusion: 结论：软预警/硬拦截。（事件 PACKAGING_COMPLIANCE_VIOLATED 的 payload 段）\n- package_scheme: 组包方案：[{package_scheme_id, package_name, category_code, member_plan_line_ids:[string], total_amount:number, category_count:integer, required_arrival_window:string}]。\n- packaging_finding: 组包合规结论：[{pkg_finding_id, package_scheme_id, finding_type:'单包金额超限'|'品类混装超限', threshold_value:number, actual_value:number, explanation:string}]。全部合规时为空数组。\n- packaging_compliant: **必填布尔值**。所有候选包都合规才填 true；任意一个不合规填 false。工作流据此决定继续标注还是先发合规预警。\n- thresholds_used: 本次采用的阈值：{package_max_amount:number, package_category_mixed:number, threshold_ids:[string]}。\n- scan_date: 原样透传上游 scan_date。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "description": "【析】按物料→品类→寻源方式→需求日期→采购组五级算匹配度，叠加收货地域相似度与交付周期重叠度做场景聚类，输出 2-3 套组包方案及匹配置信度，同步做类型一致与交货跨度合规校验(R2-06)。组包从凭经验 15-25 分钟变成选方案 1-2 分钟。\n\n【组包步骤】\n\n第 1 步：按 `采购品类 + 需求到货时间窗 + 需求单位` 聚类候选包。\n第 2 步：对每个候选包算包内金额合计与品类数。\n第 3 步：与阈值比对（取自 queryAuditThresholdConfig）：\n  金额合计 > PACKAGE_MAX_AMOUNT → 不合规，须拆包；\n  品类数 > PACKAGE_CATEGORY_MIXED → 不合规，混装超限。\n第 4 步：只要有任意一个候选包不合规，就把 packaging_compliant 置 false，\n并逐条给出 finding；全部合规才置 true。",
+        "name": "analyze",
+        "order": "1",
+        "result_key": "recommendPackagingScheme",
+        "type": "logic"
+      },
+      {
+        "condition": "lastResult.packaging_compliant == true",
+        "description": "事件 PACKAGING_SCHEME_RECOMMENDED 的发射条件。",
+        "name": "emit-when:PACKAGING_SCHEME_RECOMMENDED",
+        "order": "2",
+        "result_key": "emit-when-PACKAGING_SCHEME_RECOMMENDED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-PACKAGING_SCHEME_RECOMMENDED"
+        ],
+        "description": "条件命中时发射事件 PACKAGING_SCHEME_RECOMMENDED。",
+        "emit_event": "PACKAGING_SCHEME_RECOMMENDED",
+        "emit_payload_from": "results.recommendPackagingScheme",
+        "name": "emit:PACKAGING_SCHEME_RECOMMENDED",
+        "order": "3",
+        "result_key": "emit-PACKAGING_SCHEME_RECOMMENDED",
+        "type": "emit"
+      },
+      {
+        "condition": "lastResult.packaging_compliant == false",
+        "description": "事件 PACKAGING_COMPLIANCE_VIOLATED 的发射条件。",
+        "name": "emit-when:PACKAGING_COMPLIANCE_VIOLATED",
+        "order": "4",
+        "result_key": "emit-when-PACKAGING_COMPLIANCE_VIOLATED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "emit-when-PACKAGING_COMPLIANCE_VIOLATED"
+        ],
+        "description": "条件命中时发射事件 PACKAGING_COMPLIANCE_VIOLATED。",
+        "emit_event": "PACKAGING_COMPLIANCE_VIOLATED",
+        "emit_payload_from": "results.recommendPackagingScheme",
+        "name": "emit:PACKAGING_COMPLIANCE_VIOLATED",
+        "order": "5",
+        "result_key": "emit-PACKAGING_COMPLIANCE_VIOLATED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "6",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【析】按物料→品类→寻源方式→需求日期→采购组五级算匹配度，叠加收货地域相似度与交付周期重叠度做场景聚类，输出 2-3 套组包方案及匹配置信度，同步做类型一致与交货跨度合规校验(R2-06)。组包从凭经验 15-25 分钟变成选方案 1-2 分钟。\n\n【组包步骤】\n\n第 1 步：按 `采购品类 + 需求到货时间窗 + 需求单位` 聚类候选包。\n第 2 步：对每个候选包算包内金额合计与品类数。\n第 3 步：与阈值比对（取自 queryAuditThresholdConfig）：\n  金额合计 > PACKAGE_MAX_AMOUNT → 不合规，须拆包；\n  品类数 > PACKAGE_CATEGORY_MIXED → 不合规，混装超限。\n第 4 步：只要有任意一个候选包不合规，就把 packaging_compliant 置 false，\n并逐条给出 finding；全部合规才置 true。",
+    "generated": true,
+    "id": "recommendPackagingScheme",
+    "inputs": [
+      {
+        "description": "审核意见标识。",
+        "id": "audit_opinion_id",
+        "kind": "value",
+        "label": "audit_opinion_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "审核结论：通过/预警/拦截。",
+        "id": "audit_result",
+        "kind": "value",
+        "label": "audit_result",
+        "required": true,
+        "schema": {
+          "examples": [
+            "通过",
+            "预警",
+            "拦截"
+          ],
+          "type": "string"
+        }
+      },
+      {
+        "description": "是否存在拦截项。",
+        "id": "intercept",
+        "kind": "value",
+        "label": "intercept",
+        "required": true,
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      {
+        "description": "审核明细条数。",
+        "id": "finding_count",
+        "kind": "value",
+        "label": "finding_count",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      {
+        "description": "审核时点。",
+        "id": "audited_at",
+        "kind": "value",
+        "label": "audited_at",
+        "required": true,
+        "schema": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      {
+        "description": "合规结论标识。",
+        "id": "pkg_finding_id",
+        "kind": "value",
+        "label": "pkg_finding_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "相关方案。",
+        "id": "package_scheme_id",
+        "kind": "value",
+        "label": "package_scheme_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "生成的调整或补充说明待办。",
+        "id": "task_id",
+        "kind": "value",
+        "label": "task_id",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "调整建议。",
+        "id": "rectify_advice",
+        "kind": "value",
+        "label": "rectify_advice",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "驳回原因。",
+        "id": "rejection_reason",
+        "kind": "value",
+        "label": "rejection_reason",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "驳回人（计划员）。",
+        "id": "rejected_by",
+        "kind": "value",
+        "label": "rejected_by",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "驳回时间。",
+        "id": "rejected_at",
+        "kind": "value",
+        "label": "rejected_at",
+        "required": true,
+        "schema": {
+          "format": "date-time",
+          "type": "string"
+        }
+      }
+    ],
+    "name": "recommendPackagingScheme",
+    "ontology_instructions": "【目标对象】\n- 组包方案：决策属性 package_scheme_id, scheme_no, plan_id, purchasing_group_no, business_type, category_id, match_score, line_count, total_amount, region_similarity, delivery_overlap_rate, delivery_span_days, mixed_type_detected, split_advice, frame_hit, frame_agreement_no, frame_quota_sufficient, central_level, central_pattern, approve_flow_code, special_sourcing_method, is_recommended, sibling_scheme_count, scheme_status, generated_package_id, selected_by, selected_at, rejection_reason, generated_at\n- 组包合规结论：决策属性 pkg_finding_id, package_scheme_id, audit_threshold_id, check_item, conclusion, detected_types, delivery_span_days, threshold_value, split_advice, special_sourcing_method, supplement_task_created, rectify_advice, resolved\n\n【绑定规则】\n- BR2-THRESH-01 审核与组包的判定阈值必须取自校验阈值配置（precondition·mandatory）：threshold.audit_threshold_id != \"\" && threshold.is_enabled == true\n- BR2-PKG-01 采购包内混有工程物资服务不同类型则硬拦截不得成包（validation·mandatory）：scheme.mixed_type_detected == false\n- BR2-PKG-02 同地域且交付周期重叠度不低于70%则优先合并为同一采购包（validation·optional）：scheme.delivery_overlap_rate >= 0.7\n- BR2-PKG-03 包内交货时间跨度超过90天则生成拆包建议（validation·mandatory）：scheme.delivery_span_days <= 90\n- BR2-PKG-04 组包方案不足两套则不予推送计划员选择（postcondition·mandatory）：scheme.sibling_scheme_count >= 2",
+    "retries": 3,
+    "title": "recommendPackagingScheme",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "queryAuditThresholdConfig"
+        },
+        "description": "取组包合规阈值：单包金额上限、品类混装限制（本体 tool_use 名 getAuditThresholdConfig）。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "read"
+      }
+    ],
+    "trigger": [
+      "ANNUAL_PLAN_AUDITED",
+      "PACKAGING_ALERT_RAISED",
+      "PLAN_AND_PACKAGE_REJECTED"
+    ],
+    "triggered_event": [
+      "PACKAGING_SCHEME_RECOMMENDED",
+      "PACKAGING_COMPLIANCE_VIOLATED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "description": "写回 Meta ERP：createProcPackageLines。",
+        "name": "metaerp.invoke",
+        "order": "1",
+        "result_key": "annotateFrameAndCentralPurchase",
+        "tool_arguments": {
+          "payload": {
+            "from": "event.data"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "depends_on": [
+          "annotateFrameAndCentralPurchase"
+        ],
+        "description": "发射事件 FRAME_AND_CENTRAL_ANNOTATED（无条件）。",
+        "emit_event": "FRAME_AND_CENTRAL_ANNOTATED",
+        "emit_payload_from": "event.data",
+        "name": "emit:FRAME_AND_CENTRAL_ANNOTATED",
+        "order": "2",
+        "result_key": "emit-FRAME_AND_CENTRAL_ANNOTATED",
+        "type": "emit"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【行】按物料+管理单元匹配框架协议并判有效性，命中即标注「可纳入框架：协议编号」；命中集采目录则写入集采层级与集采形式并匹配审批流程模板；按场景编码识别特殊采购方式触发补充说明待办(R2-07)。框架协议利用率与集采覆盖率上不去，缺的就是这一层自动标注。",
+    "generated": true,
+    "id": "annotateFrameAndCentralPurchase",
+    "inputs": [
+      {
+        "description": "方案标识。",
+        "id": "package_scheme_id",
+        "kind": "value",
+        "label": "package_scheme_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "方案编号。",
+        "id": "scheme_no",
+        "kind": "value",
+        "label": "scheme_no",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "匹配度评分。",
+        "id": "match_score",
+        "kind": "value",
+        "label": "match_score",
+        "required": true,
+        "schema": {
+          "type": "number"
+        }
+      },
+      {
+        "description": "本批次候选方案数。",
+        "id": "sibling_scheme_count",
+        "kind": "value",
+        "label": "sibling_scheme_count",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      {
+        "description": "是否推荐方案。",
+        "id": "is_recommended",
+        "kind": "value",
+        "label": "is_recommended",
+        "required": true,
+        "schema": {
+          "type": "boolean"
+        }
+      }
+    ],
+    "name": "annotateFrameAndCentralPurchase",
+    "ontology_instructions": "【目标对象】\n- 组包方案：决策属性 package_scheme_id, scheme_no, plan_id, purchasing_group_no, business_type, category_id, match_score, line_count, total_amount, region_similarity, delivery_overlap_rate, delivery_span_days, mixed_type_detected, split_advice, frame_hit, frame_agreement_no, frame_quota_sufficient, central_level, central_pattern, approve_flow_code, special_sourcing_method, is_recommended, sibling_scheme_count, scheme_status, generated_package_id, selected_by, selected_at, rejection_reason, generated_at\n- 采购包行：决策属性 package_line_id, package_id, plan_line_id, source_object_type, material_code, management_unit, inventory_organization, category_id, quantity, required_arrival_date, sourcing_method, planner, frame_agreement_id, frame_agreement_item_id, frame_agreement_no, frame_hit\n- 采购包：决策属性 package_id, package_no, chain_id, requisition_id, package_status, packaged_at, expected_sourcing_finish_date, material_code, package_name, purchasing_group_no, scenario_code, central_purchase_level, central_purchase_pattern, approve_flow_code, buyer, assignment_completed_at\n\n【绑定规则】\n- BR2-FRAME-01 命中未失效未关闭的框架协议则标注可纳入框架并推荐合并组包（validation·mandatory）：agreement.is_valid == true && agreement.closed_status == \"未关闭\"\n- BR2-FRAME-02 命中框架协议但可用额度不足则只提示不自动纳入（validation·mandatory）：scheme.frame_hit == false || scheme.frame_quota_sufficient == true\n- BR2-FRAME-03 识别为单一来源或邀请招标等特殊采购方式则触发补充说明待办（validation·mandatory）：scheme.special_sourcing_method != \"无\"\n- BR2-CENTRAL-02 采购包行物料命中集采目录而包头未标识集采层级则同样判应集采未集采（validation·mandatory）：package.central_purchase_level != \"未标识\" || catalog.is_enabled == false\n- BR2-CENTRAL-04 标注为一级集采则必须匹配集团级审批流程模板（postcondition·mandatory）：scheme.central_level != \"一级集采\" || scheme.approve_flow_code != \"\"",
+    "retries": 3,
+    "title": "annotateFrameAndCentralPurchase",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "createProcPackageLines"
+        },
+        "description": "查询供应商价格协议做框架识别与有效性判断(querySPAList)。入参：物料编码列表、管理单元编码、协议类型、失效日期>当前日期、关闭状态=未关闭、分页；出参：SPA_HEADER_ID、SPA_NUMBER、SUPPLIER_CODE、AGREEMENT_TYPE、EFFECTIVE_DATE、DISABLE_DATE、CLOSED_STATUS、AMOUNT、行数组（SPA_LINE_ID、ITEM_CODE、PRICE、QUANTITY、CATEGORY_ID）。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "PACKAGING_SCHEME_RECOMMENDED"
+    ],
+    "triggered_event": [
+      "FRAME_AND_CENTRAL_ANNOTATED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "description": "写回 Meta ERP：pushTask。",
+        "name": "metaerp.invoke",
+        "order": "1",
+        "result_key": "raisePackagingComplianceAlert",
+        "tool_arguments": {
+          "payload": {
+            "from": "event.data"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "depends_on": [
+          "raisePackagingComplianceAlert"
+        ],
+        "description": "发射事件 PACKAGING_ALERT_RAISED（无条件）。",
+        "emit_event": "PACKAGING_ALERT_RAISED",
+        "emit_payload_from": "event.data",
+        "name": "emit:PACKAGING_ALERT_RAISED",
+        "order": "2",
+        "result_key": "emit-PACKAGING_ALERT_RAISED",
+        "type": "emit"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【警】类型混包硬拦截、交货跨度超限出拆包建议、特殊采购方式挂补充说明待办；调整后回到组包重算(R2-06/R2-07)。类型混包差错要在成包之前就降为零。",
+    "generated": true,
+    "id": "raisePackagingComplianceAlert",
+    "inputs": [
+      {
+        "description": "合规结论标识。",
+        "id": "pkg_finding_id",
+        "kind": "value",
+        "label": "pkg_finding_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "被拦截或预警的方案。",
+        "id": "package_scheme_id",
+        "kind": "value",
+        "label": "package_scheme_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "命中的校验项。",
+        "id": "check_item",
+        "kind": "value",
+        "label": "check_item",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "结论：软预警/硬拦截。",
+        "id": "conclusion",
+        "kind": "value",
+        "label": "conclusion",
+        "required": true,
+        "schema": {
+          "examples": [
+            "软预警",
+            "硬拦截"
+          ],
+          "type": "string"
+        }
+      }
+    ],
+    "name": "raisePackagingComplianceAlert",
+    "ontology_instructions": "【目标对象】\n- 组包合规结论：决策属性 pkg_finding_id, package_scheme_id, audit_threshold_id, check_item, conclusion, detected_types, delivery_span_days, threshold_value, split_advice, special_sourcing_method, supplement_task_created, rectify_advice, resolved\n- 组包方案：决策属性 package_scheme_id, scheme_no, plan_id, purchasing_group_no, business_type, category_id, match_score, line_count, total_amount, region_similarity, delivery_overlap_rate, delivery_span_days, mixed_type_detected, split_advice, frame_hit, frame_agreement_no, frame_quota_sufficient, central_level, central_pattern, approve_flow_code, special_sourcing_method, is_recommended, sibling_scheme_count, scheme_status, generated_package_id, selected_by, selected_at, rejection_reason, generated_at\n\n【绑定规则】\n- BR2-PKG-01 采购包内混有工程物资服务不同类型则硬拦截不得成包（guard·mandatory）：scheme.mixed_type_detected == false\n- BR2-PKG-03 包内交货时间跨度超过90天则生成拆包建议（validation·mandatory）：scheme.delivery_span_days <= 90\n- BR2-FRAME-03 识别为单一来源或邀请招标等特殊采购方式则触发补充说明待办（validation·mandatory）：scheme.special_sourcing_method != \"无\"",
+    "retries": 3,
+    "title": "raisePackagingComplianceAlert",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "pushTask"
+        },
+        "description": "pushTask：raisePackagingComplianceAlert 写回 metaERP。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "PACKAGING_COMPLIANCE_VIOLATED"
+    ],
+    "triggered_event": [
+      "PACKAGING_ALERT_RAISED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "awaiting_role": "计划员",
+        "description": "计划员确认草稿并选定一套方案；未确认不得提交审批(BR2-HITL-01)。",
+        "form_schema": {
+          "description": "计划编号与组包方案由系统带出，确认人取当前登录人；确认后进入审批提交，驳回则退回组包重排。",
+          "properties": {
+            "confirmed_by": {
+              "title": "确认人",
+              "type": "string"
+            },
+            "package_scheme_id": {
+              "title": "组包方案编号",
+              "type": "string"
+            },
+            "plan_id": {
+              "title": "计划编号",
+              "type": "string"
+            },
+            "remark": {
+              "title": "备注",
+              "type": "string"
+            }
+          },
+          "required": [
+            "plan_id",
+            "package_scheme_id",
+            "confirmed_by"
+          ],
+          "title": "计划与组包确认（R2-06）",
+          "type": "object"
+        },
+        "name": "confirmByPlanner",
+        "order": "1",
+        "result_key": "manual-2",
+        "task_type": "plan.package-confirm",
+        "type": "manual"
+      },
+      {
+        "awaiting_role": "计划员",
+        "depends_on": [
+          "manual-2"
+        ],
+        "description": "驳回时必须记录驳回原因，回流数字员工优化合并与组包规则(BR2-FEEDBACK-01)。",
+        "form_schema": {
+          "properties": {
+            "rejection_reason": {
+              "title": "驳回原因",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "title": "驳回原因（仅驳回时填写）",
+          "type": "object"
+        },
+        "name": "captureRejectionReason",
+        "order": "2",
+        "result_key": "manual-3",
+        "task_type": "plan.package-reject-reason",
+        "type": "manual"
+      },
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "depends_on": [
+          "manual-2",
+          "manual-3"
+        ],
+        "description": "写回 Meta ERP：writeOperationLog。",
+        "name": "metaerp.invoke",
+        "order": "3",
+        "result_key": "confirmPlanAndPackage",
+        "tool_arguments": {
+          "payload": {
+            "from": "results.manual-2"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "condition": "results.manual-2.decision == 'approved'",
+        "depends_on": [
+          "confirmPlanAndPackage"
+        ],
+        "description": "事件 PLAN_AND_PACKAGE_CONFIRMED 的发射条件。",
+        "name": "emit-when:PLAN_AND_PACKAGE_CONFIRMED",
+        "order": "4",
+        "result_key": "emit-when-PLAN_AND_PACKAGE_CONFIRMED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "confirmPlanAndPackage",
+          "emit-when-PLAN_AND_PACKAGE_CONFIRMED"
+        ],
+        "description": "条件命中时发射事件 PLAN_AND_PACKAGE_CONFIRMED。",
+        "emit_event": "PLAN_AND_PACKAGE_CONFIRMED",
+        "emit_payload_from": "event.data",
+        "name": "emit:PLAN_AND_PACKAGE_CONFIRMED",
+        "order": "5",
+        "result_key": "emit-PLAN_AND_PACKAGE_CONFIRMED",
+        "type": "emit"
+      },
+      {
+        "condition": "results.manual-2.decision == 'rejected'",
+        "depends_on": [
+          "confirmPlanAndPackage"
+        ],
+        "description": "事件 PLAN_AND_PACKAGE_REJECTED 的发射条件。",
+        "name": "emit-when:PLAN_AND_PACKAGE_REJECTED",
+        "order": "6",
+        "result_key": "emit-when-PLAN_AND_PACKAGE_REJECTED",
+        "type": "condition"
+      },
+      {
+        "depends_on": [
+          "confirmPlanAndPackage",
+          "emit-when-PLAN_AND_PACKAGE_REJECTED"
+        ],
+        "description": "条件命中时发射事件 PLAN_AND_PACKAGE_REJECTED。",
+        "emit_event": "PLAN_AND_PACKAGE_REJECTED",
+        "emit_payload_from": "event.data",
+        "name": "emit:PLAN_AND_PACKAGE_REJECTED",
+        "order": "7",
+        "result_key": "emit-PLAN_AND_PACKAGE_REJECTED",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "8",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Human",
+      "Agent"
+    ],
+    "description": "【断】计划员在待办里确认执行计划草稿并选定一套组包方案；驳回则记录原因、回流数字员工优化规则(场景期望 5)。人机协同不替代决策——关键单据一律由人拍板，而不是由 Agent 自行放行。",
+    "generated": true,
+    "id": "confirmPlanAndPackage",
+    "inputs": [
+      {
+        "description": "完成标注的方案。",
+        "id": "package_scheme_id",
+        "kind": "value",
+        "label": "package_scheme_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "是否命中框架协议。",
+        "id": "frame_hit",
+        "kind": "value",
+        "label": "frame_hit",
+        "required": true,
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      {
+        "description": "命中的协议编号。",
+        "id": "frame_agreement_no",
+        "kind": "value",
+        "label": "frame_agreement_no",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "集采级别标注。",
+        "id": "central_level",
+        "kind": "value",
+        "label": "central_level",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "匹配到的审批流程模板。",
+        "id": "approve_flow_code",
+        "kind": "value",
+        "label": "approve_flow_code",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "生成的采购包。",
+        "id": "package_id",
+        "kind": "value",
+        "label": "package_id",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "name": "confirmPlanAndPackage",
+    "ontology_instructions": "【目标对象】\n- 组包方案：决策属性 package_scheme_id, scheme_no, plan_id, purchasing_group_no, business_type, category_id, match_score, line_count, total_amount, region_similarity, delivery_overlap_rate, delivery_span_days, mixed_type_detected, split_advice, frame_hit, frame_agreement_no, frame_quota_sufficient, central_level, central_pattern, approve_flow_code, special_sourcing_method, is_recommended, sibling_scheme_count, scheme_status, generated_package_id, selected_by, selected_at, rejection_reason, generated_at\n- 采购计划行：决策属性 plan_line_id, plan_id, material_code, material_name, quantity, unit, required_arrival_date, original_required_arrival_date, planned_amount, demand_department, usage_scenario, plan_line_no, line_type_code, line_status, management_unit, inventory_organization, category_id, unit_price, default_sourcing_method, central_purchase_level, central_purchase_pattern, is_cancelled, is_deleted, is_split, source_object_type, source_object_line_id, created_at, is_urgent, is_execution_plan_draft, merge_group_id, draft_confirmed_by, draft_confirmed_at\n- 数字员工待办：决策属性 task_id, task_type, assigned_role, assignee, plan_line_id, related_object_type, related_object_id, task_summary, task_status, created_at, due_at, completed_at, response_note, rejection_reason\n\n【绑定规则】\n- BR2-HITL-01 执行计划草稿或组包方案未经计划员确认则不得提交审批（approval·mandatory）：line.draft_confirmed_by != \"\" && scheme.scheme_status == \"已选定\"\n- BR2-FEEDBACK-01 计划员驳回数字员工的建议则必须记录驳回原因（validation·mandatory）：scheme.scheme_status != \"未采纳\" || scheme.rejection_reason != \"\"\n- BR2-AUDIT-01 数字员工的作业动作未留痕则不予放行（postcondition·mandatory）：log.auditable == true",
+    "retries": 3,
+    "title": "confirmPlanAndPackage",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "writeOperationLog"
+        },
+        "description": "writeOperationLog：confirmPlanAndPackage 写回 metaERP。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "FRAME_AND_CENTRAL_ANNOTATED"
+    ],
+    "triggered_event": [
+      "PLAN_AND_PACKAGE_CONFIRMED",
+      "PLAN_AND_PACKAGE_REJECTED"
+    ]
+  },
+  {
+    "actions": [
+      {
+        "condition": "input.confirmed_by",
+        "description": "规则闸口（确定性判定）：执行计划草稿或组包方案未经计划员确认则不得提交审批。判假即拦截后续人工/写入/发射步骤。",
+        "name": "rule-gate:BR2-HITL-01",
+        "order": "1",
+        "result_key": "rule-gate-BR2-HITL-01",
+        "type": "condition"
+      },
+      {
+        "allowed_tools": [
+          "metaerp.invoke"
+        ],
+        "depends_on": [
+          "rule-gate-BR2-HITL-01"
+        ],
+        "description": "写回 Meta ERP：submitApproval。",
+        "name": "metaerp.invoke",
+        "order": "2",
+        "result_key": "submitPlanForApproval",
+        "tool_arguments": {
+          "payload": {
+            "from": "event.data"
+          }
+        },
+        "type": "tool"
+      },
+      {
+        "depends_on": [
+          "submitPlanForApproval"
+        ],
+        "description": "发射事件 PLAN_SUBMITTED_FOR_APPROVAL（无条件）。",
+        "emit_event": "PLAN_SUBMITTED_FOR_APPROVAL",
+        "emit_payload_from": "event.data",
+        "name": "emit:PLAN_SUBMITTED_FOR_APPROVAL",
+        "order": "3",
+        "result_key": "emit-PLAN_SUBMITTED_FOR_APPROVAL",
+        "type": "emit"
+      },
+      {
+        "decision_table": {
+          "default": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
+          "id": "suppress-implicit-emit",
+          "missing": {
+            "outcome": "suppressed",
+            "payload": {
+              "_emits": []
+            }
+          },
+          "rows": [
+            {
+              "all": [
+                {
+                  "op": "exists",
+                  "path": "lastResult._emits"
+                }
+              ],
+              "id": "explicit-emit-recorded",
+              "outcome": "explicit"
+            }
+          ]
+        },
+        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
+        "name": "suppress-implicit-emit",
+        "order": "4",
+        "result_key": "suppress-implicit-emit",
+        "type": "decision"
+      }
+    ],
+    "actor": [
+      "Agent"
+    ],
+    "description": "【行】确认后的执行计划与采购包提交审批，并把本轮作业从扫描到确认的全过程留痕封存，保证预警与拦截处置可追溯率 100%(场景期望 5)。",
+    "generated": true,
+    "id": "submitPlanForApproval",
+    "inputs": [
+      {
+        "description": "被选定的方案。",
+        "id": "package_scheme_id",
+        "kind": "value",
+        "label": "package_scheme_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "确认的执行计划行。",
+        "id": "plan_line_id",
+        "kind": "value",
+        "label": "plan_line_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "选定人（计划员）。",
+        "id": "selected_by",
+        "kind": "value",
+        "label": "selected_by",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "选定时间。",
+        "id": "selected_at",
+        "kind": "value",
+        "label": "selected_at",
+        "required": true,
+        "schema": {
+          "format": "date-time",
+          "type": "string"
+        }
+      }
+    ],
+    "name": "submitPlanForApproval",
+    "ontology_instructions": "【目标对象】\n- 采购计划：决策属性 plan_id, plan_no, business_type, plan_category, plan_status, demand_organization, planner, department_leader, division_leader, submitted_at, approved_at, management_unit, plan_start_date, plan_end_date, is_deleted\n- 采购包：决策属性 package_id, package_no, chain_id, requisition_id, package_status, packaged_at, expected_sourcing_finish_date, material_code, package_name, purchasing_group_no, scenario_code, central_purchase_level, central_purchase_pattern, approve_flow_code, buyer, assignment_completed_at\n\n【绑定规则】\n- BR2-HITL-01 执行计划草稿或组包方案未经计划员确认则不得提交审批（precondition·mandatory）：line.draft_confirmed_by != \"\" && scheme.scheme_status == \"已选定\"\n- BR2-AUDIT-01 数字员工的作业动作未留痕则不予放行（postcondition·mandatory）：log.auditable == true",
+    "retries": 3,
+    "title": "submitPlanForApproval",
+    "tool_use": [
+      {
+        "config": {
+          "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
+          "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
+          "operation": "submitApproval"
+        },
+        "description": "submitApproval：submitPlanForApproval 写回 metaERP。",
+        "execution_policy": {
+          "effect_scope": "external",
+          "operation": "read_write",
+          "sandbox_policy": "requires_attempt_grant"
+        },
+        "name": "metaerp.invoke",
+        "side_effect": "write"
+      }
+    ],
+    "trigger": [
+      "PLAN_AND_PACKAGE_CONFIRMED"
+    ],
+    "triggered_event": [
+      "PLAN_SUBMITTED_FOR_APPROVAL"
+    ]
+  }
+]

@@ -1,0 +1,60 @@
+{
+  "rows": [
+    {
+      "ESTIMATED_UNIT_PRICE": 285000,
+      "INVENTORY_ORG": "ORG-HD-01",
+      "LINE_TYPE_CODE": "MAT-STD",
+      "MATERIAL_CODE": "M-BRK-126",
+      "MATERIAL_NAME": "126kV SF6 断路器",
+      "PBP_HEADER_ID": "PBP-2027-0101",
+      "PBP_LINE_ID": "PBPL-2027-0101-01",
+      "QUANTITY": 12,
+      "REQUIRED_ARRIVAL_DATE": "2027-05-20",
+      "SPLIT_FLAG": false,
+      "STATUS": "已批准",
+      "UNIT": "台"
+    },
+    {
+      "ESTIMATED_UNIT_PRICE": 292000,
+      "INVENTORY_ORG": "ORG-HD-01",
+      "LINE_TYPE_CODE": "MAT-STD",
+      "MATERIAL_CODE": "M-BRK-126",
+      "MATERIAL_NAME": "126kV SF6 断路器",
+      "PBP_HEADER_ID": "PBP-2027-0102",
+      "PBP_LINE_ID": "PBPL-2027-0102-01",
+      "QUANTITY": 8,
+      "REQUIRED_ARRIVAL_DATE": "2027-06-01",
+      "SPLIT_FLAG": false,
+      "STATUS": "已批准",
+      "UNIT": "台"
+    },
+    {
+      "ESTIMATED_UNIT_PRICE": 180,
+      "INVENTORY_ORG": "ORG-HD-01",
+      "LINE_TYPE_CODE": "MAT-STD",
+      "MATERIAL_CODE": "M-CAB-240",
+      "MATERIAL_NAME": "240mm² 交联电缆",
+      "PBP_HEADER_ID": "PBP-2027-0101",
+      "PBP_LINE_ID": "PBPL-2027-0101-02",
+      "QUANTITY": 6000,
+      "REQUIRED_ARRIVAL_DATE": "2027-03-10",
+      "SPLIT_FLAG": false,
+      "STATUS": "已批准",
+      "UNIT": "米"
+    },
+    {
+      "ESTIMATED_UNIT_PRICE": 176,
+      "INVENTORY_ORG": "ORG-HD-01",
+      "LINE_TYPE_CODE": "MAT-STD",
+      "MATERIAL_CODE": "M-CAB-240",
+      "MATERIAL_NAME": "240mm² 交联电缆",
+      "PBP_HEADER_ID": "PBP-2027-0102",
+      "PBP_LINE_ID": "PBPL-2027-0102-02",
+      "QUANTITY": 4000,
+      "REQUIRED_ARRIVAL_DATE": "2027-05-23",
+      "SPLIT_FLAG": false,
+      "STATUS": "已批准",
+      "UNIT": "米"
+    }
+  ]
+}

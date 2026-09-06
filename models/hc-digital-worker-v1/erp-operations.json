@@ -1,0 +1,247 @@
+[
+  {
+    "entity": "ss_pbp_header_t",
+    "kind": "write",
+    "method": "POST",
+    "operation_id": "createPbp",
+    "path": "/metaerp/openapi/v1/createPbp"
+  },
+  {
+    "entity": "ss_proc_package_line_t",
+    "kind": "write",
+    "method": "POST",
+    "operation_id": "createProcPackageLines",
+    "path": "/metaerp/openapi/v1/createProcPackageLines"
+  },
+  {
+    "entity": "inv_transaction_order_t",
+    "kind": "write",
+    "method": "POST",
+    "operation_id": "createTransactionOrder",
+    "path": "/metaerp/openapi/v1/createTransactionOrder"
+  },
+  {
+    "entity": "dw_employee_task_t",
+    "kind": "write",
+    "method": "POST",
+    "operation_id": "pushTask",
+    "path": "/metaerp/openapi/v1/pushTask"
+  },
+  {
+    "entity": "cfg_audit_threshold_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryAuditThresholdConfig",
+    "path": "/metaerp/openapi/v1/queryAuditThresholdConfig"
+  },
+  {
+    "entity": "dw_backward_schedule_plan_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryBackwardSchedulePlans",
+    "path": "/metaerp/openapi/v1/queryBackwardSchedulePlans"
+  },
+  {
+    "entity": "dw_backward_schedule_stage_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryBackwardScheduleStages",
+    "path": "/metaerp/openapi/v1/queryBackwardScheduleStages"
+  },
+  {
+    "entity": "cfg_central_catalog_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryCentralCatalogConfig",
+    "path": "/metaerp/openapi/v1/queryCentralCatalogConfig"
+  },
+  {
+    "entity": "clm_contract_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryContract",
+    "path": "/metaerp/openapi/v1/queryContract"
+  },
+  {
+    "entity": "dw_demand_merge_suggestion_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryDemandMergeSuggestions",
+    "path": "/metaerp/openapi/v1/queryDemandMergeSuggestions"
+  },
+  {
+    "entity": "dw_employee_task_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryEmployeeTasks",
+    "path": "/metaerp/openapi/v1/queryEmployeeTasks"
+  },
+  {
+    "entity": "inv_min_max_level_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryItemMinMaxLevel",
+    "path": "/metaerp/openapi/v1/queryItemMinMaxLevel"
+  },
+  {
+    "entity": "inv_onhand_balance_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryOnhandQuantity",
+    "path": "/metaerp/openapi/v1/queryOnhandQuantity"
+  },
+  {
+    "entity": "dw_operation_log_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryOperationLogs",
+    "path": "/metaerp/openapi/v1/queryOperationLogs"
+  },
+  {
+    "entity": "dw_package_scheme_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPackageSchemes",
+    "path": "/metaerp/openapi/v1/queryPackageSchemes"
+  },
+  {
+    "entity": "dw_packaging_finding_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPackagingFindings",
+    "path": "/metaerp/openapi/v1/queryPackagingFindings"
+  },
+  {
+    "entity": "ss_pbp_header_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPbpHeader",
+    "path": "/metaerp/openapi/v1/queryPbpHeader"
+  },
+  {
+    "entity": "ss_pbp_line_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPbpLine",
+    "path": "/metaerp/openapi/v1/queryPbpLine"
+  },
+  {
+    "entity": "dw_plan_audit_finding_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPlanAuditFindings",
+    "path": "/metaerp/openapi/v1/queryPlanAuditFindings"
+  },
+  {
+    "entity": "dw_plan_audit_opinion_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPlanAuditOpinions",
+    "path": "/metaerp/openapi/v1/queryPlanAuditOpinions"
+  },
+  {
+    "entity": "po_header_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPoHeader",
+    "path": "/metaerp/openapi/v1/queryPoHeader"
+  },
+  {
+    "entity": "po_line_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPoLine",
+    "path": "/metaerp/openapi/v1/queryPoLine"
+  },
+  {
+    "entity": "pr_header_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPr",
+    "path": "/metaerp/openapi/v1/queryPr"
+  },
+  {
+    "entity": "ss_proc_package_header_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryProcPackageHeader",
+    "path": "/metaerp/openapi/v1/queryProcPackageHeader"
+  },
+  {
+    "entity": "ss_proc_package_line_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryProcPackageLine",
+    "path": "/metaerp/openapi/v1/queryProcPackageLine"
+  },
+  {
+    "entity": "cfg_purchase_category_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPurchaseCategory",
+    "path": "/metaerp/openapi/v1/queryPurchaseCategory"
+  },
+  {
+    "entity": "inv_reservation_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryReservation",
+    "path": "/metaerp/openapi/v1/queryReservation"
+  },
+  {
+    "entity": "ss_spa_line_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "querySpaLine",
+    "path": "/metaerp/openapi/v1/querySpaLine"
+  },
+  {
+    "entity": "ss_spa_header_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "querySpaList",
+    "path": "/metaerp/openapi/v1/querySpaList"
+  },
+  {
+    "entity": "cfg_stage_cycle_standard_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryStageCycleConfig",
+    "path": "/metaerp/openapi/v1/queryStageCycleConfig"
+  },
+  {
+    "entity": "dw_stock_check_result_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryStockCheckResults",
+    "path": "/metaerp/openapi/v1/queryStockCheckResults"
+  },
+  {
+    "entity": "inv_transaction_order_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryTransactionOrders",
+    "path": "/metaerp/openapi/v1/queryTransactionOrders"
+  },
+  {
+    "entity": "ss_pbp_line_t",
+    "kind": "write",
+    "method": "POST",
+    "operation_id": "splitDemandLine",
+    "path": "/metaerp/openapi/v1/splitDemandLine"
+  },
+  {
+    "entity": "ss_pbp_header_t",
+    "kind": "write",
+    "method": "POST",
+    "operation_id": "submitApproval",
+    "path": "/metaerp/openapi/v1/submitApproval"
+  },
+  {
+    "entity": "dw_operation_log_t",
+    "kind": "write",
+    "method": "POST",
+    "operation_id": "writeOperationLog",
+    "path": "/metaerp/openapi/v1/writeOperationLog"
+  }
+]

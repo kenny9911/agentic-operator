@@ -1,0 +1,16 @@
+{
+  "rows": [
+    {
+      "CATEGORY_CODE": "CAT-HV-SWITCH",
+      "CATEGORY_ID": "CAT-HV-SWITCH",
+      "CATEGORY_NAME": "高压开关设备",
+      "PARENT_CATEGORY_CODE": "CAT-PRIMARY"
+    },
+    {
+      "CATEGORY_CODE": "CAT-CABLE",
+      "CATEGORY_ID": "CAT-CABLE",
+      "CATEGORY_NAME": "电力电缆",
+      "PARENT_CATEGORY_CODE": "CAT-PRIMARY"
+    }
+  ]
+}

@@ -1,0 +1,1091 @@
+{
+  "links": [
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_id",
+        "generator_authoring": {
+          "action": "belongs_to",
+          "inverse_action": "contains"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      },
+      "id": "Procurement_Plan_Line.plan_id->Procurement_Plan",
+      "inverse_name": "采购计划-包含-采购计划行",
+      "kind": "object-fk",
+      "name": "采购计划行-隶属于-采购计划",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan",
+          "zh": "采购计划"
+        },
+        "id": "Procurement_Plan",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "category_id",
+        "generator_authoring": {
+          "action": "categorized_as",
+          "inverse_action": "categorizes_demand"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      },
+      "id": "Procurement_Plan_Line.category_id->Purchase_Category",
+      "inverse_name": "采购品类-统辖需求行-采购计划行",
+      "kind": "object-fk",
+      "name": "采购计划行-归属品类-采购品类",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Category",
+          "zh": "采购品类"
+        },
+        "id": "Purchase_Category",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "requisitions_from",
+          "inverse_action": "requisitioned_as"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Purchase_Requisition",
+          "zh": "采购申请"
+        },
+        "id": "Purchase_Requisition",
+        "type": "Object"
+      },
+      "id": "Purchase_Requisition.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-请购为-采购申请",
+      "kind": "object-fk",
+      "name": "采购申请-请购自-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "requisition_id",
+        "generator_authoring": {
+          "action": "bundles",
+          "inverse_action": "bundled_into"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Sourcing_Package",
+          "zh": "采购包"
+        },
+        "id": "Sourcing_Package",
+        "type": "Object"
+      },
+      "id": "Sourcing_Package.requisition_id->Purchase_Requisition",
+      "inverse_name": "采购申请-被组入-采购包",
+      "kind": "object-fk",
+      "name": "采购包-汇总-采购申请",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Requisition",
+          "zh": "采购申请"
+        },
+        "id": "Purchase_Requisition",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "contract_id",
+        "generator_authoring": {
+          "action": "executes",
+          "inverse_action": "issues_order"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Purchase_Order",
+          "zh": "采购订单"
+        },
+        "id": "Purchase_Order",
+        "type": "Object"
+      },
+      "id": "Purchase_Order.contract_id->Purchase_Contract",
+      "inverse_name": "采购合同-下达订单-采购订单",
+      "kind": "object-fk",
+      "name": "采购订单-执行-采购合同",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Contract",
+          "zh": "采购合同"
+        },
+        "id": "Purchase_Contract",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "requisition_id",
+        "generator_authoring": {
+          "action": "satisfies",
+          "inverse_action": "converted_to_order"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Purchase_Order",
+          "zh": "采购订单"
+        },
+        "id": "Purchase_Order",
+        "type": "Object"
+      },
+      "id": "Purchase_Order.requisition_id->Purchase_Requisition",
+      "inverse_name": "采购申请-转为订单-采购订单",
+      "kind": "object-fk",
+      "name": "采购订单-满足-采购申请",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Requisition",
+          "zh": "采购申请"
+        },
+        "id": "Purchase_Requisition",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "stock_check_id",
+        "generator_authoring": {
+          "action": "raised_from_stock_check",
+          "inverse_action": "diverts_to_transfer"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Stock_Transfer_Request",
+          "zh": "调拨申请"
+        },
+        "id": "Stock_Transfer_Request",
+        "type": "Object"
+      },
+      "id": "Stock_Transfer_Request.stock_check_id->Stock_Check_Result",
+      "inverse_name": "库存校验结果-转为调拨申请-调拨申请",
+      "kind": "object-fk",
+      "name": "调拨申请-据可调度结论发起-库存校验结果",
+      "to": {
+        "displayName": {
+          "en": "Stock_Check_Result",
+          "zh": "库存校验结果"
+        },
+        "id": "Stock_Check_Result",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "backfills_line",
+          "inverse_action": "line_backfilled_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Stock_Transfer_Request",
+          "zh": "调拨申请"
+        },
+        "id": "Stock_Transfer_Request",
+        "type": "Object"
+      },
+      "id": "Stock_Transfer_Request.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-由调拨顶补-调拨申请",
+      "kind": "object-fk",
+      "name": "调拨申请-顶补需求行-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "category_id",
+        "generator_authoring": {
+          "action": "centralizes_category",
+          "inverse_action": "centralized_by_catalog"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Central_Purchase_Catalog",
+          "zh": "集采目录"
+        },
+        "id": "Central_Purchase_Catalog",
+        "type": "Object"
+      },
+      "id": "Central_Purchase_Catalog.category_id->Purchase_Category",
+      "inverse_name": "采购品类-纳入集采目录-集采目录",
+      "kind": "object-fk",
+      "name": "集采目录-按品类纳入集采-采购品类",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Category",
+          "zh": "采购品类"
+        },
+        "id": "Purchase_Category",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "frame_agreement_id",
+        "generator_authoring": {
+          "action": "belongs_to",
+          "inverse_action": "covers_item"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Frame_Agreement_Item",
+          "zh": "框架协议行"
+        },
+        "id": "Frame_Agreement_Item",
+        "type": "Object"
+      },
+      "id": "Frame_Agreement_Item.frame_agreement_id->Frame_Agreement",
+      "inverse_name": "框架协议-覆盖物料-框架协议行",
+      "kind": "object-fk",
+      "name": "框架协议行-隶属于-框架协议",
+      "to": {
+        "displayName": {
+          "en": "Frame_Agreement",
+          "zh": "框架协议"
+        },
+        "id": "Frame_Agreement",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "category_id",
+        "generator_authoring": {
+          "action": "covers_category",
+          "inverse_action": "covered_by_agreement"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Frame_Agreement_Item",
+          "zh": "框架协议行"
+        },
+        "id": "Frame_Agreement_Item",
+        "type": "Object"
+      },
+      "id": "Frame_Agreement_Item.category_id->Purchase_Category",
+      "inverse_name": "采购品类-被协议覆盖-框架协议行",
+      "kind": "object-fk",
+      "name": "框架协议行-覆盖品类-采购品类",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Category",
+          "zh": "采购品类"
+        },
+        "id": "Purchase_Category",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "package_id",
+        "generator_authoring": {
+          "action": "packed_into",
+          "inverse_action": "holds_line"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Sourcing_Package_Line",
+          "zh": "采购包行"
+        },
+        "id": "Sourcing_Package_Line",
+        "type": "Object"
+      },
+      "id": "Sourcing_Package_Line.package_id->Sourcing_Package",
+      "inverse_name": "采购包-装有包行-采购包行",
+      "kind": "object-fk",
+      "name": "采购包行-装入-采购包",
+      "to": {
+        "displayName": {
+          "en": "Sourcing_Package",
+          "zh": "采购包"
+        },
+        "id": "Sourcing_Package",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "fulfills_demand_of",
+          "inverse_action": "packed_as"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Sourcing_Package_Line",
+          "zh": "采购包行"
+        },
+        "id": "Sourcing_Package_Line",
+        "type": "Object"
+      },
+      "id": "Sourcing_Package_Line.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-组入采购包-采购包行",
+      "kind": "object-fk",
+      "name": "采购包行-承接需求-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "category_id",
+        "generator_authoring": {
+          "action": "categorized_as",
+          "inverse_action": "categorizes_package_line"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Sourcing_Package_Line",
+          "zh": "采购包行"
+        },
+        "id": "Sourcing_Package_Line",
+        "type": "Object"
+      },
+      "id": "Sourcing_Package_Line.category_id->Purchase_Category",
+      "inverse_name": "采购品类-统辖包行-采购包行",
+      "kind": "object-fk",
+      "name": "采购包行-归属品类-采购品类",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Category",
+          "zh": "采购品类"
+        },
+        "id": "Purchase_Category",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "frame_agreement_id",
+        "generator_authoring": {
+          "action": "executes_under_frame",
+          "inverse_action": "frames_execution_of"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Sourcing_Package_Line",
+          "zh": "采购包行"
+        },
+        "id": "Sourcing_Package_Line",
+        "type": "Object"
+      },
+      "id": "Sourcing_Package_Line.frame_agreement_id->Frame_Agreement",
+      "inverse_name": "框架协议-框架承接-采购包行",
+      "kind": "object-fk",
+      "name": "采购包行-纳入框架执行-框架协议",
+      "to": {
+        "displayName": {
+          "en": "Frame_Agreement",
+          "zh": "框架协议"
+        },
+        "id": "Frame_Agreement",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "frame_agreement_item_id",
+        "generator_authoring": {
+          "action": "prices_from",
+          "inverse_action": "prices"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Sourcing_Package_Line",
+          "zh": "采购包行"
+        },
+        "id": "Sourcing_Package_Line",
+        "type": "Object"
+      },
+      "id": "Sourcing_Package_Line.frame_agreement_item_id->Frame_Agreement_Item",
+      "inverse_name": "框架协议行-定价于-采购包行",
+      "kind": "object-fk",
+      "name": "采购包行-按协议行取价-框架协议行",
+      "to": {
+        "displayName": {
+          "en": "Frame_Agreement_Item",
+          "zh": "框架协议行"
+        },
+        "id": "Frame_Agreement_Item",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "clusters",
+          "inverse_action": "clustered_into"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Demand_Merge_Suggestion",
+          "zh": "需求合并建议"
+        },
+        "id": "Demand_Merge_Suggestion",
+        "type": "Object"
+      },
+      "id": "Demand_Merge_Suggestion.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-被聚类为合并组-需求合并建议",
+      "kind": "object-fk",
+      "name": "需求合并建议-聚类需求行-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "checks_stock_for",
+          "inverse_action": "stock_checked_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Stock_Check_Result",
+          "zh": "库存校验结果"
+        },
+        "id": "Stock_Check_Result",
+        "type": "Object"
+      },
+      "id": "Stock_Check_Result.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-经库存校验-库存校验结果",
+      "kind": "object-fk",
+      "name": "库存校验结果-校验需求库存-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "merge_suggestion_id",
+        "generator_authoring": {
+          "action": "checks_merged_quantity_of",
+          "inverse_action": "triggers_stock_check"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Stock_Check_Result",
+          "zh": "库存校验结果"
+        },
+        "id": "Stock_Check_Result",
+        "type": "Object"
+      },
+      "id": "Stock_Check_Result.merge_suggestion_id->Demand_Merge_Suggestion",
+      "inverse_name": "需求合并建议-触发库存校验-库存校验结果",
+      "kind": "object-fk",
+      "name": "库存校验结果-按合并量校验-需求合并建议",
+      "to": {
+        "displayName": {
+          "en": "Demand_Merge_Suggestion",
+          "zh": "需求合并建议"
+        },
+        "id": "Demand_Merge_Suggestion",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "schedules",
+          "inverse_action": "scheduled_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Backward_Schedule_Plan",
+          "zh": "倒排工期计划"
+        },
+        "id": "Backward_Schedule_Plan",
+        "type": "Object"
+      },
+      "id": "Backward_Schedule_Plan.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-被排期-倒排工期计划",
+      "kind": "object-fk",
+      "name": "倒排工期计划-为需求排期-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "stock_check_id",
+        "generator_authoring": {
+          "action": "schedules_after",
+          "inverse_action": "proceeds_to_scheduling"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Backward_Schedule_Plan",
+          "zh": "倒排工期计划"
+        },
+        "id": "Backward_Schedule_Plan",
+        "type": "Object"
+      },
+      "id": "Backward_Schedule_Plan.stock_check_id->Stock_Check_Result",
+      "inverse_name": "库存校验结果-进入倒排-倒排工期计划",
+      "kind": "object-fk",
+      "name": "倒排工期计划-据需采购结论起排-库存校验结果",
+      "to": {
+        "displayName": {
+          "en": "Stock_Check_Result",
+          "zh": "库存校验结果"
+        },
+        "id": "Stock_Check_Result",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "schedule_plan_id",
+        "generator_authoring": {
+          "action": "expands",
+          "inverse_action": "breaks_into_stages"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Backward_Schedule_Stage",
+          "zh": "倒排节点计划"
+        },
+        "id": "Backward_Schedule_Stage",
+        "type": "Object"
+      },
+      "id": "Backward_Schedule_Stage.schedule_plan_id->Backward_Schedule_Plan",
+      "inverse_name": "倒排工期计划-拆分为阶段计划-倒排节点计划",
+      "kind": "object-fk",
+      "name": "倒排节点计划-展开为节点-倒排工期计划",
+      "to": {
+        "displayName": {
+          "en": "Backward_Schedule_Plan",
+          "zh": "倒排工期计划"
+        },
+        "id": "Backward_Schedule_Plan",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "cycle_standard_id",
+        "generator_authoring": {
+          "action": "takes_cycle_from",
+          "inverse_action": "supplies_cycle_to"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Backward_Schedule_Stage",
+          "zh": "倒排节点计划"
+        },
+        "id": "Backward_Schedule_Stage",
+        "type": "Object"
+      },
+      "id": "Backward_Schedule_Stage.cycle_standard_id->Stage_Cycle_Standard",
+      "inverse_name": "采购阶段周期标准-供给周期基准-倒排节点计划",
+      "kind": "object-fk",
+      "name": "倒排节点计划-取标准周期-采购阶段周期标准",
+      "to": {
+        "displayName": {
+          "en": "Stage_Cycle_Standard",
+          "zh": "采购阶段周期标准"
+        },
+        "id": "Stage_Cycle_Standard",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_id",
+        "generator_authoring": {
+          "action": "packages_for",
+          "inverse_action": "packaged_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Package_Scheme",
+          "zh": "组包方案"
+        },
+        "id": "Package_Scheme",
+        "type": "Object"
+      },
+      "id": "Package_Scheme.plan_id->Procurement_Plan",
+      "inverse_name": "采购计划-被组包-组包方案",
+      "kind": "object-fk",
+      "name": "组包方案-为计划组包-采购计划",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan",
+          "zh": "采购计划"
+        },
+        "id": "Procurement_Plan",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "category_id",
+        "generator_authoring": {
+          "action": "packages_category",
+          "inverse_action": "grounds_packaging"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Package_Scheme",
+          "zh": "组包方案"
+        },
+        "id": "Package_Scheme",
+        "type": "Object"
+      },
+      "id": "Package_Scheme.category_id->Purchase_Category",
+      "inverse_name": "采购品类-据以组包-组包方案",
+      "kind": "object-fk",
+      "name": "组包方案-以品类成包-采购品类",
+      "to": {
+        "displayName": {
+          "en": "Purchase_Category",
+          "zh": "采购品类"
+        },
+        "id": "Purchase_Category",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "generated_package_id",
+        "generator_authoring": {
+          "action": "materializes_as",
+          "inverse_action": "generated_from_scheme"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Package_Scheme",
+          "zh": "组包方案"
+        },
+        "id": "Package_Scheme",
+        "type": "Object"
+      },
+      "id": "Package_Scheme.generated_package_id->Sourcing_Package",
+      "inverse_name": "采购包-由方案生成-组包方案",
+      "kind": "object-fk",
+      "name": "组包方案-落地为采购包-采购包",
+      "to": {
+        "displayName": {
+          "en": "Sourcing_Package",
+          "zh": "采购包"
+        },
+        "id": "Sourcing_Package",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_id",
+        "generator_authoring": {
+          "action": "audits",
+          "inverse_action": "audited_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Plan_Audit_Opinion",
+          "zh": "计划审核意见"
+        },
+        "id": "Plan_Audit_Opinion",
+        "type": "Object"
+      },
+      "id": "Plan_Audit_Opinion.plan_id->Procurement_Plan",
+      "inverse_name": "采购计划-被审核-计划审核意见",
+      "kind": "object-fk",
+      "name": "计划审核意见-审核计划-采购计划",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan",
+          "zh": "采购计划"
+        },
+        "id": "Procurement_Plan",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "audits_line",
+          "inverse_action": "line_audited_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Plan_Audit_Opinion",
+          "zh": "计划审核意见"
+        },
+        "id": "Plan_Audit_Opinion",
+        "type": "Object"
+      },
+      "id": "Plan_Audit_Opinion.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-接受行级审核-计划审核意见",
+      "kind": "object-fk",
+      "name": "计划审核意见-审核计划行-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "audit_opinion_id",
+        "generator_authoring": {
+          "action": "rolls_up_into",
+          "inverse_action": "details_into"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Plan_Audit_Finding",
+          "zh": "审核明细"
+        },
+        "id": "Plan_Audit_Finding",
+        "type": "Object"
+      },
+      "id": "Plan_Audit_Finding.audit_opinion_id->Plan_Audit_Opinion",
+      "inverse_name": "计划审核意见-展开为审核明细-审核明细",
+      "kind": "object-fk",
+      "name": "审核明细-汇入审核意见-计划审核意见",
+      "to": {
+        "displayName": {
+          "en": "Plan_Audit_Opinion",
+          "zh": "计划审核意见"
+        },
+        "id": "Plan_Audit_Opinion",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "flags",
+          "inverse_action": "flagged_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Plan_Audit_Finding",
+          "zh": "审核明细"
+        },
+        "id": "Plan_Audit_Finding",
+        "type": "Object"
+      },
+      "id": "Plan_Audit_Finding.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-被校验命中-审核明细",
+      "kind": "object-fk",
+      "name": "审核明细-命中计划行-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "catalog_id",
+        "generator_authoring": {
+          "action": "matched_against_catalog",
+          "inverse_action": "determines_central_duty"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Plan_Audit_Finding",
+          "zh": "审核明细"
+        },
+        "id": "Plan_Audit_Finding",
+        "type": "Object"
+      },
+      "id": "Plan_Audit_Finding.catalog_id->Central_Purchase_Catalog",
+      "inverse_name": "集采目录-判定应否集采-审核明细",
+      "kind": "object-fk",
+      "name": "审核明细-比对集采目录-集采目录",
+      "to": {
+        "displayName": {
+          "en": "Central_Purchase_Catalog",
+          "zh": "集采目录"
+        },
+        "id": "Central_Purchase_Catalog",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "audit_threshold_id",
+        "generator_authoring": {
+          "action": "takes_threshold_from",
+          "inverse_action": "thresholds"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Plan_Audit_Finding",
+          "zh": "审核明细"
+        },
+        "id": "Plan_Audit_Finding",
+        "type": "Object"
+      },
+      "id": "Plan_Audit_Finding.audit_threshold_id->Audit_Threshold_Setting",
+      "inverse_name": "校验阈值配置-供给判定阈值-审核明细",
+      "kind": "object-fk",
+      "name": "审核明细-取判定阈值-校验阈值配置",
+      "to": {
+        "displayName": {
+          "en": "Audit_Threshold_Setting",
+          "zh": "校验阈值配置"
+        },
+        "id": "Audit_Threshold_Setting",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "package_scheme_id",
+        "generator_authoring": {
+          "action": "validates_scheme",
+          "inverse_action": "scheme_validated_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Packaging_Compliance_Finding",
+          "zh": "组包合规结论"
+        },
+        "id": "Packaging_Compliance_Finding",
+        "type": "Object"
+      },
+      "id": "Packaging_Compliance_Finding.package_scheme_id->Package_Scheme",
+      "inverse_name": "组包方案-接受合规校验-组包合规结论",
+      "kind": "object-fk",
+      "name": "组包合规结论-校验组包方案-组包方案",
+      "to": {
+        "displayName": {
+          "en": "Package_Scheme",
+          "zh": "组包方案"
+        },
+        "id": "Package_Scheme",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "audit_threshold_id",
+        "generator_authoring": {
+          "action": "takes_span_threshold_from",
+          "inverse_action": "bounds_span_of"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Packaging_Compliance_Finding",
+          "zh": "组包合规结论"
+        },
+        "id": "Packaging_Compliance_Finding",
+        "type": "Object"
+      },
+      "id": "Packaging_Compliance_Finding.audit_threshold_id->Audit_Threshold_Setting",
+      "inverse_name": "校验阈值配置-供给跨度阈值-组包合规结论",
+      "kind": "object-fk",
+      "name": "组包合规结论-取跨度阈值-校验阈值配置",
+      "to": {
+        "displayName": {
+          "en": "Audit_Threshold_Setting",
+          "zh": "校验阈值配置"
+        },
+        "id": "Audit_Threshold_Setting",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "pending_on",
+          "inverse_action": "raises_task"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Digital_Employee_Task",
+          "zh": "数字员工待办"
+        },
+        "id": "Digital_Employee_Task",
+        "type": "Object"
+      },
+      "id": "Digital_Employee_Task.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-产生待办-数字员工待办",
+      "kind": "object-fk",
+      "name": "数字员工待办-待办指向计划行-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    },
+    {
+      "cardinality": "1:N",
+      "extensions": {
+        "foreign_key_property": "plan_line_id",
+        "generator_authoring": {
+          "action": "traces_work_on",
+          "inverse_action": "work_traced_by"
+        }
+      },
+      "from": {
+        "displayName": {
+          "en": "Digital_Employee_Operation_Log",
+          "zh": "数字员工作业留痕"
+        },
+        "id": "Digital_Employee_Operation_Log",
+        "type": "Object"
+      },
+      "id": "Digital_Employee_Operation_Log.plan_line_id->Procurement_Plan_Line",
+      "inverse_name": "采购计划行-留下作业痕迹-数字员工作业留痕",
+      "kind": "object-fk",
+      "name": "数字员工作业留痕-留痕于计划行-采购计划行",
+      "to": {
+        "displayName": {
+          "en": "Procurement_Plan_Line",
+          "zh": "采购计划行"
+        },
+        "id": "Procurement_Plan_Line",
+        "type": "Object"
+      }
+    }
+  ],
+  "metadata": {
+    "document_type": "关系 (Links)",
+    "extracted_scenario": "procurement-digital-employee-operations",
+    "note": "由 scripts/extract-hc-digital-worker-source.mjs 从本体包中切出场景二；场景一保持在 ontology-packages/hc-procurement/source，未被本次抽取改动。",
+    "project_name": "采购计划编制与执行偏差预警",
+    "source_package": "采购计划编制与执行偏差预警@0.1.8"
+  }
+}

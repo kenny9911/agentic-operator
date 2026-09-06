@@ -50,7 +50,14 @@ const METAERP_REVIEWED_POLICY = {
   effect_scope: "external",
   sandbox_policy: "requires_attempt_grant",
 } as const;
-const BASE_URL_ENV = "METAERP_BASE_URL";
+/**
+ * Default env var naming the metaERP origin. A tenant can override it, because
+ * one mock ERP instance serves ONE package's data plane: `_index.json` decides
+ * which query ops exist and which table backs each. Two scenarios that declare
+ * different objects — and, worse, different rows for the SAME config table —
+ * cannot share an instance without one corrupting the other's reads.
+ */
+const DEFAULT_BASE_URL_ENV = "METAERP_BASE_URL";
 
 const ONTOLOGY_QUERY_TOOL = "ontology.query";
 /** The reviewed policy from packages/tools registry REGISTRATIONS for
@@ -333,6 +340,7 @@ function toolUseEntry(
   operationId: string,
   kind: "query" | "write",
   catalogPath: string,
+  baseUrlEnv: string,
   description?: string,
 ): CompiledToolUseEntry {
   return {
@@ -345,7 +353,7 @@ function toolUseEntry(
     execution_policy: METAERP_REVIEWED_POLICY,
     config: {
       operation: operationId,
-      base_url_env: BASE_URL_ENV,
+      base_url_env: baseUrlEnv,
       catalog_path: catalogPath,
     },
   };
@@ -354,6 +362,7 @@ function toolUseEntry(
 function mergedQueryToolUseEntry(
   operations: Array<{ id: string; description?: string }>,
   catalogPath: string,
+  baseUrlEnv: string,
 ): CompiledToolUseEntry {
   const lines = operations
     .map((op) => (op.description ? `${op.id}（${op.description}）` : op.id))
@@ -379,7 +388,7 @@ function mergedQueryToolUseEntry(
         },
       },
     },
-    config: { base_url_env: BASE_URL_ENV, catalog_path: catalogPath },
+    config: { base_url_env: baseUrlEnv, catalog_path: catalogPath },
   };
 }
 
@@ -539,6 +548,8 @@ interface CompileContext {
   eventsByName: Map<string, StudioEvent>;
   rulesById: Map<string, StudioRule>;
   catalogPath: string;
+  /** Env var naming this tenant's metaERP origin. */
+  baseUrlEnv: string;
 }
 
 function overlayEmissionsFor(ctx: CompileContext, action: StudioAction): OverlayEmission[] {
@@ -637,8 +648,16 @@ function compilePromptAgent(ctx: CompileContext, action: StudioAction): {
     queryOps.length === 0
       ? []
       : queryOps.length === 1
-        ? [toolUseEntry(queryOps[0]!.id, "query", ctx.catalogPath, queryOps[0]!.description)]
-        : [mergedQueryToolUseEntry(queryOps, ctx.catalogPath)];
+        ? [
+            toolUseEntry(
+              queryOps[0]!.id,
+              "query",
+              ctx.catalogPath,
+              ctx.baseUrlEnv,
+              queryOps[0]!.description,
+            ),
+          ]
+        : [mergedQueryToolUseEntry(queryOps, ctx.catalogPath, ctx.baseUrlEnv)];
 
   const steps: CompiledStep[] = [
     {
@@ -871,7 +890,9 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
   const writeDescription = (action.side_effects?.external_calls ?? []).find(
     (call) => opIdFromEndpoint(call.endpoint) === operationId,
   )?.description;
-  const toolUse = [toolUseEntry(operationId, "write", ctx.catalogPath, writeDescription)];
+  const toolUse = [
+    toolUseEntry(operationId, "write", ctx.catalogPath, ctx.baseUrlEnv, writeDescription),
+  ];
   return { steps, toolUse };
 }
 
@@ -926,6 +947,11 @@ function buildErpOperations(model: StudioDomainModel): ErpOperation[] {
 
 export interface CompileOptions {
   tenant: string;
+  /**
+   * Env var holding this tenant's metaERP origin. Defaults to
+   * `METAERP_BASE_URL`; set it when the tenant needs its own ERP instance.
+   */
+  baseUrlEnv?: string;
 }
 
 export function compile(
@@ -938,7 +964,12 @@ export function compile(
     fail(`tenant must be a lowercase slug, got "${tenant}"`);
   }
   const catalogPath = `models/${tenant}-v1/erp-operations.json`;
+  const baseUrlEnv = options.baseUrlEnv?.trim() || DEFAULT_BASE_URL_ENV;
+  if (!/^[A-Z][A-Z0-9_]*$/.test(baseUrlEnv)) {
+    fail(`baseUrlEnv must be an UPPER_SNAKE env var name, got "${baseUrlEnv}"`);
+  }
   const ctx: CompileContext = {
+    baseUrlEnv,
     model,
     overlay,
     eventsByName: new Map(model.events.map((event) => [event.name, event])),

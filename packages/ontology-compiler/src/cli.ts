@@ -38,6 +38,7 @@ export async function runCli(
   let values: {
     source?: string;
     tenant?: string;
+    "base-url-env"?: string;
     overlay?: string;
     out?: string;
     check?: boolean;
@@ -49,6 +50,7 @@ export async function runCli(
       options: {
         source: { type: "string" },
         tenant: { type: "string" },
+        "base-url-env": { type: "string" },
         overlay: { type: "string" },
         out: { type: "string", default: "models" },
         check: { type: "boolean", default: false },
@@ -75,7 +77,10 @@ export async function runCli(
   try {
     const model = loadStudioDomain(values.source);
     const overlay = (values.overlay ? loadOverlay(values.overlay) : {}) as CompilerOverlay;
-    const result = compile(model, overlay, { tenant: values.tenant });
+    const result = compile(model, overlay, {
+      tenant: values.tenant,
+      ...(values["base-url-env"] ? { baseUrlEnv: values["base-url-env"] } : {}),
+    });
     const files = serializeCompileResult(result);
     const outDir = path.resolve(values.out ?? "models", `${values.tenant}-v1`);
 

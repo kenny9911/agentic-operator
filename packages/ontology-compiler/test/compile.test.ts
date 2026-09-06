@@ -639,3 +639,39 @@ describe("submission gates", () => {
     );
   });
 });
+
+describe("metaERP base URL env", () => {
+  const model = loadStudioDomain(FIXTURE_SOURCE);
+
+  const envNames = (tenantOptions: Parameters<typeof compile>[2]) => {
+    const names = new Set<string>();
+    for (const agent of compile(model, loadOverlayFixture(), tenantOptions).workflow) {
+      for (const entry of agent.tool_use ?? []) {
+        const env = entry.config?.base_url_env;
+        if (typeof env === "string") names.add(env);
+      }
+    }
+    return names;
+  };
+
+  it("defaults every tool binding to METAERP_BASE_URL", () => {
+    expect([...envNames({ tenant: "power-scm" })]).toEqual(["METAERP_BASE_URL"]);
+  });
+
+  // One mock ERP instance serves ONE package's data plane, and two scenarios
+  // that define different rows for the SAME config table cannot share it —
+  // each scenario's reads would see the other's rows.
+  it("lets a tenant point at its own instance", () => {
+    expect([
+      ...envNames({ tenant: "power-scm", baseUrlEnv: "METAERP_OTHER_BASE_URL" }),
+    ]).toEqual(["METAERP_OTHER_BASE_URL"]);
+  });
+
+  it("refuses anything that is not an env var name", () => {
+    for (const bad of ["http://localhost:3621", "lower_case", "WITH-DASH"]) {
+      expect(() =>
+        compile(model, loadOverlayFixture(), { tenant: "power-scm", baseUrlEnv: bad }),
+      ).toThrow(/UPPER_SNAKE/);
+    }
+  });
+});

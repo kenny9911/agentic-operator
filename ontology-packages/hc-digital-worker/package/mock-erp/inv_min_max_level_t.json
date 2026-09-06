@@ -1,0 +1,18 @@
+{
+  "rows": [
+    {
+      "INVENTORY_ORG": "ORG-HD-01",
+      "MATERIAL_CODE": "M-BRK-126",
+      "MAX_STOCK_QTY": 15,
+      "MIN_MAX_LEVEL_ID": "MML-M-BRK-126-ORG-HD-01",
+      "SAFETY_STOCK_QTY": 6
+    },
+    {
+      "INVENTORY_ORG": "ORG-HD-01",
+      "MATERIAL_CODE": "M-CAB-240",
+      "MAX_STOCK_QTY": 10000,
+      "MIN_MAX_LEVEL_ID": "MML-M-CAB-240-ORG-HD-01",
+      "SAFETY_STOCK_QTY": 2000
+    }
+  ]
+}

@@ -1,0 +1,3083 @@
+{
+  "metadata": {
+    "document_type": "工作流 (Workflows)",
+    "extracted_scenario": "procurement-digital-employee-operations",
+    "note": "由 scripts/extract-hc-digital-worker-source.mjs 从本体包中切出场景二；场景一保持在 ontology-packages/hc-procurement/source，未被本次抽取改动。",
+    "project_name": "采购计划编制与执行偏差预警",
+    "source_package": "采购计划编制与执行偏差预警@0.1.8"
+  },
+  "workflows": [
+    {
+      "actions": [
+        {
+          "condition": "",
+          "description": "每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤草稿、已取消、已删除单据，圈定当轮作业范围(R2-01)。",
+          "name": "scanApprovedDemandPlan",
+          "order": "1",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "按物料编码+计划行类型编码聚类，组内两两比需求日期差：≤30 天可合并、>60 天需拆分、30~60 天待计划员确认；算合并数量与加权预估单价(R2-01)。",
+          "name": "analyzeDemandMerge",
+          "order": "2",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "对差异超限组合给出拆分建议，计划员确认后拆为独立计划行并置拆分标识；文档类型为「判断」，因其带真实写动作，本体建为带人工确认门的执行节点(R2-01)。",
+          "name": "splitOversizedDemand",
+          "order": "3",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "按物料+库存组织汇总合格现有量、扣减已预留量得可用量，与最大库存、安全库存两条水位线比对，判出可调度／需采购／触及安全库存(R2-02)。",
+          "name": "verifyInventoryAvailability",
+          "order": "4",
+          "type": "tool"
+        },
+        {
+          "condition": "check.stock_check_flag != \"\"",
+          "description": "现有量已达最大库存且非紧急 → 可调度，转调拨、不建采购计划；可用量不足 → 需采购，进入倒排工期(R2-02)。",
+          "name": "d·判断·库存是否满足",
+          "order": "5",
+          "type": "logic"
+        },
+        {
+          "condition": "",
+          "description": "生成调拨申请单从有货库点顶上需求，本条需求不进入采购执行计划，采购路径到此结束(R2-02 硬拦截分支)。",
+          "name": "createInventoryTransferOrder",
+          "order": "6",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点计划完成时间，并判定时间冲突(R2-03)。",
+          "name": "derivePurchaseSchedule",
+          "order": "7",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "把合并结论、库存结论与倒排排期落成执行计划草稿，写入来源需求行映射，推送计划员确认(R2-01~R2-03)。",
+          "name": "generateExecutionPlanDraft",
+          "order": "8",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "集采目录检查、价格异常检测、重复申报查重、技术附件完整性四类校验并行执行，汇成结构化审核意见(R2-04/R2-05)。",
+          "name": "auditAnnualPlanCompliance",
+          "order": "9",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "应集采未集采／价格异常／重复申报／附件缺失退回申请人整改并留痕，开放「不按集采采购原因」录入入口；整改后回步骤 g 复核(R2-04/R2-05)。",
+          "name": "returnPlanForRectification",
+          "order": "10",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "按物料→品类→寻源方式→需求日期→采购组五级算匹配度，叠加地域相似度与交付重叠度聚类，输出 2-3 套方案；类型混包与跨度超限同步校验(R2-06)。",
+          "name": "recommendPackagingScheme",
+          "order": "11",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "按物料+管理单元匹配框架协议并判有效性、命中即标注；写入集采层级与集采形式并匹配审批流程模板；识别特殊采购方式触发补充说明待办(R2-07)。",
+          "name": "annotateFrameAndCentralPurchase",
+          "order": "12",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "类型混包硬拦截、交货跨度超限出拆包建议、特殊采购方式挂补充说明待办；调整后回步骤 h 重新推荐方案(R2-06/R2-07)。",
+          "name": "raisePackagingComplianceAlert",
+          "order": "13",
+          "type": "tool"
+        },
+        {
+          "condition": "",
+          "description": "计划员确认执行计划草稿并选定一套组包方案；驳回须记录原因并回流优化规则。人机协同不替代决策——关键单据强制人工确认(场景期望 5)。",
+          "name": "confirmPlanAndPackage",
+          "order": "14",
+          "type": "manual"
+        },
+        {
+          "condition": "",
+          "description": "确认后的执行计划与采购包提交审批，本轮作业从扫描到确认的全过程留痕核对四要素后封存，可追溯率 100%(场景期望 5)。",
+          "name": "submitPlanForApproval",
+          "order": "15",
+          "type": "tool"
+        }
+      ],
+      "actor": [
+        "Agent",
+        "Human",
+        "System"
+      ],
+      "artifacts": [
+        {
+          "content_description": "合并组编号、合并键、日期差、匹配度、合并数量与加权单价、合并/拆分理由。",
+          "description": "可合并清单与需拆分清单，每条都带得出理由——计划员不必再逐条比对。",
+          "direction": "working",
+          "format": "application/json",
+          "id": "art-merge-suggestion",
+          "name": "需求合并建议清单",
+          "object_type_id": "Demand_Merge_Suggestion",
+          "required": true
+        },
+        {
+          "content_description": "现有量合计、已预留量、可用量、高低水位、校验标志、缺口量、建议批量。",
+          "description": "可调度／需采购／触及安全库存三选一的结论，附可用量与建议采购批量。",
+          "direction": "working",
+          "format": "application/json",
+          "id": "art-stock-check",
+          "name": "库存校验结论",
+          "object_type_id": "Stock_Check_Result",
+          "required": true
+        },
+        {
+          "content_description": "总周期天数、逐节点计划起止日期、时间冲突标志与缺口天数、推荐调整方案。",
+          "description": "各阶段节点的计划开始与完成时间，以及来不来得及的结论。",
+          "direction": "working",
+          "format": "application/json",
+          "id": "art-schedule-plan",
+          "name": "倒排工期表",
+          "object_type_id": "Backward_Schedule_Plan",
+          "required": true
+        },
+        {
+          "content_description": "计划头行、合并组编号、来源需求行映射、各节点计划完成时间、确认状态。",
+          "description": "合并结论、库存结论、排期三者落成的一条可确认执行计划，来源可溯。",
+          "direction": "output",
+          "format": "application/json",
+          "id": "art-execution-plan-draft",
+          "name": "执行计划草稿",
+          "object_type_id": "Procurement_Plan_Line",
+          "required": true
+        },
+        {
+          "content_description": "审核结论、拦截标志、四类校验明细、历史价格曲线、整改建议。",
+          "description": "通过／预警／拦截三选一的结论加逐条明细，让审核从翻数据变成看结论。",
+          "direction": "output",
+          "format": "application/json",
+          "id": "art-audit-opinion",
+          "name": "结构化审核意见",
+          "object_type_id": "Plan_Audit_Opinion",
+          "required": true
+        },
+        {
+          "content_description": "方案编号、匹配度、包内行清单、地域相似度与交付重叠度、交货跨度与拆包建议、框架命中、集采级别与形式、审批流程模板。",
+          "description": "2-3 套候选组包方案及匹配置信度，含框架与集采标注结论。",
+          "direction": "working",
+          "format": "application/json",
+          "id": "art-package-scheme",
+          "name": "组包方案包",
+          "object_type_id": "Package_Scheme",
+          "required": true
+        },
+        {
+          "content_description": "作业动作、执行角色、发生时间、命中规则、阈值快照、调用接口、输入输出摘要、人工决策说明。",
+          "description": "从扫描到提交审批的全过程痕迹，可追溯率 100% 的取证依据。",
+          "direction": "output",
+          "format": "application/json",
+          "id": "art-operation-trace",
+          "name": "数字员工作业留痕",
+          "object_type_id": "Digital_Employee_Operation_Log",
+          "required": true
+        }
+      ],
+      "dependencies": [
+        {
+          "description": "已审批需求计划头行经 queryPbpHeader/queryPbpLine 取自 metaERP，本体不落业务数据。",
+          "from": {
+            "id": "metaERP-寻源",
+            "type": "external"
+          },
+          "id": "dep-s2-erp-plan",
+          "kind": "data",
+          "lineage": "source",
+          "required": true,
+          "to": {
+            "id": "step-scan-demand-plan",
+            "type": "step"
+          }
+        },
+        {
+          "description": "现有量、预留量与高低水位三项取自库存开放接口，是可用量计算的唯一来源。",
+          "from": {
+            "id": "metaERP-库存",
+            "type": "external"
+          },
+          "id": "dep-s2-inventory",
+          "kind": "data",
+          "lineage": "source",
+          "required": true,
+          "to": {
+            "id": "step-verify-inventory",
+            "type": "step"
+          }
+        },
+        {
+          "description": "业务类型×阶段节点的标准周期天数是倒排的唯一步长来源，由集采管理岗维护。",
+          "from": {
+            "id": "Stage_Cycle_Standard",
+            "type": "object"
+          },
+          "id": "dep-s2-cycle-config",
+          "kind": "configuration",
+          "lineage": "reference",
+          "required": true,
+          "to": {
+            "id": "step-derive-schedule",
+            "type": "step"
+          }
+        },
+        {
+          "description": "集采目录决定「应集采未集采」的判定与集采级别标注，由集采管理岗维护。",
+          "from": {
+            "id": "Central_Purchase_Catalog",
+            "type": "object"
+          },
+          "id": "dep-s2-catalog-config",
+          "kind": "configuration",
+          "lineage": "reference",
+          "required": true,
+          "to": {
+            "id": "step-audit-plan",
+            "type": "step"
+          }
+        },
+        {
+          "description": "价格偏差率、查重窗口、组包跨度、交付重叠度的取值一律来自本配置，由集采管理岗与采购部门领导双人会签维护。",
+          "from": {
+            "id": "Audit_Threshold_Setting",
+            "type": "object"
+          },
+          "id": "dep-s2-threshold-config",
+          "kind": "configuration",
+          "lineage": "reference",
+          "required": true,
+          "to": {
+            "id": "step-audit-plan",
+            "type": "step"
+          }
+        },
+        {
+          "description": "同物料各管理单元最近三笔历史采购单价是价格合理性判定的基准。",
+          "from": {
+            "id": "Purchase_Order",
+            "type": "object"
+          },
+          "id": "dep-s2-price-baseline",
+          "kind": "data",
+          "lineage": "source",
+          "required": true,
+          "to": {
+            "id": "step-audit-plan",
+            "type": "step"
+          }
+        },
+        {
+          "description": "框架协议头行经 querySPAList 取回，有效性按失效日期与关闭状态判定。",
+          "from": {
+            "id": "Frame_Agreement",
+            "type": "object"
+          },
+          "id": "dep-s2-frame-agreement",
+          "kind": "data",
+          "lineage": "source",
+          "required": true,
+          "to": {
+            "id": "step-annotate-frame-central",
+            "type": "step"
+          }
+        },
+        {
+          "description": "品类主数据的业务类型是类型混包硬拦截的判定依据。",
+          "from": {
+            "id": "Purchase_Category",
+            "type": "object"
+          },
+          "id": "dep-s2-category",
+          "kind": "data",
+          "lineage": "reference",
+          "required": true,
+          "to": {
+            "id": "step-recommend-packaging",
+            "type": "step"
+          }
+        },
+        {
+          "description": "执行计划草稿生成后立即进入四类合规审核，问题在提交瞬间暴露。",
+          "from": {
+            "id": "step-generate-draft",
+            "type": "step"
+          },
+          "id": "dep-s2-draft-to-audit",
+          "kind": "evidence",
+          "lineage": "transform",
+          "required": true,
+          "to": {
+            "id": "step-audit-plan",
+            "type": "step"
+          }
+        },
+        {
+          "description": "未经计划员确认不得提交审批，人工确认是提交的硬前置。",
+          "from": {
+            "id": "step-confirm-plan-package",
+            "type": "step"
+          },
+          "id": "dep-s2-confirm-to-submit",
+          "kind": "evidence",
+          "lineage": "source",
+          "required": true,
+          "to": {
+            "id": "step-submit-approval",
+            "type": "step"
+          }
+        }
+      ],
+      "description": "采购执行计划编制、需求计划审核、采购组包这三件事规则明确、判断重复、跨系统数据依赖强，长期由计划员、集采管理岗、需求部门、采购员手工承担，已经成了效率与合规的双重瓶颈。本流程让数字员工作为采购团队的一员上岗：每日扫描已审批需求计划自动合并、跨系统校验库存、按配置倒排各阶段工期、提交瞬间跑四类合规审核、按四个维度推荐 2-3 套组包方案，人只在确认与审批节点参与。",
+      "descriptionZh": "扫描合并 → 库存校验 → 倒排工期 → 草稿生成 → 四类合规审核 → 组包推荐与框架集采标注 → 计划员确认 → 提交审批，全程留痕可审计。",
+      "emitted_events": [
+        {
+          "description": "当轮作业范围圈定。",
+          "event_id": "APPROVED_DEMAND_PLAN_SCANNED",
+          "id": "ev-plan-scanned",
+          "source_step_id": "step-scan-demand-plan",
+          "when": "completed"
+        },
+        {
+          "description": "可合并清单与待确认灰区生成。",
+          "event_id": "DEMAND_MERGE_ANALYZED",
+          "id": "ev-merge-analyzed",
+          "source_step_id": "step-analyze-merge",
+          "when": "completed"
+        },
+        {
+          "description": "检出差异超限组合，走拆分分支。",
+          "event_id": "DEMAND_SPLIT_REQUIRED",
+          "id": "ev-split-required",
+          "source_step_id": "step-analyze-merge",
+          "when": "completed"
+        },
+        {
+          "description": "拆分经计划员确认并落到计划行。",
+          "event_id": "DEMAND_SPLIT_CONFIRMED",
+          "id": "ev-split-confirmed",
+          "source_step_id": "step-split-demand",
+          "when": "completed"
+        },
+        {
+          "description": "库存校验结论生成。",
+          "event_id": "INVENTORY_AVAILABILITY_VERIFIED",
+          "id": "ev-inventory-verified",
+          "source_step_id": "step-verify-inventory",
+          "when": "completed"
+        },
+        {
+          "description": "判为可调度，转调拨分支。",
+          "event_id": "STOCK_SUFFICIENT_FOR_DEMAND",
+          "id": "ev-stock-sufficient",
+          "source_step_id": "step-screen-stock",
+          "when": "completed"
+        },
+        {
+          "description": "判为需采购，进入倒排工期。",
+          "event_id": "PURCHASE_REQUIRED_CONFIRMED",
+          "id": "ev-purchase-required",
+          "source_step_id": "step-screen-stock",
+          "when": "completed"
+        },
+        {
+          "description": "调拨申请单生成，采购路径结束。",
+          "event_id": "INVENTORY_TRANSFER_ORDER_CREATED",
+          "id": "ev-transfer-created",
+          "source_step_id": "step-create-transfer-order",
+          "when": "completed"
+        },
+        {
+          "description": "各阶段计划完成时间算出。",
+          "event_id": "PURCHASE_SCHEDULE_DERIVED",
+          "id": "ev-schedule-derived",
+          "source_step_id": "step-derive-schedule",
+          "when": "completed"
+        },
+        {
+          "description": "时间冲突在计划编制当天暴露。",
+          "event_id": "SCHEDULE_TIME_CONFLICT_DETECTED",
+          "id": "ev-time-conflict",
+          "source_step_id": "step-derive-schedule",
+          "when": "completed"
+        },
+        {
+          "description": "执行计划草稿生成并写入来源映射。",
+          "event_id": "EXECUTION_PLAN_DRAFT_GENERATED",
+          "id": "ev-draft-generated",
+          "source_step_id": "step-generate-draft",
+          "when": "completed"
+        },
+        {
+          "description": "四类校验汇成结构化审核意见。",
+          "event_id": "ANNUAL_PLAN_AUDITED",
+          "id": "ev-plan-audited",
+          "source_step_id": "step-audit-plan",
+          "when": "completed"
+        },
+        {
+          "description": "命中硬拦截，走退回整改分支。",
+          "event_id": "PLAN_AUDIT_INTERCEPTED",
+          "id": "ev-audit-intercepted",
+          "source_step_id": "step-audit-plan",
+          "when": "completed"
+        },
+        {
+          "description": "已退回申请人整改并留痕。",
+          "event_id": "PLAN_RETURNED_FOR_RECTIFICATION",
+          "id": "ev-returned-rectify",
+          "source_step_id": "step-return-rectification",
+          "when": "completed"
+        },
+        {
+          "description": "整改回流复核。",
+          "event_id": "PLAN_RECTIFICATION_SUBMITTED",
+          "id": "ev-rectification-submitted",
+          "source_step_id": "step-return-rectification",
+          "when": "completed"
+        },
+        {
+          "description": "2-3 套组包方案推荐完成。",
+          "event_id": "PACKAGING_SCHEME_RECOMMENDED",
+          "id": "ev-scheme-recommended",
+          "source_step_id": "step-recommend-packaging",
+          "when": "completed"
+        },
+        {
+          "description": "组包合规校验命中，走预警分支。",
+          "event_id": "PACKAGING_COMPLIANCE_VIOLATED",
+          "id": "ev-compliance-violated",
+          "source_step_id": "step-recommend-packaging",
+          "when": "completed"
+        },
+        {
+          "description": "框架与集采标注完成、采购包行生成。",
+          "event_id": "FRAME_AND_CENTRAL_ANNOTATED",
+          "id": "ev-frame-annotated",
+          "source_step_id": "step-annotate-frame-central",
+          "when": "completed"
+        },
+        {
+          "description": "组包预警推送，调整后回组包重算。",
+          "event_id": "PACKAGING_ALERT_RAISED",
+          "id": "ev-packaging-alert",
+          "source_step_id": "step-packaging-alert",
+          "when": "completed"
+        },
+        {
+          "description": "计划员确认草稿并选定方案。",
+          "event_id": "PLAN_AND_PACKAGE_CONFIRMED",
+          "id": "ev-plan-confirmed",
+          "source_step_id": "step-confirm-plan-package",
+          "when": "completed"
+        },
+        {
+          "description": "计划员驳回并记录原因，回流优化规则。",
+          "event_id": "PLAN_AND_PACKAGE_REJECTED",
+          "id": "ev-plan-rejected",
+          "source_step_id": "step-confirm-plan-package",
+          "when": "completed"
+        },
+        {
+          "description": "计划与采购包提交审批，留痕封存。",
+          "event_id": "PLAN_SUBMITTED_FOR_APPROVAL",
+          "id": "ev-submitted",
+          "source_step_id": "step-submit-approval",
+          "when": "completed"
+        }
+      ],
+      "entry_step_ids": [
+        "step-scan-demand-plan",
+        "step-audit-plan"
+      ],
+      "extensions": {
+        "source": {
+          "capability_loop": {
+            "断": [
+              "step-confirm-plan-package"
+            ],
+            "析": [
+              "step-analyze-merge",
+              "step-verify-inventory",
+              "step-screen-stock",
+              "step-derive-schedule",
+              "step-audit-plan",
+              "step-recommend-packaging"
+            ],
+            "查": [
+              "step-scan-demand-plan"
+            ],
+            "行": [
+              "step-split-demand",
+              "step-create-transfer-order",
+              "step-generate-draft",
+              "step-annotate-frame-central",
+              "step-submit-approval"
+            ],
+            "警": [
+              "step-return-rectification",
+              "step-packaging-alert"
+            ]
+          },
+          "doc_step_mapping": {
+            "a": "step-scan-demand-plan",
+            "b": "step-analyze-merge",
+            "b2": "step-split-demand（文档类型为「判断」，因其带真实写动作，本体建为带计划员确认门的执行节点）",
+            "c": "step-verify-inventory",
+            "d": "step-screen-stock",
+            "d1": "step-create-transfer-order（终止节点，不创建采购计划）",
+            "e": "step-derive-schedule",
+            "f": "step-generate-draft",
+            "g": "step-audit-plan",
+            "g1": "step-return-rectification（整改后回 g 复核）",
+            "h": "step-recommend-packaging",
+            "h1": "step-annotate-frame-central",
+            "h2": "step-packaging-alert（调整后回 h 重算）",
+            "j": "step-confirm-plan-package（文档类型为「决策」，含人工确认门与驳回回流）",
+            "k": "step-submit-approval（终止节点）"
+          },
+          "document": "场景2_数字化员工的智能作业实践.docx",
+          "field_workbook": "场景2_实体字段明细.xlsx",
+          "kind": "scenario-design-doc",
+          "modeling_convention": "规则=数字员工执行步骤时必须遵循的约束（如果X则Y）；取数口径、合并与倒排的计算公式、流程分支条件不作为规则，分别建模在 Action 的 action_steps、对象属性与工作流边上。",
+          "open_questions": [
+            "6.1 配置表说明列出立项/组包/询价/定标/合同/订单/到货七个阶段节点，7.3、7.4 正文另提到「分配/应答/评标」三个细分节点；本体取并集，按「业务类型+阶段节点」维度分别配置，缺配置的节点由 BR-PLAN-01 拦截。",
+            "场景期望 4）提出金额上限、份额配置、供应商产能三项组包合规校验，文档未给判定口径与阈值；本体在 Packaging_Compliance_Finding.check_item 中预留枚举值，判定逻辑待开发确认。"
+          ],
+          "reused_from_scenario_1": {
+            "note": "调拨申请沿用同一对象，以 transfer_reason 区分「偏差调整方案」与「库存可调度」两条来路；两个场景各自的 Action 分别持有各自的前置条件。",
+            "objects": "Procurement_Plan / Procurement_Plan_Line / Purchase_Requisition / Sourcing_Package / Purchase_Order / Purchase_Contract / Stage_Cycle_Standard / Stock_Transfer_Request 八个对象直接复用，缺的属性按场景二字段清单补入（见 object_patches.json）",
+            "rules": "BR-PLAN-01（缺周期配置则不予推算计划时间）原样复用，scope 增补 Backward_Schedule_Stage"
+          },
+          "rule_group_mapping": {
+            "R2-01": "BR2-SCAN-01、BR2-MERGE-01~04（合并键与加权单价等计算口径属执行逻辑，记于 analyzeDemandMerge 步骤）",
+            "R2-02": "BR2-STOCK-01~03（只计合格库存、可用量=现有量−预留量属取数口径，记于 verifyInventoryAvailability 步骤）",
+            "R2-03": "BR-PLAN-01（场景一规则原样复用）、BR2-SCHED-01~03（倒排公式属计算逻辑，记于 Backward_Schedule_Stage 与 derivePurchaseSchedule 步骤）",
+            "R2-04": "BR2-CENTRAL-01~04",
+            "R2-05": "BR2-PRICE-01~03、BR2-DUP-01、BR2-THRESH-01、BR2-ATTACH-01（历史均价取数口径属执行逻辑，记于 auditAnnualPlanCompliance 步骤）",
+            "R2-06": "BR2-PKG-01~04",
+            "R2-07": "BR2-FRAME-01~03、BR2-CENTRAL-02/04",
+            "场景期望5": "BR2-HITL-01、BR2-AUDIT-01、BR2-FEEDBACK-01"
+          },
+          "scenario": "场景二·数字化员工的智能作业实践"
+        }
+      },
+      "id": "procurement-digital-employee-operations",
+      "layout": {
+        "auto_generated": true,
+        "direction": "LR",
+        "positions": {
+          "artifact:art-audit-opinion": {
+            "x": 1420,
+            "y": -130
+          },
+          "artifact:art-execution-plan-draft": {
+            "x": 1080,
+            "y": -130
+          },
+          "artifact:art-merge-suggestion": {
+            "x": 60,
+            "y": -130
+          },
+          "artifact:art-operation-trace": {
+            "x": 2100,
+            "y": -130
+          },
+          "artifact:art-package-scheme": {
+            "x": 1760,
+            "y": -130
+          },
+          "artifact:art-schedule-plan": {
+            "x": 740,
+            "y": -130
+          },
+          "artifact:art-stock-check": {
+            "x": 400,
+            "y": -130
+          },
+          "event:ev-audit-intercepted": {
+            "x": 2140,
+            "y": 200
+          },
+          "event:ev-compliance-violated": {
+            "x": 2480,
+            "y": 200
+          },
+          "event:ev-draft-generated": {
+            "x": 1800,
+            "y": 200
+          },
+          "event:ev-frame-annotated": {
+            "x": 2820,
+            "y": 154
+          },
+          "event:ev-inventory-verified": {
+            "x": 780,
+            "y": 200
+          },
+          "event:ev-merge-analyzed": {
+            "x": 440,
+            "y": 154
+          },
+          "event:ev-packaging-alert": {
+            "x": 2480,
+            "y": 390
+          },
+          "event:ev-plan-audited": {
+            "x": 2140,
+            "y": 154
+          },
+          "event:ev-plan-confirmed": {
+            "x": 3160,
+            "y": 154
+          },
+          "event:ev-plan-rejected": {
+            "x": 3160,
+            "y": 200
+          },
+          "event:ev-plan-scanned": {
+            "x": 100,
+            "y": 200
+          },
+          "event:ev-purchase-required": {
+            "x": 1120,
+            "y": 200
+          },
+          "event:ev-rectification-submitted": {
+            "x": 2140,
+            "y": 390
+          },
+          "event:ev-returned-rectify": {
+            "x": 2140,
+            "y": 344
+          },
+          "event:ev-schedule-derived": {
+            "x": 1460,
+            "y": 200
+          },
+          "event:ev-scheme-recommended": {
+            "x": 2480,
+            "y": 154
+          },
+          "event:ev-split-confirmed": {
+            "x": 440,
+            "y": -36
+          },
+          "event:ev-split-required": {
+            "x": 440,
+            "y": 200
+          },
+          "event:ev-stock-sufficient": {
+            "x": 1120,
+            "y": 154
+          },
+          "event:ev-submitted": {
+            "x": 3500,
+            "y": 154
+          },
+          "event:ev-time-conflict": {
+            "x": 1460,
+            "y": 154
+          },
+          "event:ev-transfer-created": {
+            "x": 1460,
+            "y": -36
+          },
+          "step:step-analyze-merge": {
+            "x": 400,
+            "y": 310
+          },
+          "step:step-annotate-frame-central": {
+            "x": 2780,
+            "y": 310
+          },
+          "step:step-audit-plan": {
+            "x": 2100,
+            "y": 310
+          },
+          "step:step-confirm-plan-package": {
+            "x": 3120,
+            "y": 310
+          },
+          "step:step-create-transfer-order": {
+            "x": 1420,
+            "y": 120
+          },
+          "step:step-derive-schedule": {
+            "x": 1420,
+            "y": 310
+          },
+          "step:step-generate-draft": {
+            "x": 1760,
+            "y": 310
+          },
+          "step:step-packaging-alert": {
+            "x": 2440,
+            "y": 500
+          },
+          "step:step-recommend-packaging": {
+            "x": 2440,
+            "y": 310
+          },
+          "step:step-return-rectification": {
+            "x": 2100,
+            "y": 500
+          },
+          "step:step-scan-demand-plan": {
+            "x": 60,
+            "y": 310
+          },
+          "step:step-screen-stock": {
+            "x": 1080,
+            "y": 310
+          },
+          "step:step-split-demand": {
+            "x": 400,
+            "y": 120
+          },
+          "step:step-submit-approval": {
+            "x": 3460,
+            "y": 310
+          },
+          "step:step-verify-inventory": {
+            "x": 740,
+            "y": 310
+          },
+          "trigger:trigger-daily-demand-scan": {
+            "x": -280,
+            "y": 120
+          },
+          "trigger:trigger-demand-plan-approved": {
+            "x": -280,
+            "y": 310
+          },
+          "trigger:trigger-plan-submitted": {
+            "x": -280,
+            "y": 500
+          }
+        },
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 0.6
+        }
+      },
+      "name": "数字化员工的智能作业实践",
+      "nameZh": "数字化员工的智能作业实践",
+      "object_refs": [
+        "Inventory_Onhand_Balance",
+        "Inventory_Reservation",
+        "Inventory_MinMax_Level",
+        "Central_Purchase_Catalog",
+        "Audit_Threshold_Setting",
+        "Frame_Agreement",
+        "Frame_Agreement_Item",
+        "Purchase_Category",
+        "Sourcing_Package_Line",
+        "Demand_Merge_Suggestion",
+        "Stock_Check_Result",
+        "Backward_Schedule_Plan",
+        "Backward_Schedule_Stage",
+        "Package_Scheme",
+        "Plan_Audit_Opinion",
+        "Plan_Audit_Finding",
+        "Packaging_Compliance_Finding",
+        "Digital_Employee_Task",
+        "Digital_Employee_Operation_Log",
+        "Procurement_Plan",
+        "Procurement_Plan_Line",
+        "Purchase_Requisition",
+        "Sourcing_Package",
+        "Purchase_Order",
+        "Purchase_Contract",
+        "Stage_Cycle_Standard",
+        "Stock_Transfer_Request"
+      ],
+      "orchestration": {
+        "agent_orchestrated": true,
+        "agent_roles": [
+          {
+            "agent_id": "agent-procurement-digital-employee",
+            "prompt_profile": "procurement-digital-employee-v1",
+            "role_id": "role-digital-employee"
+          }
+        ],
+        "max_concurrency": 16,
+        "on_failure": "compensate",
+        "strategy": "event_driven",
+        "timeout_ms": 604800000
+      },
+      "output_contracts": [
+        {
+          "artifact_id": "art-execution-plan-draft",
+          "content_description": "缺来源行映射或缺计划员确认的草稿都不算交付(BR2-MERGE-04、BR2-HITL-01)。",
+          "contents": [
+            {
+              "data_type": "String",
+              "description": "所属合并组编号",
+              "name": "merge_group_id",
+              "required": true
+            },
+            {
+              "data_type": "Array",
+              "description": "来源需求行映射",
+              "name": "source_plan_line_ids",
+              "required": true
+            },
+            {
+              "data_type": "String",
+              "description": "库存校验结论",
+              "name": "stock_check_flag",
+              "required": true
+            },
+            {
+              "data_type": "Array",
+              "description": "各阶段节点计划完成时间",
+              "name": "stage_plan_dates",
+              "required": true
+            },
+            {
+              "data_type": "String",
+              "description": "计划员确认人",
+              "name": "draft_confirmed_by",
+              "required": true
+            }
+          ],
+          "description": "一条执行计划要能提交审批，必须同时说得清「怎么合的、买不买、来不来得及、谁确认的」。",
+          "format": "application/json",
+          "id": "output-contract-execution-plan",
+          "name": "可提交审批的执行计划",
+          "required": true
+        },
+        {
+          "artifact_id": "art-operation-trace",
+          "content_description": "角色、时间、判定依据（规则与阈值快照）、结论四要素齐备(BR2-AUDIT-01)。",
+          "contents": [
+            {
+              "data_type": "String",
+              "description": "执行角色",
+              "name": "operator_role",
+              "required": true
+            },
+            {
+              "data_type": "String",
+              "description": "发生时间",
+              "name": "occurred_at",
+              "required": true
+            },
+            {
+              "data_type": "String",
+              "description": "命中的规则编号",
+              "name": "rule_hit",
+              "required": true
+            },
+            {
+              "data_type": "String",
+              "description": "阈值快照",
+              "name": "threshold_snapshot",
+              "required": true
+            },
+            {
+              "data_type": "String",
+              "description": "结论摘要",
+              "name": "output_digest",
+              "required": true
+            }
+          ],
+          "description": "「全部操作留痕可审计」的验收物：四要素缺一不算留痕。",
+          "format": "application/json",
+          "id": "output-contract-operation-trace",
+          "name": "作业留痕交付",
+          "required": true
+        }
+      ],
+      "roles": [
+        {
+          "agent_id": "agent-procurement-digital-employee",
+          "display_name": "采购数字员工",
+          "id": "role-digital-employee",
+          "responsibilities": [
+            "每日扫描已审批需求计划并聚类合并",
+            "库存校验与采购必要性判断",
+            "倒排各阶段计划完成时间并识别时间冲突",
+            "集采目录、价格异常、重复申报、技术附件四类审核",
+            "品类识别与 2-3 套组包方案推荐、框架与集采标注",
+            "全部作业留痕可审计"
+          ],
+          "role": "采购数字员工",
+          "type": "Agent"
+        },
+        {
+          "display_name": "采购计划员",
+          "id": "role-planner",
+          "org_scope": "采购计划管理部",
+          "responsibilities": [
+            "确认执行计划草稿、组包方案与审核意见",
+            "处理预警与待办",
+            "对关键单据做最终确认提交",
+            "驳回时说明原因供规则回流优化"
+          ],
+          "role": "采购计划员",
+          "type": "Human"
+        },
+        {
+          "display_name": "集采管理岗",
+          "id": "role-central-manager",
+          "org_scope": "集中采购管理",
+          "responsibilities": [
+            "维护集采目录与阶段周期配置",
+            "确认推荐的集采范围与框架匹配结果",
+            "统筹一二级集采衔接",
+            "补充特殊采购方式说明"
+          ],
+          "role": "集采管理岗",
+          "type": "Human"
+        },
+        {
+          "display_name": "需求申请人/需求部门",
+          "id": "role-demand-applicant",
+          "org_scope": "需求部门",
+          "responsibilities": [
+            "按提示补充技术附件",
+            "澄清不按集采采购原因",
+            "接收重复申报与价格异常反馈并整改"
+          ],
+          "role": "需求申请人",
+          "type": "Human"
+        },
+        {
+          "display_name": "采购部门领导",
+          "id": "role-procurement-leader",
+          "org_scope": "采购管理",
+          "responsibilities": [
+            "审批执行计划与采购包",
+            "复核拦截与预警事项",
+            "处理时间冲突升级与价格异常升级"
+          ],
+          "role": "采购部门领导",
+          "type": "Human"
+        },
+        {
+          "display_name": "采购员",
+          "id": "role-buyer",
+          "org_scope": "采购执行",
+          "responsibilities": [
+            "承接组包结果开展寻源",
+            "反馈执行异常供数字员工闭环"
+          ],
+          "role": "采购员",
+          "type": "Human"
+        },
+        {
+          "display_name": "metaERP 采购执行系统",
+          "id": "role-erp",
+          "responsibilities": [
+            "需求计划与采购包取数与落库",
+            "库存现有量/预留/水位查询",
+            "调拨申请受理与回执"
+          ],
+          "role": "metaERP执行系统",
+          "type": "System"
+        },
+        {
+          "display_name": "定时调度中心",
+          "id": "role-scheduler",
+          "responsibilities": [
+            "每日需求计划扫描批次"
+          ],
+          "role": "调度中心",
+          "type": "System"
+        }
+      ],
+      "rule_bindings": [
+        {
+          "action_rule_binding_id": "arb-scanApprovedDemandPlan-01",
+          "application_scope": "action",
+          "description": "scanApprovedDemandPlan 在 guard 阶段应用规则 BR2-SCAN-01。",
+          "id": "wrb-001",
+          "phase": "guard",
+          "rule_id": "BR2-SCAN-01",
+          "scope": "step",
+          "target_id": "step-scan-demand-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-scanApprovedDemandPlan-02",
+          "application_scope": "action",
+          "description": "scanApprovedDemandPlan 在 postcondition 阶段应用规则 BR2-AUDIT-01。",
+          "id": "wrb-002",
+          "phase": "postcondition",
+          "rule_id": "BR2-AUDIT-01",
+          "scope": "step",
+          "target_id": "step-scan-demand-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-analyzeDemandMerge-01",
+          "application_scope": "action",
+          "description": "analyzeDemandMerge 在 validation 阶段应用规则 BR2-MERGE-01。",
+          "id": "wrb-003",
+          "phase": "validation",
+          "rule_id": "BR2-MERGE-01",
+          "scope": "step",
+          "target_id": "step-analyze-merge"
+        },
+        {
+          "action_rule_binding_id": "arb-analyzeDemandMerge-02",
+          "application_scope": "action",
+          "description": "analyzeDemandMerge 在 validation 阶段应用规则 BR2-MERGE-02。",
+          "id": "wrb-004",
+          "phase": "validation",
+          "rule_id": "BR2-MERGE-02",
+          "scope": "step",
+          "target_id": "step-analyze-merge"
+        },
+        {
+          "action_rule_binding_id": "arb-analyzeDemandMerge-03",
+          "application_scope": "action",
+          "description": "analyzeDemandMerge 在 validation 阶段应用规则 BR2-MERGE-03。",
+          "id": "wrb-005",
+          "phase": "validation",
+          "rule_id": "BR2-MERGE-03",
+          "scope": "step",
+          "target_id": "step-analyze-merge"
+        },
+        {
+          "action_rule_binding_id": "arb-splitOversizedDemand-01",
+          "application_scope": "action",
+          "description": "splitOversizedDemand 在 guard 阶段应用规则 BR2-MERGE-02。",
+          "id": "wrb-006",
+          "phase": "guard",
+          "rule_id": "BR2-MERGE-02",
+          "scope": "step",
+          "target_id": "step-split-demand"
+        },
+        {
+          "action_rule_binding_id": "arb-splitOversizedDemand-02",
+          "application_scope": "action",
+          "description": "splitOversizedDemand 在 approval 阶段应用规则 BR2-MERGE-03。",
+          "id": "wrb-007",
+          "phase": "approval",
+          "rule_id": "BR2-MERGE-03",
+          "scope": "step",
+          "target_id": "step-split-demand"
+        },
+        {
+          "action_rule_binding_id": "arb-splitOversizedDemand-03",
+          "application_scope": "action",
+          "description": "splitOversizedDemand 在 precondition 阶段应用规则 BR2-HITL-01。",
+          "id": "wrb-008",
+          "phase": "precondition",
+          "rule_id": "BR2-HITL-01",
+          "scope": "step",
+          "target_id": "step-split-demand"
+        },
+        {
+          "action_rule_binding_id": "arb-verifyInventoryAvailability-01",
+          "application_scope": "action",
+          "description": "verifyInventoryAvailability 在 guard 阶段应用规则 BR2-STOCK-01。",
+          "id": "wrb-009",
+          "phase": "guard",
+          "rule_id": "BR2-STOCK-01",
+          "scope": "step",
+          "target_id": "step-verify-inventory"
+        },
+        {
+          "action_rule_binding_id": "arb-verifyInventoryAvailability-02",
+          "application_scope": "action",
+          "description": "verifyInventoryAvailability 在 validation 阶段应用规则 BR2-STOCK-02。",
+          "id": "wrb-010",
+          "phase": "validation",
+          "rule_id": "BR2-STOCK-02",
+          "scope": "step",
+          "target_id": "step-verify-inventory"
+        },
+        {
+          "action_rule_binding_id": "arb-verifyInventoryAvailability-03",
+          "application_scope": "action",
+          "description": "verifyInventoryAvailability 在 validation 阶段应用规则 BR2-STOCK-03。",
+          "id": "wrb-011",
+          "phase": "validation",
+          "rule_id": "BR2-STOCK-03",
+          "scope": "step",
+          "target_id": "step-verify-inventory"
+        },
+        {
+          "action_rule_binding_id": "arb-createInventoryTransferOrder-01",
+          "application_scope": "action",
+          "description": "createInventoryTransferOrder 在 precondition 阶段应用规则 BR2-STOCK-01。",
+          "id": "wrb-012",
+          "phase": "precondition",
+          "rule_id": "BR2-STOCK-01",
+          "scope": "step",
+          "target_id": "step-create-transfer-order"
+        },
+        {
+          "action_rule_binding_id": "arb-createInventoryTransferOrder-02",
+          "application_scope": "action",
+          "description": "createInventoryTransferOrder 在 postcondition 阶段应用规则 BR2-AUDIT-01。",
+          "id": "wrb-013",
+          "phase": "postcondition",
+          "rule_id": "BR2-AUDIT-01",
+          "scope": "step",
+          "target_id": "step-create-transfer-order"
+        },
+        {
+          "action_rule_binding_id": "arb-derivePurchaseSchedule-01",
+          "application_scope": "action",
+          "description": "derivePurchaseSchedule 在 precondition 阶段应用规则 BR-PLAN-01。",
+          "id": "wrb-014",
+          "phase": "precondition",
+          "rule_id": "BR-PLAN-01",
+          "scope": "step",
+          "target_id": "step-derive-schedule"
+        },
+        {
+          "action_rule_binding_id": "arb-derivePurchaseSchedule-02",
+          "application_scope": "action",
+          "description": "derivePurchaseSchedule 在 validation 阶段应用规则 BR2-SCHED-01。",
+          "id": "wrb-015",
+          "phase": "validation",
+          "rule_id": "BR2-SCHED-01",
+          "scope": "step",
+          "target_id": "step-derive-schedule"
+        },
+        {
+          "action_rule_binding_id": "arb-derivePurchaseSchedule-03",
+          "application_scope": "action",
+          "description": "derivePurchaseSchedule 在 guard 阶段应用规则 BR2-SCHED-02。",
+          "id": "wrb-016",
+          "phase": "guard",
+          "rule_id": "BR2-SCHED-02",
+          "scope": "step",
+          "target_id": "step-derive-schedule"
+        },
+        {
+          "action_rule_binding_id": "arb-derivePurchaseSchedule-04",
+          "application_scope": "action",
+          "description": "derivePurchaseSchedule 在 validation 阶段应用规则 BR2-SCHED-03。",
+          "id": "wrb-017",
+          "phase": "validation",
+          "rule_id": "BR2-SCHED-03",
+          "scope": "step",
+          "target_id": "step-derive-schedule"
+        },
+        {
+          "action_rule_binding_id": "arb-generateExecutionPlanDraft-01",
+          "application_scope": "action",
+          "description": "generateExecutionPlanDraft 在 precondition 阶段应用规则 BR2-MERGE-04。",
+          "id": "wrb-018",
+          "phase": "precondition",
+          "rule_id": "BR2-MERGE-04",
+          "scope": "step",
+          "target_id": "step-generate-draft"
+        },
+        {
+          "action_rule_binding_id": "arb-generateExecutionPlanDraft-02",
+          "application_scope": "action",
+          "description": "generateExecutionPlanDraft 在 guard 阶段应用规则 BR2-STOCK-02。",
+          "id": "wrb-019",
+          "phase": "guard",
+          "rule_id": "BR2-STOCK-02",
+          "scope": "step",
+          "target_id": "step-generate-draft"
+        },
+        {
+          "action_rule_binding_id": "arb-generateExecutionPlanDraft-03",
+          "application_scope": "action",
+          "description": "generateExecutionPlanDraft 在 postcondition 阶段应用规则 BR2-AUDIT-01。",
+          "id": "wrb-020",
+          "phase": "postcondition",
+          "rule_id": "BR2-AUDIT-01",
+          "scope": "step",
+          "target_id": "step-generate-draft"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-01",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 precondition 阶段应用规则 BR2-THRESH-01。",
+          "id": "wrb-021",
+          "phase": "precondition",
+          "rule_id": "BR2-THRESH-01",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-02",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 validation 阶段应用规则 BR2-CENTRAL-01。",
+          "id": "wrb-022",
+          "phase": "validation",
+          "rule_id": "BR2-CENTRAL-01",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-03",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 validation 阶段应用规则 BR2-CENTRAL-04。",
+          "id": "wrb-023",
+          "phase": "validation",
+          "rule_id": "BR2-CENTRAL-04",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-04",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 validation 阶段应用规则 BR2-PRICE-01。",
+          "id": "wrb-024",
+          "phase": "validation",
+          "rule_id": "BR2-PRICE-01",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-05",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 validation 阶段应用规则 BR2-PRICE-02。",
+          "id": "wrb-025",
+          "phase": "validation",
+          "rule_id": "BR2-PRICE-02",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-06",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 postcondition 阶段应用规则 BR2-PRICE-03。",
+          "id": "wrb-026",
+          "phase": "postcondition",
+          "rule_id": "BR2-PRICE-03",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-07",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 validation 阶段应用规则 BR2-DUP-01。",
+          "id": "wrb-027",
+          "phase": "validation",
+          "rule_id": "BR2-DUP-01",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-auditAnnualPlanCompliance-08",
+          "application_scope": "action",
+          "description": "auditAnnualPlanCompliance 在 validation 阶段应用规则 BR2-ATTACH-01。",
+          "id": "wrb-028",
+          "phase": "validation",
+          "rule_id": "BR2-ATTACH-01",
+          "scope": "step",
+          "target_id": "step-audit-plan"
+        },
+        {
+          "action_rule_binding_id": "arb-returnPlanForRectification-01",
+          "application_scope": "action",
+          "description": "returnPlanForRectification 在 approval 阶段应用规则 BR2-CENTRAL-03。",
+          "id": "wrb-029",
+          "phase": "approval",
+          "rule_id": "BR2-CENTRAL-03",
+          "scope": "step",
+          "target_id": "step-return-rectification"
+        },
+        {
+          "action_rule_binding_id": "arb-returnPlanForRectification-02",
+          "application_scope": "action",
+          "description": "returnPlanForRectification 在 postcondition 阶段应用规则 BR2-AUDIT-01。",
+          "id": "wrb-030",
+          "phase": "postcondition",
+          "rule_id": "BR2-AUDIT-01",
+          "scope": "step",
+          "target_id": "step-return-rectification"
+        },
+        {
+          "action_rule_binding_id": "arb-recommendPackagingScheme-01",
+          "application_scope": "action",
+          "description": "recommendPackagingScheme 在 precondition 阶段应用规则 BR2-THRESH-01。",
+          "id": "wrb-031",
+          "phase": "precondition",
+          "rule_id": "BR2-THRESH-01",
+          "scope": "step",
+          "target_id": "step-recommend-packaging"
+        },
+        {
+          "action_rule_binding_id": "arb-recommendPackagingScheme-02",
+          "application_scope": "action",
+          "description": "recommendPackagingScheme 在 validation 阶段应用规则 BR2-PKG-01。",
+          "id": "wrb-032",
+          "phase": "validation",
+          "rule_id": "BR2-PKG-01",
+          "scope": "step",
+          "target_id": "step-recommend-packaging"
+        },
+        {
+          "action_rule_binding_id": "arb-recommendPackagingScheme-03",
+          "application_scope": "action",
+          "description": "recommendPackagingScheme 在 validation 阶段应用规则 BR2-PKG-02。",
+          "id": "wrb-033",
+          "phase": "validation",
+          "rule_id": "BR2-PKG-02",
+          "scope": "step",
+          "target_id": "step-recommend-packaging"
+        },
+        {
+          "action_rule_binding_id": "arb-recommendPackagingScheme-04",
+          "application_scope": "action",
+          "description": "recommendPackagingScheme 在 validation 阶段应用规则 BR2-PKG-03。",
+          "id": "wrb-034",
+          "phase": "validation",
+          "rule_id": "BR2-PKG-03",
+          "scope": "step",
+          "target_id": "step-recommend-packaging"
+        },
+        {
+          "action_rule_binding_id": "arb-recommendPackagingScheme-05",
+          "application_scope": "action",
+          "description": "recommendPackagingScheme 在 postcondition 阶段应用规则 BR2-PKG-04。",
+          "id": "wrb-035",
+          "phase": "postcondition",
+          "rule_id": "BR2-PKG-04",
+          "scope": "step",
+          "target_id": "step-recommend-packaging"
+        },
+        {
+          "action_rule_binding_id": "arb-annotateFrameAndCentralPurchase-01",
+          "application_scope": "action",
+          "description": "annotateFrameAndCentralPurchase 在 validation 阶段应用规则 BR2-FRAME-01。",
+          "id": "wrb-036",
+          "phase": "validation",
+          "rule_id": "BR2-FRAME-01",
+          "scope": "step",
+          "target_id": "step-annotate-frame-central"
+        },
+        {
+          "action_rule_binding_id": "arb-annotateFrameAndCentralPurchase-02",
+          "application_scope": "action",
+          "description": "annotateFrameAndCentralPurchase 在 validation 阶段应用规则 BR2-FRAME-02。",
+          "id": "wrb-037",
+          "phase": "validation",
+          "rule_id": "BR2-FRAME-02",
+          "scope": "step",
+          "target_id": "step-annotate-frame-central"
+        },
+        {
+          "action_rule_binding_id": "arb-annotateFrameAndCentralPurchase-03",
+          "application_scope": "action",
+          "description": "annotateFrameAndCentralPurchase 在 validation 阶段应用规则 BR2-FRAME-03。",
+          "id": "wrb-038",
+          "phase": "validation",
+          "rule_id": "BR2-FRAME-03",
+          "scope": "step",
+          "target_id": "step-annotate-frame-central"
+        },
+        {
+          "action_rule_binding_id": "arb-annotateFrameAndCentralPurchase-04",
+          "application_scope": "action",
+          "description": "annotateFrameAndCentralPurchase 在 validation 阶段应用规则 BR2-CENTRAL-02。",
+          "id": "wrb-039",
+          "phase": "validation",
+          "rule_id": "BR2-CENTRAL-02",
+          "scope": "step",
+          "target_id": "step-annotate-frame-central"
+        },
+        {
+          "action_rule_binding_id": "arb-annotateFrameAndCentralPurchase-05",
+          "application_scope": "action",
+          "description": "annotateFrameAndCentralPurchase 在 postcondition 阶段应用规则 BR2-CENTRAL-04。",
+          "id": "wrb-040",
+          "phase": "postcondition",
+          "rule_id": "BR2-CENTRAL-04",
+          "scope": "step",
+          "target_id": "step-annotate-frame-central"
+        },
+        {
+          "action_rule_binding_id": "arb-raisePackagingComplianceAlert-01",
+          "application_scope": "action",
+          "description": "raisePackagingComplianceAlert 在 guard 阶段应用规则 BR2-PKG-01。",
+          "id": "wrb-041",
+          "phase": "guard",
+          "rule_id": "BR2-PKG-01",
+          "scope": "step",
+          "target_id": "step-packaging-alert"
+        },
+        {
+          "action_rule_binding_id": "arb-raisePackagingComplianceAlert-02",
+          "application_scope": "action",
+          "description": "raisePackagingComplianceAlert 在 validation 阶段应用规则 BR2-PKG-03。",
+          "id": "wrb-042",
+          "phase": "validation",
+          "rule_id": "BR2-PKG-03",
+          "scope": "step",
+          "target_id": "step-packaging-alert"
+        },
+        {
+          "action_rule_binding_id": "arb-raisePackagingComplianceAlert-03",
+          "application_scope": "action",
+          "description": "raisePackagingComplianceAlert 在 validation 阶段应用规则 BR2-FRAME-03。",
+          "id": "wrb-043",
+          "phase": "validation",
+          "rule_id": "BR2-FRAME-03",
+          "scope": "step",
+          "target_id": "step-packaging-alert"
+        },
+        {
+          "action_rule_binding_id": "arb-confirmPlanAndPackage-01",
+          "application_scope": "action",
+          "description": "confirmPlanAndPackage 在 approval 阶段应用规则 BR2-HITL-01。",
+          "id": "wrb-044",
+          "phase": "approval",
+          "rule_id": "BR2-HITL-01",
+          "scope": "step",
+          "target_id": "step-confirm-plan-package"
+        },
+        {
+          "action_rule_binding_id": "arb-confirmPlanAndPackage-02",
+          "application_scope": "action",
+          "description": "confirmPlanAndPackage 在 validation 阶段应用规则 BR2-FEEDBACK-01。",
+          "id": "wrb-045",
+          "phase": "validation",
+          "rule_id": "BR2-FEEDBACK-01",
+          "scope": "step",
+          "target_id": "step-confirm-plan-package"
+        },
+        {
+          "action_rule_binding_id": "arb-confirmPlanAndPackage-03",
+          "application_scope": "action",
+          "description": "confirmPlanAndPackage 在 postcondition 阶段应用规则 BR2-AUDIT-01。",
+          "id": "wrb-046",
+          "phase": "postcondition",
+          "rule_id": "BR2-AUDIT-01",
+          "scope": "step",
+          "target_id": "step-confirm-plan-package"
+        },
+        {
+          "action_rule_binding_id": "arb-submitPlanForApproval-01",
+          "application_scope": "action",
+          "description": "submitPlanForApproval 在 precondition 阶段应用规则 BR2-HITL-01。",
+          "id": "wrb-047",
+          "phase": "precondition",
+          "rule_id": "BR2-HITL-01",
+          "scope": "step",
+          "target_id": "step-submit-approval"
+        },
+        {
+          "action_rule_binding_id": "arb-submitPlanForApproval-02",
+          "application_scope": "action",
+          "description": "submitPlanForApproval 在 postcondition 阶段应用规则 BR2-AUDIT-01。",
+          "id": "wrb-048",
+          "phase": "postcondition",
+          "rule_id": "BR2-AUDIT-01",
+          "scope": "step",
+          "target_id": "step-submit-approval"
+        },
+        {
+          "application_scope": "workflow",
+          "description": "判断节点的分支判定规则，无对应 Action，属工作流自有策略。",
+          "id": "wrb-dec-01",
+          "phase": "guard",
+          "rule_id": "BR2-STOCK-01",
+          "scope": "step",
+          "target_id": "step-screen-stock"
+        },
+        {
+          "application_scope": "workflow",
+          "description": "判断节点的分支判定规则，无对应 Action，属工作流自有策略。",
+          "id": "wrb-dec-02",
+          "phase": "validation",
+          "rule_id": "BR2-STOCK-02",
+          "scope": "step",
+          "target_id": "step-screen-stock"
+        },
+        {
+          "application_scope": "workflow",
+          "description": "判断节点的分支判定规则，无对应 Action，属工作流自有策略。",
+          "id": "wrb-dec-03",
+          "phase": "validation",
+          "rule_id": "BR2-STOCK-03",
+          "scope": "step",
+          "target_id": "step-screen-stock"
+        }
+      ],
+      "rule_refs": [
+        "BR2-SCAN-01",
+        "BR2-MERGE-01",
+        "BR2-MERGE-02",
+        "BR2-MERGE-03",
+        "BR2-MERGE-04",
+        "BR2-STOCK-01",
+        "BR2-STOCK-02",
+        "BR2-STOCK-03",
+        "BR2-SCHED-01",
+        "BR2-SCHED-02",
+        "BR2-SCHED-03",
+        "BR2-CENTRAL-01",
+        "BR2-CENTRAL-02",
+        "BR2-CENTRAL-03",
+        "BR2-CENTRAL-04",
+        "BR2-PRICE-01",
+        "BR2-PRICE-02",
+        "BR2-PRICE-03",
+        "BR2-DUP-01",
+        "BR2-THRESH-01",
+        "BR2-ATTACH-01",
+        "BR2-PKG-01",
+        "BR2-PKG-02",
+        "BR2-PKG-03",
+        "BR2-PKG-04",
+        "BR2-FRAME-01",
+        "BR2-FRAME-02",
+        "BR2-FRAME-03",
+        "BR2-HITL-01",
+        "BR2-AUDIT-01",
+        "BR2-FEEDBACK-01",
+        "BR-PLAN-01"
+      ],
+      "scenario": {
+        "assumptions": [
+          "需求计划、采购包、库存、采购订单、框架协议数据均已在 metaERP 在线，可经开放接口取数。",
+          "采购阶段节点周期、集采目录、校验阈值三张配置表由业务侧维护，数字员工只读引用，配置变更实时生效。",
+          "业务操作全部由数字员工完成，人仅在确认与审批节点参与；本体只取数与留痕，不落业务数据。"
+        ],
+        "business_outcome": "需求合并比对 10-15 分钟/次、跨系统查库存 3-5 分钟/次、人工倒排 8-12 分钟/单的重复劳动归零；单条计划编制从约 30 分钟压缩到确认 2-3 分钟，单条审核从 5-8 分钟压缩到秒级出结论，组包从凭经验 15-25 分钟压缩到选方案 1-2 分钟。",
+        "description": "在采购全链路中，执行计划编制、需求计划审核、采购组包是承上启下的关键环节——上接需求计划与集采策略，下启寻源、合同与订单执行。本场景以「替代重复劳动、统一作业口径、人确认机器算」为原则，打造一名 7×24 小时在岗的采购数字员工。",
+        "domain": "集团采购",
+        "id": "scenario-procurement-digital-employee",
+        "name": "场景二·数字化员工的智能作业实践",
+        "out_of_scope": [
+          "寻源执行（询价、应答、评标、定标）与合同签订",
+          "供应商准入、评价与履约管理",
+          "库存出入库作业与领料"
+        ],
+        "success_metrics": [
+          "计划员合并比对与跨系统查库存工作量归零，单条计划编制从约 30 分钟压缩到确认 2-3 分钟，效率提升 90% 以上，需求合并口径全集团统一、小单散单减少 70% 以上。",
+          "人工倒排 8-12 分钟/单归零，倒排口径统一、排期差错率降为 0，时间冲突发现时点从执行阶段提前到计划编制当天，执行阶段延期风险下降 60% 以上。",
+          "单条审核从约 5-8 分钟压缩到秒级出结论；应集采未集采、价格异常、重复申报、附件缺失等问题从审批后／审计时发现提前到提交瞬间 100% 拦截。",
+          "组包效率提升 90% 以上，组包口径标准化 100%，类型混包差错降为 0，框架协议利用率从约 55% 提升至 85% 以上，集采覆盖率从约 70% 提升至 95% 以上。",
+          "预警与拦截处置可追溯率 100%；关键单据强制人工确认，驳回与调整自动回流优化规则，数字员工误判率逐月下降。"
+        ]
+      },
+      "schema_version": "2.0.0",
+      "steps": [
+        {
+          "action_id": "scanApprovedDemandPlan",
+          "api_bindings": [
+            {
+              "description": "查询采购业务计划头（已审批过滤）",
+              "endpoint": "/msourcing/openapi/v1/queryPbpHeader",
+              "id": "api-s2-query-pbp-header",
+              "method": "POST",
+              "name": "queryPbpHeader",
+              "operation_id": "queryPbpHeader",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 寻源"
+            },
+            {
+              "description": "每日扫描已审批需求计划行",
+              "endpoint": "/msourcing/openapi/v1/queryPbpLine",
+              "id": "api-s2-query-pbp-line",
+              "method": "POST",
+              "name": "queryPbpLine",
+              "operation_id": "queryPbpLine",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 寻源"
+            }
+          ],
+          "description": "每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤草稿、已取消、已删除单据，圈定当轮作业范围(R2-01)。",
+          "emitted_event_ids": [
+            "ev-plan-scanned"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp",
+              "role-scheduler"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-SCAN-01"
+          ],
+          "id": "step-scan-demand-plan",
+          "input_artifact_ids": [],
+          "name": "a·开始·每日扫描已审批需求计划",
+          "next": [
+            {
+              "description": "扫描范围圈定，进入需求合并分析。",
+              "edge_type": "sequence",
+              "id": "edge-s2-a-to-b",
+              "to_step_id": "step-analyze-merge"
+            }
+          ],
+          "node_kind": "action",
+          "order": 1,
+          "output_artifact_ids": [
+            "art-operation-trace"
+          ],
+          "timeout_ms": 600000
+        },
+        {
+          "action_id": "analyzeDemandMerge",
+          "api_bindings": [
+            {
+              "description": "按合并键聚类并计算日期差与加权单价",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-cluster-demand",
+              "name": "clusterDemandLines",
+              "operation_id": "clusterDemandLines",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            }
+          ],
+          "description": "按物料编码+计划行类型编码聚类，组内两两比需求日期差：≤30 天可合并、>60 天需拆分、30~60 天待计划员确认；算合并数量与加权预估单价(R2-01)。",
+          "emitted_event_ids": [
+            "ev-merge-analyzed",
+            "ev-split-required"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-MERGE-01"
+          ],
+          "id": "step-analyze-merge",
+          "input_artifact_ids": [],
+          "name": "b·计算·需求合并分析",
+          "next": [
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "suggestion.max_date_gap_days <= 60",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "suggestion": {
+                        "max_date_gap_days": 12
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-b-mergeable"
+                  },
+                  {
+                    "context": {
+                      "suggestion": {
+                        "max_date_gap_days": 45
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-b-grey"
+                  },
+                  {
+                    "context": {
+                      "suggestion": {
+                        "max_date_gap_days": 88
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-b-oversized"
+                  }
+                ]
+              },
+              "description": "日期差在 60 天以内的组合直接进入库存校验。",
+              "edge_type": "conditional",
+              "id": "edge-s2-b-to-c",
+              "label": "可合并/待确认",
+              "rule_ids": [
+                "BR2-MERGE-01",
+                "BR2-MERGE-03"
+              ],
+              "to_step_id": "step-verify-inventory"
+            },
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "suggestion.max_date_gap_days > 60",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "suggestion": {
+                        "max_date_gap_days": 88
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-b2-hit"
+                  },
+                  {
+                    "context": {
+                      "suggestion": {
+                        "max_date_gap_days": 12
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-b2-miss"
+                  }
+                ]
+              },
+              "description": "日期差超过 60 天，走拆分独立计划分支。",
+              "edge_type": "conditional",
+              "id": "edge-s2-b-to-b2",
+              "label": "差异超限",
+              "rule_ids": [
+                "BR2-MERGE-02"
+              ],
+              "to_step_id": "step-split-demand"
+            }
+          ],
+          "node_kind": "action",
+          "order": 2,
+          "output_artifact_ids": [
+            "art-merge-suggestion"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "action_id": "splitOversizedDemand",
+          "api_bindings": [
+            {
+              "description": "生成拆分方案，落库随步骤 f 的 createPbp 一并完成",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-split-demand",
+              "name": "splitDemandLine",
+              "operation_id": "splitDemandLine",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            }
+          ],
+          "description": "对差异超限组合给出拆分建议，计划员确认后拆为独立计划行并置拆分标识；文档类型为「判断」，因其带真实写动作，本体建为带人工确认门的执行节点(R2-01)。",
+          "emitted_event_ids": [
+            "ev-split-confirmed"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-planner"
+            ],
+            "autonomy_level": "A1",
+            "human_gate": {
+              "actor_ids": [
+                "role-planner"
+              ],
+              "instructions": "核对拆分理由与拆分后的行构成：需求日期相差超过60 天的合并会让排期与到货节奏失真。确认后系统按方案拆分，拆出的独立计划行随执行计划草稿一并落库。",
+              "mode": "approve",
+              "preview_artifact_ids": [
+                "art-merge-suggestion"
+              ],
+              "preview_required": true
+            },
+            "mode": "hybrid",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-MERGE-02",
+            "BR2-MERGE-03"
+          ],
+          "id": "step-split-demand",
+          "input_artifact_ids": [
+            "art-merge-suggestion"
+          ],
+          "name": "b2·判断·差异超限拆分独立计划",
+          "next": [
+            {
+              "description": "拆分确认完成，独立计划行进入库存校验。",
+              "edge_type": "sequence",
+              "id": "edge-s2-b2-to-c",
+              "to_step_id": "step-verify-inventory"
+            }
+          ],
+          "node_kind": "action",
+          "order": 3,
+          "output_artifact_ids": [],
+          "timeout_ms": 86400000
+        },
+        {
+          "action_id": "verifyInventoryAvailability",
+          "api_bindings": [
+            {
+              "description": "按物料+库存组织查现有量",
+              "endpoint": "/hinv/minv/openapi/v1/multiOnhandQuantityQuery",
+              "id": "api-s2-onhand",
+              "method": "POST",
+              "name": "multiOnhandQuantityQuery",
+              "operation_id": "multiOnhandQuantityQuery",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 库存"
+            },
+            {
+              "description": "查已预留量，计算可用量",
+              "endpoint": "/hinv/minv/openapi/v1/queryReservation",
+              "id": "api-s2-reservation",
+              "method": "POST",
+              "name": "queryReservation",
+              "operation_id": "queryReservation",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 库存"
+            },
+            {
+              "description": "查物料最大/最小库存水位",
+              "endpoint": "/hinv/minv/openapi/v1/queryItemMinMaxLevel",
+              "id": "api-s2-minmax",
+              "method": "POST",
+              "name": "queryItemMinMaxLevel",
+              "operation_id": "queryItemMinMaxLevel",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 库存"
+            }
+          ],
+          "description": "按物料+库存组织汇总合格现有量、扣减已预留量得可用量，与最大库存、安全库存两条水位线比对，判出可调度／需采购／触及安全库存(R2-02)。",
+          "emitted_event_ids": [
+            "ev-inventory-verified"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-STOCK-02",
+            "BR2-STOCK-03"
+          ],
+          "id": "step-verify-inventory",
+          "input_artifact_ids": [
+            "art-merge-suggestion"
+          ],
+          "name": "c·计算·库存校验",
+          "next": [
+            {
+              "description": "库存结论算出，进入是否满足的判断。",
+              "edge_type": "sequence",
+              "id": "edge-s2-c-to-d",
+              "to_step_id": "step-screen-stock"
+            }
+          ],
+          "node_kind": "action",
+          "order": 4,
+          "output_artifact_ids": [
+            "art-stock-check"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "api_bindings": [
+            {
+              "description": "判断依据的现有量口径——步骤 d 的取数来源",
+              "endpoint": "/hinv/minv/openapi/v1/multiOnhandQuantityQuery",
+              "id": "api-s2-onhand-screen",
+              "method": "POST",
+              "name": "multiOnhandQuantityQuery",
+              "operation_id": "multiOnhandQuantityQuery",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 库存"
+            }
+          ],
+          "description": "现有量已达最大库存且非紧急 → 可调度，转调拨、不建采购计划；可用量不足 → 需采购，进入倒排工期(R2-02)。",
+          "emitted_event_ids": [
+            "ev-stock-sufficient",
+            "ev-purchase-required"
+          ],
+          "entry_condition": {
+            "compiler_version": "allmeta-cel-safe-v1",
+            "expression": "check.stock_check_flag != \"\"",
+            "language": "cel",
+            "test_cases": [
+              {
+                "context": {
+                  "check": {
+                    "stock_check_flag": "需采购"
+                  }
+                },
+                "expected": true,
+                "id": "tc-s2-d-ready"
+              },
+              {
+                "context": {
+                  "check": {
+                    "stock_check_flag": ""
+                  }
+                },
+                "expected": false,
+                "id": "tc-s2-d-not-ready"
+              }
+            ]
+          },
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp"
+            ],
+            "autonomy_level": "A2",
+            "mode": "system",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-STOCK-01"
+          ],
+          "id": "step-screen-stock",
+          "input_artifact_ids": [
+            "art-stock-check"
+          ],
+          "name": "d·判断·库存是否满足",
+          "next": [
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "check.stock_check_flag == \"可调度\"",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "check": {
+                        "stock_check_flag": "可调度"
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-d1-hit"
+                  },
+                  {
+                    "context": {
+                      "check": {
+                        "stock_check_flag": "需采购"
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-d1-miss"
+                  }
+                ]
+              },
+              "description": "库存达上限且非紧急：硬拦截不建采购计划，转库存调拨。",
+              "edge_type": "conditional",
+              "id": "edge-s2-d-to-d1",
+              "label": "满足",
+              "rule_ids": [
+                "BR2-STOCK-01"
+              ],
+              "to_step_id": "step-create-transfer-order"
+            },
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "check.stock_check_flag == \"需采购\" || check.stock_check_flag == \"触及安全库存\"",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "check": {
+                        "stock_check_flag": "需采购"
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-e-shortage"
+                  },
+                  {
+                    "context": {
+                      "check": {
+                        "stock_check_flag": "触及安全库存"
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-e-safety"
+                  },
+                  {
+                    "context": {
+                      "check": {
+                        "stock_check_flag": "可调度"
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-e-sufficient"
+                  }
+                ]
+              },
+              "description": "可用量不足或触及安全库存：进入倒排工期。",
+              "edge_type": "conditional",
+              "id": "edge-s2-d-to-e",
+              "label": "不足",
+              "rule_ids": [
+                "BR2-STOCK-02",
+                "BR2-STOCK-03"
+              ],
+              "to_step_id": "step-derive-schedule"
+            }
+          ],
+          "node_kind": "decision",
+          "order": 5,
+          "output_artifact_ids": []
+        },
+        {
+          "action_id": "createInventoryTransferOrder",
+          "api_bindings": [
+            {
+              "description": "生成调拨申请单（调拨方案）",
+              "endpoint": "/hinv/minv/openapi/v1/createTransactionOrder",
+              "id": "api-s2-create-transfer",
+              "method": "POST",
+              "name": "createTransactionOrder",
+              "operation_id": "createTransactionOrder",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 库存"
+            }
+          ],
+          "description": "生成调拨申请单从有货库点顶上需求，本条需求不进入采购执行计划，采购路径到此结束(R2-02 硬拦截分支)。",
+          "emitted_event_ids": [
+            "ev-transfer-created"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp",
+              "role-buyer"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-STOCK-01"
+          ],
+          "id": "step-create-transfer-order",
+          "input_artifact_ids": [
+            "art-stock-check"
+          ],
+          "name": "d1·执行·转库存调拨（结束）",
+          "next": [],
+          "node_kind": "action",
+          "order": 6,
+          "output_artifact_ids": [
+            "art-operation-trace"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "action_id": "derivePurchaseSchedule",
+          "api_bindings": [
+            {
+              "description": "倒排各节点天数基准（cfg_pur_stage_cycle_t 直读）",
+              "endpoint": "配置表直读",
+              "id": "api-s2-stage-cycle",
+              "name": "getStageCycleConfig",
+              "operation_id": "getStageCycleConfig",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购阶段节点周期配置"
+            },
+            {
+              "description": "按公式逐级倒推各节点计划起止日期并判冲突",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-backward-schedule",
+              "name": "backwardSchedule",
+              "operation_id": "backwardSchedule",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            }
+          ],
+          "description": "以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点计划完成时间，并判定时间冲突(R2-03)。",
+          "emitted_event_ids": [
+            "ev-schedule-derived",
+            "ev-time-conflict"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR-PLAN-01",
+            "BR2-SCHED-01"
+          ],
+          "id": "step-derive-schedule",
+          "input_artifact_ids": [
+            "art-stock-check"
+          ],
+          "name": "e·计算·倒排工期",
+          "next": [
+            {
+              "description": "排期算出，进入执行计划草稿生成。",
+              "edge_type": "sequence",
+              "id": "edge-s2-e-to-f",
+              "to_step_id": "step-generate-draft"
+            }
+          ],
+          "node_kind": "action",
+          "order": 7,
+          "output_artifact_ids": [
+            "art-schedule-plan"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "action_id": "generateExecutionPlanDraft",
+          "api_bindings": [
+            {
+              "description": "生成执行计划草稿并写来源映射",
+              "endpoint": "/msourcing/openapi/v1/createPbp",
+              "id": "api-s2-create-pbp",
+              "method": "POST",
+              "name": "createPbp",
+              "operation_id": "createPbp",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 寻源"
+            }
+          ],
+          "description": "把合并结论、库存结论与倒排排期落成执行计划草稿，写入来源需求行映射，推送计划员确认(R2-01~R2-03)。",
+          "emitted_event_ids": [
+            "ev-draft-generated"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-MERGE-04"
+          ],
+          "id": "step-generate-draft",
+          "input_artifact_ids": [
+            "art-merge-suggestion",
+            "art-schedule-plan"
+          ],
+          "name": "f·执行·生成执行计划草稿",
+          "next": [
+            {
+              "description": "草稿生成，进入年度计划审核。",
+              "edge_type": "sequence",
+              "id": "edge-s2-f-to-g",
+              "to_step_id": "step-audit-plan"
+            }
+          ],
+          "node_kind": "action",
+          "order": 8,
+          "output_artifact_ids": [
+            "art-execution-plan-draft"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "action_id": "auditAnnualPlanCompliance",
+          "api_bindings": [
+            {
+              "description": "取同物料各单位最近三笔采购单价",
+              "endpoint": "/po/external/openapi/v1/queryPoLine",
+              "id": "api-s2-query-po-line",
+              "method": "POST",
+              "name": "queryPoLine",
+              "operation_id": "queryPoLine",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 采购订单"
+            },
+            {
+              "description": "历史供应商与历史价格参考",
+              "endpoint": "/open/contract/v1/queryContract",
+              "id": "api-s2-query-contract",
+              "method": "POST",
+              "name": "getContractByQuery",
+              "operation_id": "getContractByQuery",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 合同"
+            },
+            {
+              "description": "集采检查（cfg_central_catalog_t 直读）",
+              "endpoint": "配置表直读",
+              "id": "api-s2-central-catalog",
+              "name": "getCentralCatalogConfig",
+              "operation_id": "getCentralCatalogConfig",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "集采目录配置"
+            },
+            {
+              "description": "价格偏差与查重窗口阈值（cfg_audit_threshold_t 直读）",
+              "endpoint": "配置表直读",
+              "id": "api-s2-audit-threshold",
+              "name": "getAuditThresholdConfig",
+              "operation_id": "getAuditThresholdConfig",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "校验阈值配置"
+            }
+          ],
+          "description": "集采目录检查、价格异常检测、重复申报查重、技术附件完整性四类校验并行执行，汇成结构化审核意见(R2-04/R2-05)。",
+          "emitted_event_ids": [
+            "ev-plan-audited",
+            "ev-audit-intercepted"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp",
+              "role-central-manager"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-THRESH-01",
+            "BR2-CENTRAL-01"
+          ],
+          "id": "step-audit-plan",
+          "input_artifact_ids": [
+            "art-execution-plan-draft"
+          ],
+          "name": "g·计算·年度计划审核",
+          "next": [
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "opinion.intercept == false",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "opinion": {
+                        "intercept": false
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-g-pass"
+                  },
+                  {
+                    "context": {
+                      "opinion": {
+                        "intercept": true
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-g-blocked"
+                  }
+                ]
+              },
+              "description": "无拦截项，进入品类识别与组包方案推荐。",
+              "edge_type": "conditional",
+              "id": "edge-s2-g-to-h",
+              "label": "通过",
+              "rule_ids": [
+                "BR2-CENTRAL-01",
+                "BR2-ATTACH-01"
+              ],
+              "to_step_id": "step-recommend-packaging"
+            },
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "opinion.intercept == true || opinion.audit_result == \"预警\"",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "opinion": {
+                        "audit_result": "拦截",
+                        "intercept": true
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-g1-intercept"
+                  },
+                  {
+                    "context": {
+                      "opinion": {
+                        "audit_result": "预警",
+                        "intercept": false
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-g1-warn"
+                  },
+                  {
+                    "context": {
+                      "opinion": {
+                        "audit_result": "通过",
+                        "intercept": false
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-g1-pass"
+                  }
+                ]
+              },
+              "description": "命中拦截或预警，退回申请人整改并留痕。",
+              "edge_type": "conditional",
+              "id": "edge-s2-g-to-g1",
+              "label": "拦截/预警",
+              "rule_ids": [
+                "BR2-PRICE-01",
+                "BR2-DUP-01"
+              ],
+              "to_step_id": "step-return-rectification"
+            }
+          ],
+          "node_kind": "action",
+          "order": 9,
+          "output_artifact_ids": [
+            "art-audit-opinion"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "action_id": "returnPlanForRectification",
+          "api_bindings": [
+            {
+              "description": "推送整改退回与不按集采原因说明待办",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-push-rectify-task",
+              "name": "pushTask",
+              "operation_id": "pushTask",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            }
+          ],
+          "description": "应集采未集采／价格异常／重复申报／附件缺失退回申请人整改并留痕，开放「不按集采采购原因」录入入口；整改后回步骤 g 复核(R2-04/R2-05)。",
+          "emitted_event_ids": [
+            "ev-returned-rectify",
+            "ev-rectification-submitted"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-demand-applicant"
+            ],
+            "autonomy_level": "A1",
+            "human_gate": {
+              "actor_ids": [
+                "role-demand-applicant"
+              ],
+              "instructions": "逐条查看拦截与预警项：命中了什么、依据是什么、要改成什么样。属于「应集采未集采」的，要么转集采流程，要么在此录入不按集采采购的原因——原因会留痕并随单据一起进审计。",
+              "mode": "manual",
+              "preview_artifact_ids": [
+                "art-audit-opinion"
+              ],
+              "preview_required": true
+            },
+            "mode": "hybrid",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-CENTRAL-03"
+          ],
+          "id": "step-return-rectification",
+          "input_artifact_ids": [
+            "art-audit-opinion"
+          ],
+          "name": "g1·预警·退回整改",
+          "next": [
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "opinion.opinion_status == \"已整改\"",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "opinion": {
+                        "opinion_status": "已整改"
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-g1-back"
+                  },
+                  {
+                    "context": {
+                      "opinion": {
+                        "opinion_status": "待整改"
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-g1-waiting"
+                  }
+                ]
+              },
+              "description": "申请人整改或说明原因后回流复核。",
+              "edge_type": "conditional",
+              "id": "edge-s2-g1-to-g",
+              "label": "整改后复核",
+              "to_step_id": "step-audit-plan"
+            }
+          ],
+          "node_kind": "action",
+          "order": 10,
+          "output_artifact_ids": [
+            "art-operation-trace"
+          ],
+          "timeout_ms": 604800000
+        },
+        {
+          "action_id": "recommendPackagingScheme",
+          "api_bindings": [
+            {
+              "description": "五级匹配度计算与场景聚类（品类主数据本地直读）",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-score-category",
+              "name": "scoreCategoryMatch",
+              "operation_id": "scoreCategoryMatch",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            },
+            {
+              "description": "交货跨度上限与交付重叠度阈值（cfg_audit_threshold_t 直读）",
+              "endpoint": "配置表直读",
+              "id": "api-s2-pkg-threshold",
+              "name": "getAuditThresholdConfig",
+              "operation_id": "getAuditThresholdConfig",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "校验阈值配置"
+            }
+          ],
+          "description": "按物料→品类→寻源方式→需求日期→采购组五级算匹配度，叠加地域相似度与交付重叠度聚类，输出 2-3 套方案；类型混包与跨度超限同步校验(R2-06)。",
+          "emitted_event_ids": [
+            "ev-scheme-recommended",
+            "ev-compliance-violated"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-PKG-01",
+            "BR2-PKG-04"
+          ],
+          "id": "step-recommend-packaging",
+          "input_artifact_ids": [
+            "art-audit-opinion"
+          ],
+          "name": "h·计算·品类识别与组包方案推荐",
+          "next": [
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "scheme.mixed_type_detected == false && scheme.delivery_span_days <= 90",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "scheme": {
+                        "delivery_span_days": 45,
+                        "mixed_type_detected": false
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-h1-ok"
+                  },
+                  {
+                    "context": {
+                      "scheme": {
+                        "delivery_span_days": 45,
+                        "mixed_type_detected": true
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-h1-mixed"
+                  },
+                  {
+                    "context": {
+                      "scheme": {
+                        "delivery_span_days": 128,
+                        "mixed_type_detected": false
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-h1-span"
+                  }
+                ]
+              },
+              "description": "类型一致且跨度在限内，进入框架协议识别与集采标注。",
+              "edge_type": "conditional",
+              "id": "edge-s2-h-to-h1",
+              "label": "合规",
+              "rule_ids": [
+                "BR2-PKG-01",
+                "BR2-PKG-03"
+              ],
+              "to_step_id": "step-annotate-frame-central"
+            },
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "scheme.mixed_type_detected == true || scheme.delivery_span_days > 90",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "scheme": {
+                        "delivery_span_days": 45,
+                        "mixed_type_detected": true
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-h2-mixed"
+                  },
+                  {
+                    "context": {
+                      "scheme": {
+                        "delivery_span_days": 128,
+                        "mixed_type_detected": false
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-h2-span"
+                  },
+                  {
+                    "context": {
+                      "scheme": {
+                        "delivery_span_days": 45,
+                        "mixed_type_detected": false
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-h2-clean"
+                  }
+                ]
+              },
+              "description": "类型混包硬拦截或交货跨度超限，走组包预警分支。",
+              "edge_type": "conditional",
+              "id": "edge-s2-h-to-h2",
+              "label": "类型混包/跨度超限",
+              "rule_ids": [
+                "BR2-PKG-01",
+                "BR2-PKG-03"
+              ],
+              "to_step_id": "step-packaging-alert"
+            }
+          ],
+          "node_kind": "action",
+          "order": 11,
+          "output_artifact_ids": [
+            "art-package-scheme"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "action_id": "annotateFrameAndCentralPurchase",
+          "api_bindings": [
+            {
+              "description": "框架协议识别与有效性判断",
+              "endpoint": "/open/v1/querySPAList",
+              "id": "api-s2-query-spa",
+              "method": "POST",
+              "name": "querySPAList",
+              "operation_id": "querySPAList",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 寻源"
+            },
+            {
+              "description": "集采标注与审批流程模板匹配（cfg_central_catalog_t 直读）",
+              "endpoint": "配置表直读",
+              "id": "api-s2-central-catalog-pkg",
+              "name": "getCentralCatalogConfig",
+              "operation_id": "getCentralCatalogConfig",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "集采目录配置"
+            },
+            {
+              "description": "按选定方案生成采购包",
+              "endpoint": "/open/procPackage/v1/createProcPackageLines",
+              "id": "api-s2-create-package-lines",
+              "method": "POST",
+              "name": "createProcPackageLines",
+              "operation_id": "createProcPackageLines",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "metaERP 寻源"
+            }
+          ],
+          "description": "按物料+管理单元匹配框架协议并判有效性、命中即标注；写入集采层级与集采形式并匹配审批流程模板；识别特殊采购方式触发补充说明待办(R2-07)。",
+          "emitted_event_ids": [
+            "ev-frame-annotated"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp",
+              "role-central-manager"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-FRAME-01",
+            "BR2-CENTRAL-02"
+          ],
+          "id": "step-annotate-frame-central",
+          "input_artifact_ids": [
+            "art-package-scheme"
+          ],
+          "name": "h1·执行·框架协议识别与集采标注",
+          "next": [
+            {
+              "description": "标注完成，推送计划员确认。",
+              "edge_type": "sequence",
+              "id": "edge-s2-h1-to-j",
+              "to_step_id": "step-confirm-plan-package"
+            }
+          ],
+          "node_kind": "action",
+          "order": 12,
+          "output_artifact_ids": [
+            "art-package-scheme"
+          ],
+          "timeout_ms": 300000
+        },
+        {
+          "action_id": "raisePackagingComplianceAlert",
+          "api_bindings": [
+            {
+              "description": "推送组包调整与补充说明待办",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-push-pkg-task",
+              "name": "pushTask",
+              "operation_id": "pushTask",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            }
+          ],
+          "description": "类型混包硬拦截、交货跨度超限出拆包建议、特殊采购方式挂补充说明待办；调整后回步骤 h 重新推荐方案(R2-06/R2-07)。",
+          "emitted_event_ids": [
+            "ev-packaging-alert"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-central-manager"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-PKG-01",
+            "BR2-PKG-03",
+            "BR2-FRAME-03"
+          ],
+          "id": "step-packaging-alert",
+          "input_artifact_ids": [
+            "art-package-scheme"
+          ],
+          "name": "h2·预警·组包合规预警",
+          "next": [
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "finding.resolved == true",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "finding": {
+                        "resolved": true
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-h2-resolved"
+                  },
+                  {
+                    "context": {
+                      "finding": {
+                        "resolved": false
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-h2-open"
+                  }
+                ]
+              },
+              "description": "拦截项消除或拆包完成后回到组包节点重新推荐。",
+              "edge_type": "conditional",
+              "id": "edge-s2-h2-to-h",
+              "label": "调整后重算",
+              "to_step_id": "step-recommend-packaging"
+            }
+          ],
+          "node_kind": "action",
+          "order": 13,
+          "output_artifact_ids": [
+            "art-operation-trace"
+          ],
+          "timeout_ms": 604800000
+        },
+        {
+          "action_id": "confirmPlanAndPackage",
+          "api_bindings": [
+            {
+              "description": "推送确认待办并回收确认/驳回结果",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-confirm-task",
+              "name": "pushTask",
+              "operation_id": "pushTask",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            }
+          ],
+          "description": "计划员确认执行计划草稿并选定一套组包方案；驳回须记录原因并回流优化规则。人机协同不替代决策——关键单据强制人工确认(场景期望 5)。",
+          "emitted_event_ids": [
+            "ev-plan-confirmed",
+            "ev-plan-rejected"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-planner",
+              "role-digital-employee"
+            ],
+            "autonomy_level": "A0",
+            "human_gate": {
+              "actor_ids": [
+                "role-planner"
+              ],
+              "instructions": "并排比较 2-3 套组包方案的匹配置信度、包内构成、框架与集采标注，再核对执行计划草稿的合并理由、库存结论与排期可行性。确认即落章、方可提交审批；驳回请写明原因，原因会回流数字员工用于优化合并与组包规则。",
+              "mode": "approve",
+              "preview_artifact_ids": [
+                "art-execution-plan-draft",
+                "art-package-scheme",
+                "art-audit-opinion"
+              ],
+              "preview_required": true
+            },
+            "mode": "human",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-HITL-01",
+            "BR2-FEEDBACK-01"
+          ],
+          "id": "step-confirm-plan-package",
+          "input_artifact_ids": [
+            "art-package-scheme",
+            "art-execution-plan-draft",
+            "art-audit-opinion"
+          ],
+          "name": "j·决策·计划员确认计划与组包方案",
+          "next": [
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "scheme.scheme_status == \"已选定\"",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "scheme": {
+                        "scheme_status": "已选定"
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-j-confirmed"
+                  },
+                  {
+                    "context": {
+                      "scheme": {
+                        "scheme_status": "待选择"
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-j-pending"
+                  }
+                ]
+              },
+              "description": "草稿与方案均已确认，提交审批。",
+              "edge_type": "conditional",
+              "id": "edge-s2-j-to-k",
+              "label": "确认",
+              "rule_ids": [
+                "BR2-HITL-01"
+              ],
+              "to_step_id": "step-submit-approval"
+            },
+            {
+              "condition": {
+                "compiler_version": "allmeta-cel-safe-v1",
+                "expression": "scheme.scheme_status == \"未采纳\" && scheme.rejection_reason != \"\"",
+                "language": "cel",
+                "test_cases": [
+                  {
+                    "context": {
+                      "scheme": {
+                        "rejection_reason": "收货地域不一致",
+                        "scheme_status": "未采纳"
+                      }
+                    },
+                    "expected": true,
+                    "id": "tc-s2-j-rejected"
+                  },
+                  {
+                    "context": {
+                      "scheme": {
+                        "rejection_reason": "",
+                        "scheme_status": "未采纳"
+                      }
+                    },
+                    "expected": false,
+                    "id": "tc-s2-j-noreason"
+                  }
+                ]
+              },
+              "description": "驳回并写明原因后回组包节点重推，原因回流优化规则。",
+              "edge_type": "conditional",
+              "id": "edge-s2-j-to-h",
+              "label": "驳回退回修改",
+              "rule_ids": [
+                "BR2-FEEDBACK-01"
+              ],
+              "to_step_id": "step-recommend-packaging"
+            }
+          ],
+          "node_kind": "action",
+          "order": 14,
+          "output_artifact_ids": [
+            "art-operation-trace"
+          ],
+          "timeout_ms": 604800000
+        },
+        {
+          "action_id": "submitPlanForApproval",
+          "api_bindings": [
+            {
+              "description": "发起审批并记录提交动作（审批流转由 metaERP 审批流承接）",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-submit-approval",
+              "name": "submitApproval",
+              "operation_id": "submitApproval",
+              "role": "primary",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            },
+            {
+              "description": "核对留痕四要素并封存",
+              "endpoint": "Agent内部能力",
+              "id": "api-s2-seal-trace",
+              "name": "writeOperationLog",
+              "operation_id": "writeOperationLog",
+              "role": "supporting",
+              "source": {
+                "artifact": "场景2_数字化员工的智能作业实践.docx",
+                "sheet": "8.3 本场景涉及API"
+              },
+              "system": "采购数字员工"
+            }
+          ],
+          "description": "确认后的执行计划与采购包提交审批，本轮作业从扫描到确认的全过程留痕核对四要素后封存，可追溯率 100%(场景期望 5)。",
+          "emitted_event_ids": [
+            "ev-submitted"
+          ],
+          "execution": {
+            "actor_ids": [
+              "role-digital-employee",
+              "role-erp",
+              "role-procurement-leader"
+            ],
+            "autonomy_level": "A2",
+            "mode": "agent",
+            "reversible": true
+          },
+          "guard_rule_ids": [
+            "BR2-HITL-01",
+            "BR2-AUDIT-01"
+          ],
+          "id": "step-submit-approval",
+          "input_artifact_ids": [
+            "art-execution-plan-draft",
+            "art-package-scheme"
+          ],
+          "name": "k·结束·提交审批与全程留痕",
+          "next": [],
+          "node_kind": "action",
+          "order": 15,
+          "output_artifact_ids": [
+            "art-operation-trace"
+          ],
+          "timeout_ms": 300000
+        }
+      ],
+      "trigger": [
+        "0 1 * * *",
+        "DEMAND_PLAN_APPROVED",
+        "DEMAND_PLAN_SUBMITTED_FOR_APPROVAL"
+      ],
+      "triggered_event": [
+        "APPROVED_DEMAND_PLAN_SCANNED",
+        "DEMAND_MERGE_ANALYZED",
+        "DEMAND_SPLIT_REQUIRED",
+        "DEMAND_SPLIT_CONFIRMED",
+        "INVENTORY_AVAILABILITY_VERIFIED",
+        "STOCK_SUFFICIENT_FOR_DEMAND",
+        "PURCHASE_REQUIRED_CONFIRMED",
+        "INVENTORY_TRANSFER_ORDER_CREATED",
+        "PURCHASE_SCHEDULE_DERIVED",
+        "SCHEDULE_TIME_CONFLICT_DETECTED",
+        "EXECUTION_PLAN_DRAFT_GENERATED",
+        "ANNUAL_PLAN_AUDITED",
+        "PLAN_AUDIT_INTERCEPTED",
+        "PLAN_RETURNED_FOR_RECTIFICATION",
+        "PLAN_RECTIFICATION_SUBMITTED",
+        "PACKAGING_SCHEME_RECOMMENDED",
+        "PACKAGING_COMPLIANCE_VIOLATED",
+        "FRAME_AND_CENTRAL_ANNOTATED",
+        "PACKAGING_ALERT_RAISED",
+        "PLAN_AND_PACKAGE_CONFIRMED",
+        "PLAN_AND_PACKAGE_REJECTED",
+        "PLAN_SUBMITTED_FOR_APPROVAL"
+      ],
+      "triggers": [
+        {
+          "description": "每日凌晨扫描全集团已审批需求计划，把逐条人工比对变成一次批量作业。",
+          "entry_step_ids": [
+            "step-scan-demand-plan"
+          ],
+          "id": "trigger-daily-demand-scan",
+          "kind": "schedule",
+          "schedule": "0 1 * * *",
+          "timezone": "Asia/Shanghai"
+        },
+        {
+          "description": "需求计划审批通过即刻纳入当轮编制，不必等次日批次。",
+          "entry_step_ids": [
+            "step-scan-demand-plan"
+          ],
+          "event_id": "DEMAND_PLAN_APPROVED",
+          "id": "trigger-demand-plan-approved",
+          "kind": "event"
+        },
+        {
+          "description": "需求计划提交审批的瞬间并行起跑四类校验(R2-04/R2-05)。",
+          "entry_step_ids": [
+            "step-audit-plan"
+          ],
+          "event_id": "DEMAND_PLAN_SUBMITTED_FOR_APPROVAL",
+          "id": "trigger-plan-submitted",
+          "kind": "event"
+        }
+      ],
+      "workflow_version": "0.1.0"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "rows": [
+    {
+      "AUDIT_THRESHOLD_ID": "AT-PRICE-DEV",
+      "DESCRIPTION": "预估单价相对历史加权均价的允许偏离比例，超出即拦截。",
+      "THRESHOLD_CODE": "PRICE_DEVIATION_RATIO",
+      "THRESHOLD_VALUE": 0.1
+    },
+    {
+      "AUDIT_THRESHOLD_ID": "AT-PKG-AMOUNT",
+      "DESCRIPTION": "单个采购包金额上限，超出须拆包。",
+      "THRESHOLD_CODE": "PACKAGE_MAX_AMOUNT",
+      "THRESHOLD_VALUE": 5000000
+    },
+    {
+      "AUDIT_THRESHOLD_ID": "AT-PKG-CATEGORY",
+      "DESCRIPTION": "单个采购包允许的品类数上限，超出即组包不合规。",
+      "THRESHOLD_CODE": "PACKAGE_CATEGORY_MIXED",
+      "THRESHOLD_VALUE": 1
+    },
+    {
+      "AUDIT_THRESHOLD_ID": "AT-MERGE-NEAR",
+      "DESCRIPTION": "需求日期差 ≤ 该天数可直接合并。",
+      "THRESHOLD_CODE": "MERGE_WINDOW_DAYS",
+      "THRESHOLD_VALUE": 30
+    },
+    {
+      "AUDIT_THRESHOLD_ID": "AT-SPLIT-FAR",
+      "DESCRIPTION": "需求日期差 > 该天数必须拆分；介于两者之间由计划员确认。",
+      "THRESHOLD_CODE": "SPLIT_WINDOW_DAYS",
+      "THRESHOLD_VALUE": 60
+    }
+  ]
+}
