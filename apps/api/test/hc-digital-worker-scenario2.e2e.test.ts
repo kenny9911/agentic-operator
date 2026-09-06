@@ -137,7 +137,15 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
       return {
         demand_plan_line: [{ plan_line_id: PLAN_LINE }],
         merge_suggestion: [
-          { suggestion_id: "MRG-001", plan_line_id: PLAN_LINE, action: required ? "拆分" : "合并" },
+          {
+            merge_suggestion_id: "MRG-001",
+            // What the split gate's form records, and how the option reads to a
+            // planner — see the analyzeDemandMerge output contract.
+            plan_line_id: PLAN_LINE,
+            split_option_label: required ? "M-CAB-240 跨期拆分" : "M-CAB-240 三行合并",
+            merge_reason: "同物料、同标准采购类型，需求日期跨度超出合并窗口。",
+            suggestion: required ? "split_required" : "mergeable",
+          },
         ],
         split_required: required,
         thresholds_used: { date_gap_days: 30 },
@@ -368,11 +376,19 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
             (taskRow?.payloadJson as { actionName?: string } | null)?.actionName ?? "",
           );
           const answer = formOverrides[actionName] ?? formAnswers[actionName] ?? {};
+          // Mirror the resolve route's own cross-check: a form carrying
+          // `decision: "rejected"` CANNOT be submitted as an approval — the API
+          // answers `task_decision_mismatch`. Deriving the task decision from
+          // the form here keeps the harness to combinations the product can
+          // actually produce.
+          const formDecision = String(answer.decision ?? "").toLowerCase();
+          const decision =
+            formDecision === "rejected" || formDecision === "reject"
+              ? "reject"
+              : "approve";
           // Mirror POST /v1/tasks/:id/resolve persistence: open → resolving.
           db.update(tasksTable).set({ status: "resolving" }).where(eq(tasksTable.id, taskId)).run();
-          return {
-            data: { taskId, tenantId, resumeMarker, decision: "approve", payload: answer },
-          };
+          return { data: { taskId, tenantId, resumeMarker, decision, payload: answer } };
         },
       },
       logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
@@ -553,7 +569,7 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
     expect((await journalOps()).map((e) => e.op)).toContain("createTransactionOrder");
   });
 
-  it("asks for a rejection reason ONLY on rejection, and loops back to repackaging instead of submitting", async () => {
+  it("stops the gate on a planner rejection: run fails, no ERP write, no downstream event", async () => {
     resetScript();
     formOverrides = {
       confirmByPlanner: {
@@ -565,27 +581,29 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
     };
     await fetch(`${erpBase}/__reset`, { method: "POST" });
 
-    const before = db.select().from(tasksTable).where(eq(tasksTable.tenantId, tenantId)).all().length;
-    // Only the confirming agent runs: a standing rejection would otherwise
-    // bounce repackaging → confirm → reject forever, which is the operator
-    // re-deciding, not something the workflow should resolve on its own.
-    const delivered = await dispatchCascade(
-      "FRAME_AND_CENTRAL_ANNOTATED",
-      { subject: "dw-e2e-reject", ...carry({ confirmed_by: "计划员-张伟" }) },
-      { only: ["confirmPlanAndPackage"] },
-    );
+    // A compiled manifest runs in the engine's legacy mode, where a human
+    // rejection FAILS the run at the manual step — it never reaches the write
+    // or the authored emissions. The ontology models a rejection loop back to
+    // repackaging; the runtime cannot take it. See D-06 in
+    // docs/hc-digital-worker-ontology-corrections.md.
+    await expect(
+      dispatchCascade(
+        "FRAME_AND_CENTRAL_ANNOTATED",
+        { subject: "dw-e2e-reject", ...carry({ confirmed_by: "计划员-张伟" }) },
+        { only: ["confirmPlanAndPackage"] },
+      ),
+    ).rejects.toThrow(/rejected by human/);
 
-    expect(delivered).toContain("PLAN_AND_PACKAGE_REJECTED");
-    expect(delivered).not.toContain("PLAN_SUBMITTED_FOR_APPROVAL");
-
-    // The optional rejection-reason gate DID open on this path.
-    const added = db
+    const [latest] = runsFor("confirmPlanAndPackage");
+    expect(latest!.status).toBe("failed");
+    expect((await journalOps()).map((entry) => entry.op)).not.toContain("writeOperationLog");
+    const emitted = db
       .select()
-      .from(tasksTable)
-      .where(eq(tasksTable.tenantId, tenantId))
+      .from(eventStore)
+      .where(eq(eventStore.sourceRunId, latest!.id))
       .all()
-      .slice(before)
-      .map((t) => String((t.payloadJson as { actionName?: string } | null)?.actionName ?? ""));
-    expect(added).toContain("captureRejectionReason");
+      .map((row) => row.name);
+    expect(emitted).not.toContain("PLAN_AND_PACKAGE_CONFIRMED");
+    expect(emitted).not.toContain("PLAN_AND_PACKAGE_REJECTED");
   });
 });

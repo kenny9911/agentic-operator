@@ -332,10 +332,11 @@
     "analyzeDemandMerge": {
       "fields": {
         "demand_plan_line": "原样透传上游计划行列表，不得改写。",
-        "merge_suggestion": "合并建议列表：[{merge_suggestion_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。",
+        "merge_suggestion": "合并建议列表：[{merge_suggestion_id, split_option_label, plan_line_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。\n其中两个字段直接决定人工闸口能否作答，必须填：\n- `plan_line_id`：本条建议要拆分/合并的**目标计划行编号**，取自 member_plan_line_ids 中作为主行的那一条。计划员在待办里选中本条建议时，系统就用它回写 metaERP。\n- `split_option_label`：给人看的短名，**不超过 20 字、不带标点**，一眼说清这条建议是什么，例如「M-BRK-126 三行合并」「M-CAB-240 跨期拆分」。不要写成编号，也不要重复 merge_reason。",
         "split_required": "**必填布尔值**。只要有任意一组 suggestion='split_required' 就填 true，否则 false。工作流据此决定走拆分分支还是直接进库存校验——填错会让整条链路走错方向。",
         "thresholds_used": "本次采用的分档阈值：{merge_window_days:number, split_window_days:number}。",
-        "scan_date": "原样透传上游 scan_date。"
+        "scan_date": "原样透传上游 scan_date。",
+        "merge_reason": "可选。每条建议的成因说明（一句话），写在 merge_suggestion[].merge_reason 里，供计划员判断时阅读。"
       }
     },
     "verifyInventoryAvailability": {

@@ -280,6 +280,8 @@ const IDENTIFIER_LIKE = /^[A-Za-z0-9_.:/-]+$/;
 const SENTENCE_MARK = /[，。；：！？,;:!?]|\s/;
 /** Longer than this and a value is a description, not a name. */
 const MAX_LABEL_LENGTH = 20;
+/** Keys whose whole job is to be the readable name of the record. */
+const LABEL_KEY = /(^|_)(label|name|title)$/;
 /** Facts in the summary strip, beyond which it stops being a summary. */
 const MAX_SUMMARY_FACTS = 8;
 /** Paragraphs an approver will actually read before deciding. */
@@ -365,7 +367,17 @@ export function decisionOptions(
   fieldNames: readonly string[] = [],
 ): DecisionOption[] {
   const wanted = new Set(fieldNames);
-  const groups = contextGroups(payload).filter((group) => group.alternatives);
+  // An option is only an option if choosing it changes what gets submitted.
+  //
+  // Shape alone says "two or three sibling records", which is true of the three
+  // adjustment plans a leader picks between AND of the two approved demand
+  // plans a split gate merely reports. Rendering the latter as radios asks the
+  // planner to choose between 「检修一部」 and 「检修二部」 on a form that has
+  // nowhere to record either — the pick would be discarded on submit. So keep
+  // a group only when it answers at least one field the form actually asks for.
+  const groups = contextGroups(payload)
+    .filter((group) => group.alternatives)
+    .filter((group) => group.facts.some((fact) => wanted.has(fact.key)));
   if (groups.length === 0) return [];
 
   // What tells the options APART is what names them. Every option here carries
@@ -384,6 +396,12 @@ export function decisionOptions(
   const varies = (fact: ContextFact) => (distinct.get(fact.key)?.size ?? 0) > 1;
   const nameable = (fact: ContextFact) =>
     !IDENTIFIER_LIKE.test(fact.value) && fact.value.length <= MAX_LABEL_LENGTH;
+  // Otherwise the label is whichever readable field happens to come first in
+  // key order, which is a coin toss when several qualify. A key that says it is
+  // a display name is not a business field name — `label`/`name`/`title` mean
+  // the same thing in any domain — so honouring it stays tenant-agnostic while
+  // letting an agent choose how its own options read.
+  const named = (fact: ContextFact) => LABEL_KEY.test(fact.key) && nameable(fact);
 
   return groups.map((group) => {
     const values: Record<string, string> = {};
@@ -391,6 +409,8 @@ export function decisionOptions(
       if (wanted.has(fact.key)) values[fact.key] = fact.value;
     }
     const label =
+      group.facts.find((fact) => named(fact) && varies(fact)) ??
+      group.facts.find(named) ??
       group.facts.find((fact) => nameable(fact) && varies(fact)) ??
       group.facts.find(nameable);
     // Facts shared by every option belong in the summary, not repeated on each

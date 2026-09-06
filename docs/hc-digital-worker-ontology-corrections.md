@@ -104,3 +104,51 @@ CEL 判据是 `line.draft_confirmed_by != "" && scheme.scheme_status == "已选�
 
 **平台侧现状**：覆盖层把该 emission 的 `payload_from` 改为 `results.manual-2`
 （确认表单），`PLAN_AND_PACKAGE_REJECTED` 仍取事件载荷——重排组包需要的是完整计划上下文。
+
+---
+
+## D-06 人工闸口的「驳回」分支在编译产物里走不通
+
+**现状**：`confirmPlanAndPackage` 建模了两条出路——确认后 `PLAN_AND_PACKAGE_CONFIRMED`，
+驳回后 `PLAN_AND_PACKAGE_REJECTED` 回到 `recommendPackagingScheme` 重排组包。
+
+**问题**：编译产物跑在运行时的 legacy 模式，该模式下**人工驳回直接判运行失败**
+（`register.ts`：`manualDecision === "reject"` → `failRun("human rejected")` 并抛出），
+根本到不了 ERP 回写和已声明的 emission。而想绕开也不行：resolve 路由会把表单里的
+`decision: "rejected"` 归一化后与任务决议比对，不一致就 `task_decision_mismatch`——
+所以「任务判通过、表单填驳回」这条路是被堵死的。两头都堵，驳回分支不可达。
+
+只有 v2（Agent Studio）定义把驳回当作正常业务结果继续往下走
+（`usesV2Definition` 分支），编译器目前不产出 v2 定义。
+
+**当前行为**（已由 e2e 用例钉住）：计划员驳回 → 运行 failed、无 ERP 回写、无下游事件。
+组包重排要靠人重新触发，不是自动回环。
+
+**建议修正**：两条路二选一——要么把这类闸口编成 v2 定义，让驳回成为一等业务结果；
+要么在本体里承认这一点，把「驳回后重排」建模成一个独立动作，而不是同一个人工步骤的
+另一条出边。**在此之前，不要在演示脚本里承诺驳回会自动回到组包。**
+
+---
+
+## D-07 人工闸口的候选项必须是表单能记录的东西
+
+**现状**：`splitOversizedDemand`（R2-01）的待办要计划员「确认拆分方案」，表单记录的字段是
+`plan_line_id`。但 `analyzeDemandMerge` 的输出里，合并建议只带
+`member_plan_line_ids` / `source_plan_line_ids`，没有 `plan_line_id`，也没有任何一个
+适合给人读的短名。
+
+**问题**：待办面板按**形状**识别候选项——两三条同构记录就是一组选项。于是它把
+「已批准的两份需求计划」也当成了选项，单选框显示成「检修一部」「检修二部」；真正的合并
+建议则因为字段名对不上，选中后什么也填不进表单。计划员看到的是一组既看不懂、选了也不
+产生任何效果的选项，而必填的 `plan_line_id` 仍然要手敲。
+
+**建议修正**：让每条合并建议自带两样东西——
+`plan_line_id`（这条建议要处理的目标计划行，即表单要记录的值）与
+`split_option_label`（不超过 20 字的短名，例如「M-BRK-126 三行合并」）。
+
+**平台侧现状**：
+- 覆盖层已把这两个字段写进 `analyzeDemandMerge` 的输出契约。
+- 面板侧收紧了候选项的判定：**一组同构记录只有在能回答表单至少一个字段时才算候选项**
+  （`apps/web/app/portal/components/runs/task-context.ts`）。选了不改变提交内容的东西
+  不是选项。
+- 命名改为优先取 `label` / `name` / `title` 结尾的键，避免标题取决于键的排列顺序。
