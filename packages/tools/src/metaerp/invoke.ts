@@ -217,12 +217,23 @@ function maxCallsPerRun(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_CALLS_PER_RUN;
 }
 
+/**
+ * 预算的计量单位。
+ *
+ * `runId` 是想要的口径，但清单运行时的 LLM 工具循环不一定把它放进 ToolContext
+ * （类型上就是可选的）。退化到 correlationId 时必须再带上 agentName——
+ * correlationId 是**整条级联共用**的，单用它会让下游 agent 继承上游花掉的预算，
+ * 一个取数扇出失控会饿死后面每一步。
+ */
+function budgetKey(ctx: ToolContext): string {
+  return ctx.runId ?? `${ctx.correlationId}:${ctx.agentName}`;
+}
+
 /** 记一次调用；超预算就失败关闭，并说清是扇出失控而不是接口坏了。 */
-function chargeCallBudget(runId: string | undefined, operation: string): void {
-  if (!runId) return;
+function chargeCallBudget(key: string, operation: string): void {
   const limit = maxCallsPerRun();
-  const used = (callsPerRun.get(runId) ?? 0) + 1;
-  callsPerRun.set(runId, used);
+  const used = (callsPerRun.get(key) ?? 0) + 1;
+  callsPerRun.set(key, used);
   if (callsPerRun.size > MAX_TRACKED_RUNS) {
     const oldest = callsPerRun.keys().next().value;
     if (oldest !== undefined) callsPerRun.delete(oldest);
@@ -334,7 +345,7 @@ export const metaerpInvoke = defineTool({
     // Where this operation actually lives. Unlisted operations, and anything
     // held back by the two gates, keep going to the mock ERP exactly as before
     // — a half-migrated estate is a normal state here, not a broken one.
-    chargeCallBudget(ctx.runId, entry.operation);
+    chargeCallBudget(budgetKey(ctx), entry.operation);
 
     const route = resolveRoute(entry.operation, entry.kind);
     const routeMeta = {

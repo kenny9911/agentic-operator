@@ -121,8 +121,17 @@ describe("metaerp.invoke", () => {
       );
     for (let i = 0; i < 3; i += 1) await call("run-budget");
     await expect(call("run-budget")).rejects.toThrow(/调用已达上限 3 次[\s\S]*扇出失控/);
-    // 预算按 runId 计，另一次运行不受影响。
+    // 预算按运行计，另一次运行不受影响。
     await expect(call("run-other")).resolves.toBeDefined();
+
+    // 没有 runId 时退化到 correlationId+agentName：correlationId 整条级联共用，
+    // 单用它会让下游 agent 继承上游花掉的预算。
+    const noRunId = () =>
+      metaerpInvoke.handler(
+        ctx({ operation: "queryInventoryLots" }, { catalog_path: catalogPath }),
+      );
+    for (let i = 0; i < 3; i += 1) await noRunId();
+    await expect(noRunId()).rejects.toThrow(/调用已达上限/);
   });
 
   it("happy path: posts the payload to the catalog path and returns parsed JSON + kind meta", async () => {
