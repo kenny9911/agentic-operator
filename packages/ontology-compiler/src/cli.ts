@@ -31,6 +31,28 @@ export interface CliIo {
   error: (line: string) => void;
 }
 
+/**
+ * 每个 ERP 操作的真实请求字段，写进工具描述让模型拿到接口契约而不是只有操作名。
+ * 文件由 scripts/extract-metaerp-operation-params.mjs 从 swagger 生成；
+ * 没有这个文件就照旧只列操作名。
+ */
+function loadOperationParams() {
+  const file = path.resolve("config", "metaerp-operation-params.json");
+  if (!existsSync(file)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+      operations?: Record<
+        string,
+        { schema: string; bodyIsArray?: boolean; fields: string[] }
+      >;
+    };
+    const operations = parsed.operations;
+    return operations && Object.keys(operations).length ? operations : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function runCli(
   argv: string[],
   io: CliIo = { log: console.log, error: console.error },
@@ -77,9 +99,11 @@ export async function runCli(
   try {
     const model = loadStudioDomain(values.source);
     const overlay = (values.overlay ? loadOverlay(values.overlay) : {}) as CompilerOverlay;
+    const operationParams = loadOperationParams();
     const result = compile(model, overlay, {
       tenant: values.tenant,
       ...(values["base-url-env"] ? { baseUrlEnv: values["base-url-env"] } : {}),
+      ...(operationParams ? { operationParams } : {}),
     });
     const files = serializeCompileResult(result);
     const outDir = path.resolve(values.out ?? "models", `${values.tenant}-v1`);

@@ -29,6 +29,13 @@ export interface MetaerpRoute {
   path?: string;
   /** Pin one estate for this operation. Defaults to the configured env. */
   env?: string;
+  /**
+   * 该操作的默认请求字段，合并在部署级范围键之上、调用方之下。
+   *
+   * 用来把一个接口钉在确定的范围内——例如 queryPbpHeader 不支持全量列举
+   * （不带 pbpNumberList 就报 PBP-ServiceLogic-401069），演示只需要固定那几单。
+   */
+  defaults?: Record<string, unknown>;
   note?: string;
 }
 
@@ -72,9 +79,17 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
       );
     }
   }
+  const routeDefaults = (raw as { defaults?: unknown }).defaults;
+  if (
+    routeDefaults !== undefined &&
+    (!routeDefaults || typeof routeDefaults !== "object" || Array.isArray(routeDefaults))
+  ) {
+    throw new Error(`metaerp routes: entry '${operation}' defaults must be an object`);
+  }
   return {
     transport,
     ...(routePath ? { path: routePath } : {}),
+    ...(routeDefaults ? { defaults: routeDefaults as Record<string, unknown> } : {}),
     ...(typeof raw.env === "string" && raw.env.trim() ? { env: raw.env.trim() } : {}),
     ...(typeof raw.note === "string" ? { note: raw.note } : {}),
   };

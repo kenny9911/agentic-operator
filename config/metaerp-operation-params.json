@@ -1,0 +1,503 @@
+{
+  "_readme": "由 scripts/extract-metaerp-operation-params.mjs 从 metaerp-openapi-call/reference 下的 swagger 生成。编译器把 fields 写进 metaerp.invoke 的工具描述，模型据此拼入参，不用猜。bodyIsArray=true 表示该接口的请求体是数组而不是对象。",
+  "operations": {
+    "queryPbpHeader": {
+      "schema": "PbpHeaderOpenQueryDTO",
+      "fields": [
+        "pbpHeaderIdList",
+        "pbpNumberList",
+        "pbpLineId"
+      ]
+    },
+    "queryOpenPbpHeader": {
+      "schema": "PbpHeaderOpenQueryDTO",
+      "fields": [
+        "pbpHeaderIdList",
+        "pbpNumberList",
+        "pbpLineId"
+      ]
+    },
+    "queryPbpLine": {
+      "schema": "PbpLineOpenQueryDTO",
+      "fields": [
+        "pbpNumber",
+        "pbpHeaderId",
+        "pbpLineIdList"
+      ]
+    },
+    "queryOpenPbpLine": {
+      "schema": "PbpLineOpenQueryDTO",
+      "fields": [
+        "pbpNumber",
+        "pbpHeaderId",
+        "pbpLineIdList"
+      ]
+    },
+    "queryAllPbpLinePage": {
+      "schema": "PbpLineQueryDTO",
+      "fields": [
+        "queryMode",
+        "pbpNumber",
+        "pbpName",
+        "pbpHeaderId",
+        "pbpLineNumberList",
+        "headerUnitCode",
+        "unitCode",
+        "organizationCode",
+        "organizationCodeList",
+        "pbpLineTypeCode",
+        "itemCode",
+        "itemCodeList",
+        "itemVersion",
+        "itemDesc",
+        "categoryId",
+        "projectNumber",
+        "statusList",
+        "sourcingStatusList",
+        "businessTypeList",
+        "needByDateFrom",
+        "needByDateTo",
+        "serviceStartDate",
+        "serviceEndDate",
+        "preparerId",
+        "requestorId",
+        "suggestedBuyerId",
+        "sourceObjectTypeList",
+        "sourceObjectNumber",
+        "sourceObjectLineNumber",
+        "cancelledFlag",
+        "closedFlag",
+        "createdBy",
+        "creationDateFrom",
+        "creationDateTo",
+        "documentType",
+        "documentSubType",
+        "subtractFilterFlag",
+        "filterHeaderId",
+        "departmentCodeList"
+      ]
+    },
+    "queryPr": {
+      "schema": "PrOpenPagingQueryDTO",
+      "fields": [
+        "unitCode",
+        "interfaceSourceCode",
+        "itemCode",
+        "prCreationDateFrom",
+        "prCreationDateTo",
+        "needByDateFrom",
+        "needByDateTo",
+        "sourceDocHeaderNumberList",
+        "preparerId",
+        "prLineNumber",
+        "serviceStartDateFrom",
+        "serviceStartDateTo",
+        "serviceEndDateFrom",
+        "serviceEndDateTo",
+        "sourceDocHeaderIdList",
+        "sourceDocLineIdList",
+        "prHeaderIdList",
+        "prNumberList",
+        "prLineIdList",
+        "prLineDescription",
+        "prLineStatusList"
+      ]
+    },
+    "queryProcPackageLineExecuteMode": {
+      "schema": "ProcPackageLineExecuteOpenReqDTO",
+      "fields": [
+        "sourceObjectType",
+        "sourceLineIdList"
+      ]
+    },
+    "queryRfxList": {
+      "schema": "RfxOpenRequestQueryDTO",
+      "fields": [
+        "projectId",
+        "rfxHeaderId",
+        "rfxName",
+        "unitCode",
+        "supplierCode",
+        "rfxNumber",
+        "publishDateFrom",
+        "publishDateTo",
+        "closeBiddingDateFrom",
+        "closeBiddingDateTo",
+        "rfxType",
+        "rfxSubType",
+        "rfxStatus",
+        "rfxHeaderIdList"
+      ]
+    },
+    "queryAwardList": {
+      "schema": "AwardOpenRequestQueryDTO",
+      "fields": [
+        "rfxHeaderId",
+        "bidHeaderId",
+        "bidNumber",
+        "bidLineId",
+        "rfxLineId",
+        "lineNumber",
+        "awardDimension",
+        "supplierCode",
+        "awardStatus",
+        "itemCode"
+      ]
+    },
+    "querySpaList": {
+      "schema": "SpaQueryDTO",
+      "fields": [
+        "agreementType",
+        "type",
+        "isEffective",
+        "spaNumber",
+        "spaBatchParams",
+        "supplierCode",
+        "unitCode",
+        "supplierTxnBaseId",
+        "itemCode",
+        "itemDescFuzzy",
+        "currencyCode",
+        "categoryId",
+        "itemDesc",
+        "itemVersion",
+        "ruleType",
+        "versionNumber",
+        "uomCode",
+        "lineType",
+        "purchasingBasis",
+        "matchingBasis",
+        "effectiveStartDate",
+        "effectiveEndDate",
+        "expirationStartDate",
+        "expirationEndDate"
+      ]
+    },
+    "queryContract": {
+      "schema": "ContractQueryOpenReqDTO",
+      "fields": [
+        "mainContractId",
+        "contractName",
+        "contractCode",
+        "contractTypes",
+        "businessTypes",
+        "contractStatuses",
+        "companyCode",
+        "companyCodes",
+        "supplierCode",
+        "supplierCodes",
+        "territoryCode",
+        "groupNumber",
+        "effectiveStartDate",
+        "effectiveEndDate",
+        "expirationStartDate",
+        "expirationEndDate",
+        "contractType",
+        "businessType",
+        "contractStatus"
+      ]
+    },
+    "queryAcceptHeader": {
+      "schema": "AcHeaderQueryOpenReqDTO",
+      "fields": [
+        "unitCode",
+        "organizationCode",
+        "acHeaderIdList",
+        "asnNumberList",
+        "acNumberList",
+        "supplierCode",
+        "customerCode"
+      ]
+    },
+    "queryAcceptTransaction": {
+      "schema": "AcTransactionOpenQueryDTO",
+      "fields": [
+        "unitCode",
+        "organizationCode",
+        "sourceDocHeaderNumberList",
+        "acNumberList",
+        "supplierCode",
+        "itemCode",
+        "transactionDateStart",
+        "transactionDateEnd",
+        "transactionType",
+        "transactionTypeList",
+        "sourceDocLineNumberList",
+        "sourceDocDetailNumberList",
+        "bizKeyList",
+        "transactionIdList",
+        "purchasingBasis",
+        "asnNumberList",
+        "asnLineNumberList",
+        "sourceDocHeaderIdList",
+        "sourceDocDetailIdList",
+        "parentAcTransactionIdList",
+        "fulfillmentBuyer",
+        "sourceDocLineIdList",
+        "vciFlag",
+        "acDestinationType",
+        "trxUpdateDateStart",
+        "trxUpdateDateEnd",
+        "acceptorId",
+        "receiverId",
+        "outboundSystemCode",
+        "processStatusList",
+        "businessTypeList"
+      ]
+    },
+    "queryOnhandQuantity": {
+      "schema": "MultiOnhandAvailablePagingQueryDTO",
+      "fields": [
+        "unitCode",
+        "organizationCode",
+        "itemCodeList",
+        "itemVersionList",
+        "lotNumberList",
+        "storehouseCodeList",
+        "locatorCodeList",
+        "propertyTypeList",
+        "propertyCodeList",
+        "propertyTxnCodeList",
+        "inventoryStatusCodeList",
+        "showLocatorControl",
+        "showPropertyControl",
+        "showCalculateControl",
+        "minPrimaryTransactionQuantity",
+        "maxPrimaryTransactionQuantity"
+      ]
+    },
+    "queryPoHeader": {
+      "schema": "PoHeaderQueryReqDTO",
+      "fields": [
+        "groupNumber",
+        "buyerUserId",
+        "poGroups",
+        "approvalStatuses",
+        "purchasingOrderTypes",
+        "interfaceSourceCodes",
+        "headerCancelFlag",
+        "headerClosedStatus",
+        "supplierCodes",
+        "purchasingOrderSubTypes",
+        "creationDateFrom",
+        "creationDateTo",
+        "fulfillmentBuyerIds",
+        "frozenFlag",
+        "settleSupplierCodes",
+        "businessTypes",
+        "groupControlFlag",
+        "autoCreationFlag",
+        "automaticApprovalFlag",
+        "sourceSystemCode",
+        "supplierTxnBaseId",
+        "shippingToLocationId",
+        "billingToLocationId",
+        "currencyCode",
+        "settlePoFlag",
+        "approvedDateFrom",
+        "approvedDateTo",
+        "sourceDocHeaderNumberList",
+        "purchasingContractCode"
+      ]
+    },
+    "queryPoLineShipment": {
+      "schema": "PoShipmentQueryReqDTO",
+      "fields": [
+        "poLineIds",
+        "poGroups",
+        "poLineShipmentIds",
+        "shipmentClosedFlags",
+        "shipmentCancelFlags",
+        "inspectionMatchFlags",
+        "receiptMatchFlags",
+        "invoiceMatchOptions",
+        "matchingBasisList",
+        "purchasingBasisList",
+        "shipToOrganizationCodes",
+        "shippingToLocationIds",
+        "uomCodes",
+        "vciFlags",
+        "promisedDateFrom",
+        "promisedDateTo",
+        "needByDateFrom",
+        "needByDateTo",
+        "serviceStartDateFrom",
+        "serviceStartDateTo",
+        "serviceEndDateFrom",
+        "serviceEndDateTo",
+        "frozenFlag",
+        "matchingBasis",
+        "settleSupplierCodes",
+        "purchasingContractCode",
+        "lineType",
+        "groupControlFlag",
+        "accrueOnReceiptFlag",
+        "businessScenarioCode",
+        "taxProduct",
+        "fieldFillFlag"
+      ]
+    },
+    "queryReservation": {
+      "schema": "ReservationQueryDTO",
+      "fields": [
+        "unitCode",
+        "organizationCode",
+        "requirementDateFrom",
+        "requirementDateTo",
+        "itemCode",
+        "itemCodeList",
+        "storehouseCode",
+        "locatorCode",
+        "itemVersion",
+        "lotNumber",
+        "demandSourceObjectType",
+        "demandSourceObjectNumber",
+        "demandSourceObjectLineId",
+        "demandSourceLineDetailId",
+        "sourceSystemCode",
+        "reservationIds",
+        "propertyType",
+        "propertyCode",
+        "propertyTxnCode"
+      ]
+    },
+    "queryItemMinMaxLevel": {
+      "schema": "PlanItemLevelQueryDTO",
+      "fields": [
+        "storehouseCode",
+        "organizationCode",
+        "locatorCode",
+        "enableFlag",
+        "itemCode"
+      ]
+    },
+    "createPbp": {
+      "schema": "PbpCreateHeaderDTO",
+      "bodyIsArray": true,
+      "fields": [
+        "unitCode",
+        "pbpHeaderId",
+        "pbpHeaderSequence",
+        "pbpName",
+        "documentType",
+        "documentSubType",
+        "periodType",
+        "startDate",
+        "endDate",
+        "remark",
+        "operationType",
+        "submitFlag",
+        "preparerId",
+        "pbpCreateLineDTOList",
+        "approverList",
+        "businessType"
+      ]
+    },
+    "createProcPackageLines": {
+      "schema": "ProcPackageLineOpenDTO",
+      "bodyIsArray": true,
+      "fields": [
+        "unitCode",
+        "unitName",
+        "itemCode",
+        "itemDesc",
+        "itemVersion",
+        "categoryId",
+        "categoryConcatSections",
+        "uomCode",
+        "uomName",
+        "quantity",
+        "currencyCode",
+        "unitPrice",
+        "amount",
+        "serviceStartDate",
+        "serviceEndDate",
+        "needByDate",
+        "projectNumber",
+        "remark",
+        "requestorId",
+        "buyerId",
+        "sourceObjectType",
+        "sourceObjectId",
+        "sourceObjectNumber",
+        "sourceObjectLineId",
+        "sourceObjectLineParentId",
+        "sourceObjectLineNumber",
+        "procPackageLineId",
+        "procPackageHeaderId",
+        "originObjectType",
+        "originObjectNumber",
+        "originObjectId",
+        "originObjectLineId",
+        "originObjectLineNumber",
+        "plannerId",
+        "businessType",
+        "requestDepartmentCode",
+        "requestDepartmentName",
+        "centralPurchaseLevel",
+        "centralPurchasePattern",
+        "sourcingMethod",
+        "status",
+        "manufacturerPartNumber",
+        "organizationCode",
+        "manufacturerName",
+        "procPackageNumber",
+        "spaNumber",
+        "spaHeaderId",
+        "spaLineNumber",
+        "matchResultType",
+        "contractCode",
+        "spaLineId",
+        "lineType",
+        "includeTaxUnitPrice",
+        "taxDeterminationCode",
+        "taxIncludedAmount",
+        "matchingBasis",
+        "purchasingBasis",
+        "pfsStructNumber",
+        "psfStructNumber"
+      ]
+    },
+    "createTransactionOrder": {
+      "schema": "OrderCreatePubDTO",
+      "fields": [
+        "lineList",
+        "unitCode",
+        "organizationCode",
+        "txnOrderTypeCode",
+        "transactionTypeCode",
+        "uniqueSequenceNumber",
+        "sourceSystemCode",
+        "sourceCode",
+        "submittedBy",
+        "requiredDate",
+        "autoSubmit"
+      ]
+    },
+    "changePbp": {
+      "schema": "PbpChangeHeaderReqOpenDTO",
+      "bodyIsArray": true,
+      "fields": [
+        "pbpNumber",
+        "pbpChangeLineReqDTOList"
+      ]
+    },
+    "changePbpLine": {
+      "schema": "PbpChangeHeaderReqOpenDTO",
+      "bodyIsArray": true,
+      "fields": [
+        "pbpNumber",
+        "pbpChangeLineReqDTOList"
+      ]
+    },
+    "updateTransactionOrder": {
+      "schema": "OrderFulfillCreatePubDTO",
+      "fields": [
+        "unitCode",
+        "organizationCode",
+        "txnOrderTypeCode",
+        "orderFullfillPubDTOList"
+      ]
+    }
+  }
+}

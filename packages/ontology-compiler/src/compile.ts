@@ -368,16 +368,48 @@ function suppressImplicitEmitStep(order: string): CompiledStep {
   };
 }
 
+/**
+ * 每个 ERP 操作的真实请求字段，由
+ * scripts/extract-metaerp-operation-params.mjs 从 swagger 生成、经 CompileOptions 传入。
+ *
+ * 模型知道操作叫什么，却不知道它收什么——第一次对 v15 真跑，13 次调用错了 12 次，
+ * 全在猜字段名。把契约写进工具描述，猜的环节就没有了。没传时静默降级为
+ * 「只列操作名」，也就是加这套之前的行为。
+ */
+export interface MetaerpOperationParams {
+  schema: string;
+  bodyIsArray?: boolean;
+  fields: string[];
+}
+
+/** 「入参: a、b、c」——超过这个数就截断，工具描述不是 swagger 副本。 */
+const MAX_LISTED_FIELDS = 18;
+
+function paramHint(
+  params: Record<string, MetaerpOperationParams> | undefined,
+  operationId: string,
+): string {
+  const entry = params?.[operationId];
+  if (!entry?.fields.length) return "";
+  const shown = entry.fields.slice(0, MAX_LISTED_FIELDS).join("、");
+  const more = entry.fields.length > MAX_LISTED_FIELDS ? " 等" : "";
+  const array = entry.bodyIsArray ? "，请求体是数组" : "";
+  return `｜入参(${entry.schema}${array}): ${shown}${more}`;
+}
+
 function toolUseEntry(
   operationId: string,
   kind: "query" | "write",
   catalogPath: string,
   baseUrlEnv: string,
   description?: string,
+  params?: Record<string, MetaerpOperationParams>,
 ): CompiledToolUseEntry {
+  const hint = paramHint(params, operationId);
+  const described = description ? `${description}${hint}` : hint.replace(/^｜/, "");
   return {
     name: TOOL_NAME,
-    ...(description ? { description } : {}),
+    ...(described ? { description: described } : {}),
     side_effect: kind === "query" ? "read" : "write",
     // Must equal the reviewed global-registry policy for metaerp.invoke
     // byte-for-byte: generated agents are required to declare it, and the
@@ -395,13 +427,19 @@ function mergedQueryToolUseEntry(
   operations: Array<{ id: string; description?: string }>,
   catalogPath: string,
   baseUrlEnv: string,
+  params?: Record<string, MetaerpOperationParams>,
 ): CompiledToolUseEntry {
   const lines = operations
-    .map((op) => (op.description ? `${op.id}（${op.description}）` : op.id))
-    .join("、");
+    .map((op) => {
+      const head = op.description ? `${op.id}（${op.description}）` : op.id;
+      return `${head}${paramHint(params, op.id)}`;
+    })
+    .join("\n- ");
   return {
     name: TOOL_NAME,
-    description: `实时查询 Meta ERP。可用操作：${lines}。`,
+    description:
+      `实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单` +
+      `（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- ${lines}`,
     side_effect: "read",
     execution_policy: METAERP_REVIEWED_POLICY,
     input_schema: {
@@ -416,7 +454,9 @@ function mergedQueryToolUseEntry(
         },
         payload: {
           type: "object",
-          description: "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+          description:
+            "该操作的请求体。字段取自工具描述里对应操作的入参清单；" +
+            "管理单元与库存组织由平台自动补上，不要传。",
         },
       },
     },
@@ -582,6 +622,8 @@ interface CompileContext {
   catalogPath: string;
   /** Env var naming this tenant's metaERP origin. */
   baseUrlEnv: string;
+  /** 每个 ERP 操作的真实请求字段（可选）。 */
+  operationParams?: Record<string, MetaerpOperationParams>;
 }
 
 function overlayEmissionsFor(ctx: CompileContext, action: StudioAction): OverlayEmission[] {
@@ -687,9 +729,17 @@ function compilePromptAgent(ctx: CompileContext, action: StudioAction): {
               ctx.catalogPath,
               ctx.baseUrlEnv,
               queryOps[0]!.description,
+              ctx.operationParams,
             ),
           ]
-        : [mergedQueryToolUseEntry(queryOps, ctx.catalogPath, ctx.baseUrlEnv)];
+        : [
+            mergedQueryToolUseEntry(
+              queryOps,
+              ctx.catalogPath,
+              ctx.baseUrlEnv,
+              ctx.operationParams,
+            ),
+          ];
 
   const steps: CompiledStep[] = [
     {
@@ -945,7 +995,14 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
     (call) => opIdFromEndpoint(call.endpoint) === operationId,
   )?.description;
   const toolUse = [
-    toolUseEntry(operationId, "write", ctx.catalogPath, ctx.baseUrlEnv, writeDescription),
+    toolUseEntry(
+      operationId,
+      "write",
+      ctx.catalogPath,
+      ctx.baseUrlEnv,
+      writeDescription,
+      ctx.operationParams,
+    ),
   ];
   return { steps, toolUse };
 }
@@ -1006,6 +1063,12 @@ export interface CompileOptions {
    * `METAERP_BASE_URL`; set it when the tenant needs its own ERP instance.
    */
   baseUrlEnv?: string;
+  /**
+   * 每个 ERP 操作的真实请求字段，来自
+   * config/metaerp-operation-params.json（由 CLI 读入）。写进工具描述，
+   * 让模型拿到接口契约而不是只有一个操作名。
+   */
+  operationParams?: Record<string, MetaerpOperationParams>;
 }
 
 export function compile(
@@ -1024,6 +1087,7 @@ export function compile(
   }
   const ctx: CompileContext = {
     baseUrlEnv,
+    ...(options.operationParams ? { operationParams: options.operationParams } : {}),
     model,
     overlay,
     eventsByName: new Map(model.events.map((event) => [event.name, event])),

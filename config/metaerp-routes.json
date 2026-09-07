@@ -3,12 +3,31 @@
   "routes": {
     "queryPbpHeader": {
       "transport": "openapi",
-      "path": "/hsrm/srm/openapi/v1/queryPbpHeader"
+      "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
+      "defaults": {
+        "pbpNumberList": [
+          "100020260902000001",
+          "100020260902000002",
+          "100020260902000003",
+          "100020260902000004",
+          "100020260831000002"
+        ]
+      },
+      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069），演示钉在 数据信息.xlsx 的前 5 单"
     },
     "queryOpenPbpHeader": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
-      "note": "场景一沿用的别名，同一接口"
+      "defaults": {
+        "pbpNumberList": [
+          "100020260902000001",
+          "100020260902000002",
+          "100020260902000003",
+          "100020260902000004",
+          "100020260831000002"
+        ]
+      },
+      "note": "场景一沿用的别名，同一接口；不支持全量列举（不带单号返回 PBP-ServiceLogic-401069），演示钉在 数据信息.xlsx 的前 5 单"
     },
     "queryPbpLine": {
       "transport": "openapi",

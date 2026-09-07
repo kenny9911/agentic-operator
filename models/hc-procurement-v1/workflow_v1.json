@@ -164,7 +164,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/hc-procurement-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryOpenPbpHeader（查询在途采购计划头（状态=已批准）。）、queryOpenPbpLine（查询采购计划行——需求到货日期来源。）、queryAllPbpLinePage（分页查询计划头行关系，防止行重复归集（本体 tool_use 名 getAllPbpLinePageByQuery；编译器只识别 query* 前缀的只读 op）。）、queryPr（采集立项节点状态与审批通过时间。）、queryProcPackageLineExecuteMode（采集组包节点状态与组包完成时间。）、queryRfxList（采集询价节点状态、询价生效/发标/截标时间。）、queryAwardList（采集定标节点中标日期与中标供应商。）、querySpaList（采集价格协议——合同的前置凭据（本体 tool_use 名 getSpaByQuery）。）、queryContract（采集合同节点签署/生效状态与日期（本体 tool_use 名 getContractByQuery）。）、queryPoHeader（采集订单节点审批时间与生效日期。）、queryPoLineShipment（采集到货进度：订单数量与已接收数量。）、queryAcceptHeader（采集验收单与验收行接收数量。）、queryAcceptTransaction（采集验收交易记录与交易时间。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryOpenPbpHeader（查询在途采购计划头（状态=已批准）。）｜入参(PbpHeaderOpenQueryDTO): pbpHeaderIdList、pbpNumberList、pbpLineId\n- queryOpenPbpLine（查询采购计划行——需求到货日期来源。）｜入参(PbpLineOpenQueryDTO): pbpNumber、pbpHeaderId、pbpLineIdList\n- queryAllPbpLinePage（分页查询计划头行关系，防止行重复归集（本体 tool_use 名 getAllPbpLinePageByQuery；编译器只识别 query* 前缀的只读 op）。）｜入参(PbpLineQueryDTO): queryMode、pbpNumber、pbpName、pbpHeaderId、pbpLineNumberList、headerUnitCode、unitCode、organizationCode、organizationCodeList、pbpLineTypeCode、itemCode、itemCodeList、itemVersion、itemDesc、categoryId、projectNumber、statusList、sourcingStatusList 等\n- queryPr（采集立项节点状态与审批通过时间。）｜入参(PrOpenPagingQueryDTO): unitCode、interfaceSourceCode、itemCode、prCreationDateFrom、prCreationDateTo、needByDateFrom、needByDateTo、sourceDocHeaderNumberList、preparerId、prLineNumber、serviceStartDateFrom、serviceStartDateTo、serviceEndDateFrom、serviceEndDateTo、sourceDocHeaderIdList、sourceDocLineIdList、prHeaderIdList、prNumberList 等\n- queryProcPackageLineExecuteMode（采集组包节点状态与组包完成时间。）｜入参(ProcPackageLineExecuteOpenReqDTO): sourceObjectType、sourceLineIdList\n- queryRfxList（采集询价节点状态、询价生效/发标/截标时间。）｜入参(RfxOpenRequestQueryDTO): projectId、rfxHeaderId、rfxName、unitCode、supplierCode、rfxNumber、publishDateFrom、publishDateTo、closeBiddingDateFrom、closeBiddingDateTo、rfxType、rfxSubType、rfxStatus、rfxHeaderIdList\n- queryAwardList（采集定标节点中标日期与中标供应商。）｜入参(AwardOpenRequestQueryDTO): rfxHeaderId、bidHeaderId、bidNumber、bidLineId、rfxLineId、lineNumber、awardDimension、supplierCode、awardStatus、itemCode\n- querySpaList（采集价格协议——合同的前置凭据（本体 tool_use 名 getSpaByQuery）。）｜入参(SpaQueryDTO): agreementType、type、isEffective、spaNumber、spaBatchParams、supplierCode、unitCode、supplierTxnBaseId、itemCode、itemDescFuzzy、currencyCode、categoryId、itemDesc、itemVersion、ruleType、versionNumber、uomCode、lineType 等\n- queryContract（采集合同节点签署/生效状态与日期（本体 tool_use 名 getContractByQuery）。）｜入参(ContractQueryOpenReqDTO): mainContractId、contractName、contractCode、contractTypes、businessTypes、contractStatuses、companyCode、companyCodes、supplierCode、supplierCodes、territoryCode、groupNumber、effectiveStartDate、effectiveEndDate、expirationStartDate、expirationEndDate、contractType、businessType 等\n- queryPoHeader（采集订单节点审批时间与生效日期。）｜入参(PoHeaderQueryReqDTO): groupNumber、buyerUserId、poGroups、approvalStatuses、purchasingOrderTypes、interfaceSourceCodes、headerCancelFlag、headerClosedStatus、supplierCodes、purchasingOrderSubTypes、creationDateFrom、creationDateTo、fulfillmentBuyerIds、frozenFlag、settleSupplierCodes、businessTypes、groupControlFlag、autoCreationFlag 等\n- queryPoLineShipment（采集到货进度：订单数量与已接收数量。）｜入参(PoShipmentQueryReqDTO): poLineIds、poGroups、poLineShipmentIds、shipmentClosedFlags、shipmentCancelFlags、inspectionMatchFlags、receiptMatchFlags、invoiceMatchOptions、matchingBasisList、purchasingBasisList、shipToOrganizationCodes、shippingToLocationIds、uomCodes、vciFlags、promisedDateFrom、promisedDateTo、needByDateFrom、needByDateTo 等\n- queryAcceptHeader（采集验收单与验收行接收数量。）｜入参(AcHeaderQueryOpenReqDTO): unitCode、organizationCode、acHeaderIdList、asnNumberList、acNumberList、supplierCode、customerCode\n- queryAcceptTransaction（采集验收交易记录与交易时间。）｜入参(AcTransactionOpenQueryDTO): unitCode、organizationCode、sourceDocHeaderNumberList、acNumberList、supplierCode、itemCode、transactionDateStart、transactionDateEnd、transactionType、transactionTypeList、sourceDocLineNumberList、sourceDocDetailNumberList、bizKeyList、transactionIdList、purchasingBasis、asnNumberList、asnLineNumberList、sourceDocHeaderIdList 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -193,7 +193,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -371,7 +371,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/hc-procurement-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryStageCycleConfig（按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。）、queryAlertThresholdConfig（取时间/进度偏差判定阈值（BR-DEV-02：阈值必须来自配置，不得写死）。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。）\n- queryAlertThresholdConfig（取时间/进度偏差判定阈值（BR-DEV-02：阈值必须来自配置，不得写死）。）",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -389,7 +389,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -574,7 +574,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/hc-procurement-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryStageCycleConfig（汇总当前节点之后各节点标准周期，得到剩余天数。）、queryHistoricalOnTimeRate（统计同业务类型历史已完结单的按期达成率与样本量。）、queryAlertThresholdConfig（取红/黄概率分界阈值。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（汇总当前节点之后各节点标准周期，得到剩余天数。）\n- queryHistoricalOnTimeRate（统计同业务类型历史已完结单的按期达成率与样本量。）\n- queryAlertThresholdConfig（取红/黄概率分界阈值。）",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -593,7 +593,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -1198,7 +1198,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/hc-procurement-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryStageCycleConfig（后续节点标准周期，方案①的可压缩空间。）、queryTransferableStock（定位可调库点与可调数量，方案③的调拨来源。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（后续节点标准周期，方案①的可压缩空间。）\n- queryTransferableStock（定位可调库点与可调数量，方案③的调拨来源。）",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -1216,7 +1216,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -1843,7 +1843,7 @@
           "catalog_path": "models/hc-procurement-v1/erp-operations.json",
           "operation": "changePbp"
         },
-        "description": "回写各节点计划完成时间——压缩周期方案(changePbp)。入参：PBP_HEADER_ID、压缩后的各节点计划完成时间、调整原因、操作人(计划员)；出参：回写结果状态、失败原因。",
+        "description": "回写各节点计划完成时间——压缩周期方案(changePbp)。入参：PBP_HEADER_ID、压缩后的各节点计划完成时间、调整原因、操作人(计划员)；出参：回写结果状态、失败原因。｜入参(PbpChangeHeaderReqOpenDTO，请求体是数组): pbpNumber、pbpChangeLineReqDTOList",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -2041,7 +2041,7 @@
           "catalog_path": "models/hc-procurement-v1/erp-operations.json",
           "operation": "changePbpLine"
         },
-        "description": "调整需求到货日期(changePbpLine)。入参：PBP_LINE_ID、新 NEED_BY_DATE、调整原因、需求部门确认标识、操作人(计划员)；出参：回写结果状态、生效后的计划行。",
+        "description": "调整需求到货日期(changePbpLine)。入参：PBP_LINE_ID、新 NEED_BY_DATE、调整原因、需求部门确认标识、操作人(计划员)；出参：回写结果状态、生效后的计划行。｜入参(PbpChangeHeaderReqOpenDTO，请求体是数组): pbpNumber、pbpChangeLineReqDTOList",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -2239,7 +2239,7 @@
           "catalog_path": "models/hc-procurement-v1/erp-operations.json",
           "operation": "createTransactionOrder"
         },
-        "description": "生成调拨单(createTransactionOrder，写 inv_txn_order_header_t)。入参：物料编码、调拨数量、调出库存组织/库点、调入库存组织/库点、需求日期、来源方案编号、经办人(采购员)；出参：调拨单号、单据状态。",
+        "description": "生成调拨单(createTransactionOrder，写 inv_txn_order_header_t)。入参：物料编码、调拨数量、调出库存组织/库点、调入库存组织/库点、需求日期、来源方案编号、经办人(采购员)；出参：调拨单号、单据状态。｜入参(OrderCreatePubDTO): lineList、unitCode、organizationCode、txnOrderTypeCode、transactionTypeCode、uniqueSequenceNumber、sourceSystemCode、sourceCode、submittedBy、requiredDate、autoSubmit",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -2413,7 +2413,7 @@
           "catalog_path": "models/hc-procurement-v1/erp-operations.json",
           "operation": "updateTransactionOrder"
         },
-        "description": "调拨单状态回传(轮询/回调)。入参：调拨单号；出参：单据状态(审批中/已发出/已到货/已归还)、实际到货日期、到货数量。",
+        "description": "调拨单状态回传(轮询/回调)。入参：调拨单号；出参：单据状态(审批中/已发出/已到货/已归还)、实际到货日期、到货数量。｜入参(OrderFulfillCreatePubDTO): unitCode、organizationCode、txnOrderTypeCode、orderFullfillPubDTOList",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",

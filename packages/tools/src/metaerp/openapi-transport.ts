@@ -93,6 +93,8 @@ export interface OpenapiCallInput {
   payload: Record<string, unknown>;
   credentials: MetaerpCredentials;
   timeoutMs: number;
+  /** 该操作的默认字段，位于部署级范围键之上、调用方之下。 */
+  defaults?: Record<string, unknown>;
 }
 
 export interface TransportResult {
@@ -113,7 +115,7 @@ export async function callMetaerpOpenapi(
       method: "POST",
       insecureTls: preset.insecureTls,
       timeoutMs,
-      json: { ...credentials.defaults, ...input.payload },
+      json: { ...credentials.defaults, ...(input.defaults ?? {}), ...input.payload },
       headers: {
         authorization: token,
         "x-renter-id": credentials.renterId,

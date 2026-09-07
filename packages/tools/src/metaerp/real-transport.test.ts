@@ -241,6 +241,22 @@ describe("metaerp real transports", () => {
       }
     });
 
+    // queryPbpHeader 不支持全量列举，所以路由表替它钉住范围；调用方给了单号则以
+    // 调用方为准，否则演示至少查得到东西而不是收一个 401069。
+    it("carries per-operation defaults, under the caller and over the deployment keys", () => {
+      process.env.METAERP_TRANSPORT_MODE = "real";
+      const route = resolveRoute("queryPbpHeader", "query");
+      expect(route.defaults).toEqual({
+        pbpNumberList: [
+          "100020260902000001",
+          "100020260902000002",
+          "100020260902000003",
+          "100020260902000004",
+          "100020260831000002",
+        ],
+      });
+    });
+
     it("routes the two inventory reads through the portal, not APIGW", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
       expect(resolveRoute("queryReservation", "query").transport).toBe("uiapi");
