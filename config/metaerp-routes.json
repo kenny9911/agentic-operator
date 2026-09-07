@@ -103,7 +103,9 @@
     },
     "createTransactionOrder": {
       "transport": "openapi",
-      "path": "/hinv/minv/openapi/v1/createTransactionOrder"
+      "path": "/hinv/minv/openapi/v1/createTransactionOrder",
+      "allow_real_write": true,
+      "note": "演示「执行调拨」需要在真实 ERP 里落一张调拨单，故单独放行；其余写操作仍受全局闸口约束"
     },
     "changePbp": {
       "transport": "openapi",

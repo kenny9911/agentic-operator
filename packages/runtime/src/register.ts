@@ -267,12 +267,78 @@ export interface RegisterContext {
   }) => RuntimeArtifactSink;
 }
 
+/** How deep to look for a form field's value in the event/context. */
+const PREFILL_MAX_DEPTH = 4;
+/** Longer than this and it is prose to read, not a value to put in a field. */
+const PREFILL_MAX_LENGTH = 200;
+
+function prefillScalar(value: unknown): string | number | boolean | null {
+  if (typeof value === "boolean" || typeof value === "number") {
+    return typeof value === "number" && !Number.isFinite(value) ? null : value;
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed && trimmed.length <= PREFILL_MAX_LENGTH ? trimmed : null;
+}
+
+/**
+ * Answer the form's identifier fields from the data that opened the task.
+ *
+ * A generated manual step asks for the ids its ERP write needs — `alert_id`,
+ * `chain_id`, `plan_line_id`. Nobody can type those from memory, and the run
+ * payload the console falls back to is capped at 24KB, so on a real chain
+ * (49KB here) it collapses to a `_truncated` marker and the operator is shown
+ * an empty required field with no way to know the answer. The value is right
+ * here when the task is created, so it is stored with the task instead of
+ * being rediscovered later from something that may no longer carry it.
+ *
+ * Breadth-first: a shallower occurrence is the more canonical one.
+ */
+function buildManualPrefill(
+  formSchema: unknown,
+  sources: unknown[],
+): Record<string, string | number | boolean> {
+  const properties =
+    formSchema && typeof formSchema === "object" && !Array.isArray(formSchema)
+      ? (formSchema as { properties?: unknown }).properties
+      : null;
+  if (!properties || typeof properties !== "object") return {};
+  const wanted = Object.keys(properties as Record<string, unknown>);
+  const filled: Record<string, string | number | boolean> = {};
+  let frontier: unknown[] = sources.filter((source) => source != null);
+  for (let depth = 0; depth <= PREFILL_MAX_DEPTH; depth += 1) {
+    const next: unknown[] = [];
+    for (const node of frontier) {
+      if (Array.isArray(node)) {
+        next.push(...node);
+        continue;
+      }
+      if (!node || typeof node !== "object") continue;
+      const record = node as Record<string, unknown>;
+      for (const field of wanted) {
+        if (field in filled || !(field in record)) continue;
+        const scalar = prefillScalar(record[field]);
+        if (scalar !== null) filled[field] = scalar;
+      }
+      next.push(...Object.values(record));
+    }
+    if (Object.keys(filled).length === wanted.length) break;
+    frontier = next;
+  }
+  return filled;
+}
+
 export function buildManualTaskPayload(input: {
   agent: Pick<AgentSpec, "name">;
   action: ActionSpec;
   subject: string | null;
   preparedContext: unknown;
+  eventData?: unknown;
 }): Record<string, unknown> {
+  const prefill = buildManualPrefill(input.action.form_schema, [
+    input.preparedContext,
+    input.eventData,
+  ]);
   return {
     agentName: input.agent.name,
     actionName: input.action.name,
@@ -282,6 +348,7 @@ export function buildManualTaskPayload(input: {
     preparedContext: input.preparedContext ?? null,
     formSchema: input.action.form_schema ?? null,
     awaitingRole: input.action.awaiting_role ?? "operator",
+    ...(Object.keys(prefill).length ? { prefill } : {}),
   };
 }
 
@@ -3357,6 +3424,7 @@ export function registerAgent(
                       action,
                       subject,
                       preparedContext: lastResult,
+                      eventData: actionData,
                     }),
                     ...(actionBinding?.kind === "human_input"
                       ? {

@@ -35,6 +35,12 @@ const ENVELOPE_KEYS = new Set([
   "identifier_discipline",
   "queried_operations",
   "query_rounds_used",
+  // Payload-cap markers from the API's run endpoint. They are plumbing, and
+  // rendering them as 「采购概况」 facts tells the reader the truncation size
+  // where the purchase summary should be.
+  "_truncated",
+  "_bytes",
+  "_preview",
 ]);
 
 /** How deep to walk nested objects looking for a prefill value. */

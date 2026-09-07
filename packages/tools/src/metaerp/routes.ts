@@ -36,6 +36,14 @@ export interface MetaerpRoute {
    * （不带 pbpNumberList 就报 PBP-ServiceLogic-401069），演示只需要固定那几单。
    */
   defaults?: Record<string, unknown>;
+  /**
+   * 让这一个写操作绕过全局写闸口。
+   *
+   * 全局开关是「全放行」，粒度太粗：演示只需要「执行调拨」在真实 ERP 里落一张
+   * 调拨单，而同一批路由里还有 changePbp——那会改掉一张真实的采购计划。逐个放行
+   * 才能把不可回滚的动作限制在真正需要的那一个上。
+   */
+  allow_real_write?: boolean;
   note?: string;
 }
 
@@ -90,6 +98,9 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
     transport,
     ...(routePath ? { path: routePath } : {}),
     ...(routeDefaults ? { defaults: routeDefaults as Record<string, unknown> } : {}),
+    ...((raw as { allow_real_write?: unknown }).allow_real_write === true
+      ? { allow_real_write: true }
+      : {}),
     ...(typeof raw.env === "string" && raw.env.trim() ? { env: raw.env.trim() } : {}),
     ...(typeof raw.note === "string" ? { note: raw.note } : {}),
   };
@@ -170,7 +181,7 @@ export function resolveRoute(
       downgradeReason: "METAERP_TRANSPORT_MODE is not 'real'",
     };
   }
-  if (kind === "write" && !metaerpRealWritesEnabled()) {
+  if (kind === "write" && !metaerpRealWritesEnabled() && !declared.allow_real_write) {
     return {
       transport: "mock",
       downgradedFrom: declared.transport,

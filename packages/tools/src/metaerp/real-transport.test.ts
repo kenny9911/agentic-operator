@@ -225,6 +225,16 @@ describe("metaerp real transports", () => {
       expect(resolveRoute("createPbp", "write").transport).toBe("openapi");
     });
 
+    // 全局开关是「全放行」，粒度太粗：演示只要调拨单落进真实 ERP，而同一批路由里
+    // 还有 changePbp——那会改掉一张真实的采购计划。
+    it("lets one named write through while the global gate stays shut", () => {
+      process.env.METAERP_TRANSPORT_MODE = "real";
+      expect(resolveRoute("createTransactionOrder", "write").transport).toBe("openapi");
+      const held = resolveRoute("changePbp", "write");
+      expect(held.transport).toBe("mock");
+      expect(held.downgradeReason).toMatch(/METAERP_ALLOW_REAL_WRITES/);
+    });
+
     it("leaves the operations ERP has no interface for on the mock", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
       process.env.METAERP_ALLOW_REAL_WRITES = "true";
