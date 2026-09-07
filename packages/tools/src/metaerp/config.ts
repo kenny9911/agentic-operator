@@ -76,6 +76,17 @@ export interface MetaerpCredentials {
   /** Portal login — uiapi transport. Absent unless a UI operation is routed. */
   portalUser: string | null;
   portalPassword: string | null;
+  /**
+   * Scope fields merged UNDER every real request (the caller always wins).
+   *
+   * Nearly every metaERP operation rejects a request without a management unit,
+   * and the field names are the API's own camelCase — `unitCode`, not the
+   * ontology's `unit_code`. Leaving that to the model means it guesses the
+   * casing per call and mostly guesses wrong: in the first real run 12 of 13
+   * calls failed that way, each with a different spelling. A deployment-wide
+   * constant belongs to the deployment, not to a prompt.
+   */
+  defaults: Record<string, string>;
 }
 
 let fileCache: { path: string; values: Record<string, string> } | null = null;
@@ -164,6 +175,8 @@ export function resolveMetaerpPreset(env: MetaerpEnv): MetaerpEnvPreset {
 export function resolveMetaerpCredentials(explicitEnv?: string | null): MetaerpCredentials {
   const env = resolveMetaerpEnv(explicitEnv);
   const preset = resolveMetaerpPreset(env);
+  const unitCode = setting("DEFAULT_UNIT_CODE", env);
+  const organizationCode = setting("DEFAULT_ORGANIZATION_CODE", env);
   const need = (key: string): string => {
     const value = setting(key, env);
     if (!value) {
@@ -183,6 +196,10 @@ export function resolveMetaerpCredentials(explicitEnv?: string | null): MetaerpC
     renterId: need("RENTER_ID"),
     portalUser: setting("PORTAL_USER", env),
     portalPassword: setting("PORTAL_PASSWORD", env),
+    defaults: {
+      ...(unitCode ? { unitCode } : {}),
+      ...(organizationCode ? { organizationCode } : {}),
+    },
   };
 }
 

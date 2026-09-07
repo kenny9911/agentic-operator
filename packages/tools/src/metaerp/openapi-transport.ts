@@ -113,7 +113,7 @@ export async function callMetaerpOpenapi(
       method: "POST",
       insecureTls: preset.insecureTls,
       timeoutMs,
-      json: input.payload,
+      json: { ...credentials.defaults, ...input.payload },
       headers: {
         authorization: token,
         "x-renter-id": credentials.renterId,

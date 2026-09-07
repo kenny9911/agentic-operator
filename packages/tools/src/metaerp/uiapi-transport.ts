@@ -151,7 +151,7 @@ export async function callMetaerpUiapi(
       method: "POST",
       insecureTls: preset.insecureTls,
       timeoutMs,
-      json: input.payload,
+      json: { ...credentials.defaults, ...input.payload },
       jar: session.jar,
       headers: {
         "x-csrf-token": session.csrf,

@@ -72,6 +72,8 @@ const ENV_KEYS = [
   "METAERP_TRANSPORT_MODE",
   "METAERP_ALLOW_REAL_WRITES",
   "METAERP_CONFIG_FILE",
+  "METAERP_DEFAULT_UNIT_CODE",
+  "METAERP_DEFAULT_ORGANIZATION_CODE",
 ];
 
 describe("metaerp real transports", () => {
@@ -86,6 +88,8 @@ describe("metaerp real transports", () => {
     process.env.METAERP_SECRET = "s3cret";
     process.env.METAERP_PROJECT = "p0000000000000000000000000000001";
     process.env.METAERP_RENTER_ID = "1780520994662254112";
+    delete process.env.METAERP_DEFAULT_UNIT_CODE;
+    delete process.env.METAERP_DEFAULT_ORGANIZATION_CODE;
     _clearMetaerpConfigCacheForTests();
     _clearMetaerpTokenCacheForTests();
     _clearMetaerpSessionCacheForTests();
@@ -284,6 +288,44 @@ describe("metaerp real transports", () => {
       expect(posted[0]!.headers["x-renter-id"]).toBe("1780520994662254112");
       expect(posted[0]!.url).toBe("/v15/hsrm/srm/openapi/v1/queryPbpLine");
       expect(JSON.parse(posted[0]!.body)).toEqual({ pbpNumber: "PBP202512030021" });
+    });
+
+    // The first real run guessed the casing per call — unit_code, UNIT_CODE,
+    // unitCode — and 12 of 13 calls failed. A deployment-wide constant in the
+    // API's own spelling is the platform's job, not the model's.
+    it("merges the deployment scope keys under the caller's payload", async () => {
+      process.env.METAERP_DEFAULT_UNIT_CODE = "1000";
+      process.env.METAERP_DEFAULT_ORGANIZATION_CODE = "YF1";
+      const erp = await startServer((req, res) => {
+        if (req.url?.endsWith("/iam/auth/token")) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ access_token: "tok" }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: "SUCCESS", data: {} }));
+      });
+      process.env.METAERP_APIGW_BASE = erp.origin;
+      process.env.METAERP_IAM_TOKEN_URL = `${erp.origin}/iam/auth/token`;
+      _clearMetaerpConfigCacheForTests();
+
+      await callMetaerpOpenapi({
+        operation: "queryPbpLine",
+        path: "/hsrm/srm/openapi/v1/queryPbpLine",
+        // An explicit value always wins over the deployment default.
+        payload: { pbpNumber: "PBP-1", organizationCode: "OTHER" },
+        credentials: resolveMetaerpCredentials(),
+        timeoutMs: 5_000,
+      });
+      await erp.close();
+      const sent = JSON.parse(
+        erp.seen.find((r) => r.url.includes("queryPbpLine"))!.body,
+      );
+      expect(sent).toEqual({
+        unitCode: "1000",
+        organizationCode: "OTHER",
+        pbpNumber: "PBP-1",
+      });
     });
 
     it("re-mints once when a cached token has expired server-side", async () => {
