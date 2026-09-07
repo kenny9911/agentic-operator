@@ -245,10 +245,12 @@ describe("metaerp real transports", () => {
     // 调用方为准，否则演示至少查得到东西而不是收一个 401069。
     it("carries per-operation defaults, under the caller and over the deployment keys", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
-      const route = resolveRoute("queryPbpHeader", "query");
-      expect(route.defaults).toEqual({
-        pbpNumberList: ["100020260902000001"],
+      // 数据信息.xlsx 里的编号是采购需求(PR)号：queryPr 查它有 4 条，
+      // queryPbpHeader 查它恒为 0 条——锚点钉错表，整条链就从空数据开始。
+      expect(resolveRoute("queryPr", "query").defaults).toEqual({
+        prNumberList: ["100020260902000001"],
       });
+      expect(resolveRoute("queryPbpHeader", "query").defaults).toBeUndefined();
     });
 
     it("routes the two inventory reads through the portal, not APIGW", () => {

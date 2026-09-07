@@ -4,22 +4,12 @@
     "queryPbpHeader": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
-      "defaults": {
-        "pbpNumberList": [
-          "100020260902000001"
-        ]
-      },
-      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；为跑通演示只锁定 数据信息.xlsx 的第一单"
+      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值"
     },
     "queryOpenPbpHeader": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
-      "defaults": {
-        "pbpNumberList": [
-          "100020260902000001"
-        ]
-      },
-      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；为跑通演示只锁定 数据信息.xlsx 的第一单"
+      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值"
     },
     "queryPbpLine": {
       "transport": "openapi",
@@ -36,7 +26,13 @@
     },
     "queryPr": {
       "transport": "openapi",
-      "path": "/hpo/mpr/openapi/v1/queryPr"
+      "path": "/hpo/mpr/openapi/v1/queryPr",
+      "defaults": {
+        "prNumberList": [
+          "100020260902000001"
+        ]
+      },
+      "note": "为跑通演示锁定 数据信息.xlsx 的第一条采购需求（实测该号在 queryPr 下有 4 条记录）"
     },
     "queryProcPackageLineExecuteMode": {
       "transport": "openapi",
