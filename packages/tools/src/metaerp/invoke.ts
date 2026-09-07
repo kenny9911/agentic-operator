@@ -35,6 +35,11 @@ import path from "node:path";
 import type { ToolContext } from "@agentic/agent-kit";
 import { defineTool } from "@agentic/agent-kit";
 import { findRepoRoot } from "../fs/_shared";
+import { resolveMetaerpCredentials } from "./config";
+import { normalizeMetaerpResponse } from "./envelope";
+import { callMetaerpOpenapi } from "./openapi-transport";
+import { resolveRoute } from "./routes";
+import { callMetaerpUiapi } from "./uiapi-transport";
 
 export type MetaerpOperationKind = "query" | "write";
 
@@ -55,7 +60,6 @@ interface MetaerpInvokeConfig {
 
 const DEFAULT_BASE_URL_ENV = "METAERP_BASE_URL";
 const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_DIAGNOSTIC_CHARS = 2_000;
 
 /** Parsed catalogs keyed by absolute file path. The compiler output is
  * byte-stable per deploy; a redeploy rewrites the file, and the api process
@@ -275,7 +279,6 @@ export const metaerpInvoke = defineTool({
             .join(", ")}${known.length > 20 ? ", …" : ""}`,
       );
     }
-    const baseUrl = resolveBaseUrl(config);
     const payload = resolvePayload(ctx);
     const timeoutMs =
       typeof config.timeout_ms === "number" &&
@@ -284,6 +287,52 @@ export const metaerpInvoke = defineTool({
         ? Math.min(config.timeout_ms, 120_000)
         : DEFAULT_TIMEOUT_MS;
 
+    // Where this operation actually lives. Unlisted operations, and anything
+    // held back by the two gates, keep going to the mock ERP exactly as before
+    // — a half-migrated estate is a normal state here, not a broken one.
+    const route = resolveRoute(entry.operation, entry.kind);
+    const routeMeta = {
+      tool: "metaerp.invoke",
+      operation: entry.operation,
+      kind: entry.kind,
+      path: entry.path,
+      transport: route.transport,
+      ...(route.downgradedFrom
+        ? {
+            // Say it plainly in the trace: an operator reading a run needs to
+            // know the ERP was simulated, not merely that a call succeeded.
+            simulated: true,
+            declaredTransport: route.downgradedFrom,
+            simulatedBecause: route.downgradeReason,
+          }
+        : {}),
+      request: payload,
+      correlationId: ctx.correlationId,
+    };
+
+    if (route.transport !== "mock") {
+      const credentials = resolveMetaerpCredentials(route.env);
+      const call =
+        route.transport === "openapi" ? callMetaerpOpenapi : callMetaerpUiapi;
+      const result = await call({
+        operation: entry.operation,
+        path: route.path ?? entry.path,
+        payload,
+        credentials,
+        timeoutMs,
+      });
+      return {
+        data: result.data,
+        meta: {
+          ...routeMeta,
+          env: credentials.env,
+          url: result.url,
+          status: result.status,
+        },
+      };
+    }
+
+    const baseUrl = resolveBaseUrl(config);
     const url = `${baseUrl}${entry.path}`;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = ctx.signal
@@ -310,37 +359,20 @@ export const metaerpInvoke = defineTool({
       );
     }
 
-    const bodyText = await response.text();
-    if (!response.ok) {
-      throw new Error(
-        `metaerp.invoke: '${operationName}' returned HTTP ${response.status} — ` +
-          bodyText.slice(0, MAX_DIAGNOSTIC_CHARS),
-      );
-    }
-    let body: unknown;
-    try {
-      body = bodyText.trim() ? JSON.parse(bodyText) : {};
-    } catch {
-      throw new Error(
-        `metaerp.invoke: '${operationName}' returned non-JSON body — ` +
-          bodyText.slice(0, MAX_DIAGNOSTIC_CHARS),
-      );
-    }
-
     return {
-      data: body,
-      meta: {
-        tool: "metaerp.invoke",
+      data: normalizeMetaerpResponse({
         operation: entry.operation,
-        kind: entry.kind,
-        path: entry.path,
+        status: response.status,
+        body: await response.text(),
+        url,
+      }),
+      meta: {
+        ...routeMeta,
         // The absolute URL actually called, and the body actually sent. An
         // operator asked to trust that the ERP was written to needs to see the
         // request, not a claim that one happened.
         url,
-        request: payload,
         status: response.status,
-        correlationId: ctx.correlationId,
       },
     };
   },

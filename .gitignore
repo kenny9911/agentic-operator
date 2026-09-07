@@ -116,3 +116,9 @@ apps/api/logs/
 
 # Local demo driver: detached service logs + pids (scripts/demo-power-scm.mjs)
 .demo/
+
+# Real Meta ERP credentials. The skill folder itself is untracked today, but an
+# accidental `git add` of it would commit live IAM secrets and a portal
+# password — so the file is denied by name wherever it appears.
+config.local
+**/config.local

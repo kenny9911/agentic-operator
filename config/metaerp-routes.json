@@ -1,0 +1,132 @@
+{
+  "_readme": "Meta ERP 操作路由表。transport: mock | openapi | uiapi；未列出的操作一律走 mock。两道闸口：METAERP_TRANSPORT_MODE=real 本表才生效；写操作还需 METAERP_ALLOW_REAL_WRITES=true。path 不带环境前缀，运行时按 METAERP_ENV 归一到 /v15 或 /beta。",
+  "routes": {
+    "queryPbpHeader": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpHeader"
+    },
+    "queryOpenPbpHeader": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
+      "note": "场景一沿用的别名，同一接口"
+    },
+    "queryPbpLine": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpLine"
+    },
+    "queryOpenPbpLine": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpLine",
+      "note": "场景一沿用的别名，同一接口"
+    },
+    "queryAllPbpLinePage": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryAllPbpLinePage"
+    },
+    "queryPr": {
+      "transport": "openapi",
+      "path": "/hpo/mpr/openapi/v1/queryPr"
+    },
+    "queryProcPackageLineExecuteMode": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryProcPackageLineExecuteMode"
+    },
+    "queryRfxList": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryRfxList"
+    },
+    "queryAwardList": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryAwardList"
+    },
+    "querySpaList": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/querySPAList"
+    },
+    "queryContract": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryContract"
+    },
+    "queryAcceptHeader": {
+      "transport": "openapi",
+      "path": "/hpo/mpo/openapi/v1/queryAcceptanceHeader"
+    },
+    "queryAcceptTransaction": {
+      "transport": "openapi",
+      "path": "/hpo/mpo/openapi/v1/queryAcTransaction"
+    },
+    "queryOnhandQuantity": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/multiOnhandQuantityQuery",
+      "note": "真实接口是批量版 multiOnhandQuantityQuery，入参形状与 mock 不同"
+    },
+    "queryPoLine": {
+      "transport": "openapi",
+      "path": "/hpo/mpo/openapi/v1/queryPoLine",
+      "note": "注册路径与文档路径不同形；swagger 缺失，入参需实测"
+    },
+    "queryPoHeader": {
+      "transport": "uiapi",
+      "path": "/gateway/hpo/poquery/services/ui/queryPoService/v1/poHeader/20/1",
+      "note": "分页参数在路径里（pageSize/curPage）"
+    },
+    "queryPoLineShipment": {
+      "transport": "uiapi",
+      "path": "/gateway/hpo/poquery/services/ui/queryPoService/v1/poShipment/20/1",
+      "note": "同上"
+    },
+    "queryReservation": {
+      "transport": "uiapi",
+      "path": "/gateway/hinv/minv/services/queryReservation",
+      "note": "openapi 形态未注册；路径取自 swagger 的 x-frontURL"
+    },
+    "queryItemMinMaxLevel": {
+      "transport": "uiapi",
+      "path": "/gateway/hinv/minv/services/getPlanItemLevel",
+      "note": "openapi 形态未注册；后端 operationId 为 getPlanItemLevelByQuery"
+    },
+    "createPbp": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/createPbp",
+      "note": "请求体是数组，不是对象"
+    },
+    "createProcPackageLines": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/createProcPackageLines"
+    },
+    "createTransactionOrder": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/createTransactionOrder"
+    },
+    "changePbp": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/changePbp"
+    },
+    "changePbpLine": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/changePbp",
+      "note": "与 changePbp 同一接口，参数不同"
+    },
+    "updateTransactionOrder": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/createTransactionOrderFulfill",
+      "note": "调拨单履行行写入"
+    },
+    "queryProcPackageHeader": {
+      "transport": "mock",
+      "note": "ERP 无采购包头查询接口，平台模拟"
+    },
+    "queryProcPackageLine": {
+      "transport": "mock",
+      "note": "ERP 无采购包行查询接口（只有 queryProcPackageLineExecuteMode），平台模拟"
+    },
+    "queryTransactionOrders": {
+      "transport": "mock",
+      "note": "ERP 无库存单据/调拨单状态查询接口，平台模拟"
+    },
+    "queryPurchaseCategory": {
+      "transport": "mock",
+      "note": "ERP 无采购品类用途查询接口，平台模拟"
+    }
+  }
+}
