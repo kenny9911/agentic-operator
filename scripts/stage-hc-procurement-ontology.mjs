@@ -514,6 +514,10 @@ const PROMPT_PREAMBLE = {
     "",
     "【取数步骤（在产出 JSON 之前必须先按此执行）】",
     "",
+    "第 0 步 · 带上范围键：**每一次 metaERP 查询都必须带上事件负载里的 unit_code（管理单元编码）**，",
+    "涉及库存的查询再加上 organization_code（库存组织编码）。真实 metaERP 没有这两个字段会",
+    "直接拒绝（`字段:管理单元编码不能为空`），查不到任何数据。事件里给了什么就照抄什么。",
+    "",
     "第 0 步 · 定范围：看触发事件负载有没有 plan_id 或 plan_no。有就**只处理这一个计划**——",
     "调用 queryOpenPbpHeader 时必须带过滤条件 {\"PBP_HEADER_ID\": \"<该值>\"}，不得拉全量再自己筛。",
     "没有才按 BR-COV-01 处理全部状态=已批准且在途的计划。",
@@ -810,6 +814,51 @@ const sourceDir = path.resolve(ROOT, values.source);
 const outDir = path.resolve(ROOT, values.out);
 const domainDir = path.join(outDir, "studio-models", NAMESPACE, DOMAIN);
 
+/**
+ * Fields the scan event needs before it can address a real ERP.
+ *
+ * `chain_scope` already says「全集团或指定单位」—— but nothing carries WHICH
+ * unit, and every real metaERP query rejects a request without one
+ * (`字段:管理单元编码不能为空`). The mock never surfaced this because it filters
+ * on whatever it is handed. See docs/hc-procurement-ontology-corrections.md C-10.
+ */
+const SCAN_SCOPE_FIELDS = {
+  DAILY_DEVIATION_SCAN_SCHEDULED: [
+    {
+      name: "unit_code",
+      type: "String",
+      required: false,
+      description: "管理单元编码；chain_scope=指定单位时必填，metaERP 每个查询都要它。",
+    },
+    {
+      name: "organization_code",
+      type: "String",
+      required: false,
+      description: "库存组织编码；库存现有量/可调度库存查询要它。",
+    },
+  ],
+};
+
+/** Append the missing scope fields, leaving every authored field untouched. */
+function withScanScopeFields(events) {
+  return events.map((event) => {
+    const extra = SCAN_SCOPE_FIELDS[event.name];
+    if (!extra) return event;
+    const existing = new Set(
+      (event.payload?.event_data ?? []).map((field) => field.name),
+    );
+    const added = extra.filter((field) => !existing.has(field.name));
+    if (!added.length) return event;
+    return {
+      ...event,
+      payload: {
+        ...event.payload,
+        event_data: [...(event.payload?.event_data ?? []), ...added],
+      },
+    };
+  });
+}
+
 const rawActionsFile = readFamily(sourceDir, "actions");
 const rawEvents = readFamily(sourceDir, "events");
 const rawObjects = readFamily(sourceDir, "objects");
@@ -829,7 +878,7 @@ rmSync(outDir, { recursive: true, force: true });
 writeJson(path.join(domainDir, "actions_v0_1_004.json"), actions);
 writeJson(path.join(domainDir, "events_v0_1_004.json"), {
   metadata: rawEvents.metadata,
-  events: rawEvents.events,
+  events: withScanScopeFields(rawEvents.events),
 });
 writeJson(path.join(domainDir, "objects_v0_1_004.json"), {
   metadata: rawObjects.metadata,

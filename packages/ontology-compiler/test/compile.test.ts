@@ -504,6 +504,65 @@ describe("compiled input ports", () => {
     }
   });
 
+  /**
+   * 加载示例 derives a payload from the schema, which is well-formed but
+   * fictional — and against a real ERP a fictional document number simply finds
+   * nothing, so the run dies on an empty result instead of a clear error.
+   */
+  describe("authored input examples", () => {
+    function compileWithExamples(examples: Record<string, Record<string, unknown>>) {
+      const probed = {
+        ...model,
+        events: [
+          {
+            name: "__PROBE__",
+            payload: {
+              event_data: [
+                { name: "plan_no", type: "String", required: true },
+                { name: "unit_code", type: "String", required: false },
+              ],
+            },
+          },
+          ...model.events,
+        ],
+        actions: model.actions.map((action, index) =>
+          index === 0 ? { ...action, trigger: ["__PROBE__"] } : action,
+        ),
+      };
+      return compile(probed, { ...loadOverlayFixture(), input_examples: examples }, {
+        tenant: "power-scm",
+      });
+    }
+
+    it("puts the authored value on the port the console reads", () => {
+      const compiled = compileWithExamples({
+        __PROBE__: { plan_no: "100020260903000006", unit_code: "1000" },
+      });
+      const ports = compiled.workflow[0]!.inputs;
+      expect(ports.find((port) => port.id === "plan_no")?.example).toBe(
+        "100020260903000006",
+      );
+      expect(ports.find((port) => port.id === "unit_code")?.example).toBe("1000");
+    });
+
+    it("leaves an un-authored field to the schema generator", () => {
+      const compiled = compileWithExamples({ __PROBE__: { plan_no: "X" } });
+      const ports = compiled.workflow[0]!.inputs;
+      expect(ports.find((port) => port.id === "unit_code")?.example).toBeUndefined();
+    });
+
+    // A silently ignored typo is worse than none: the overlay looks right while
+    // 加载示例 keeps offering the generated placeholder.
+    it("rejects an example for an event or field the ontology does not have", () => {
+      expect(() => compileWithExamples({ NO_SUCH_EVENT: { plan_no: "X" } })).toThrow(
+        /unknown event 'NO_SUCH_EVENT'/,
+      );
+      expect(() => compileWithExamples({ __PROBE__: { no_such_field: "X" } })).toThrow(
+        /has no field 'no_such_field'/,
+      );
+    });
+  });
+
   /** Compile one probe field and hand back the port it produced. */
   function probePort(field: StudioEventDataField) {
     const probed = {

@@ -23,6 +23,18 @@
             "name": "chain_scope",
             "required": false,
             "type": "String"
+          },
+          {
+            "description": "管理单元编码；chain_scope=指定单位时必填，metaERP 每个查询都要它。",
+            "name": "unit_code",
+            "required": false,
+            "type": "String"
+          },
+          {
+            "description": "库存组织编码；库存现有量/可调度库存查询要它。",
+            "name": "organization_code",
+            "required": false,
+            "type": "String"
           }
         ],
         "source_action": null,

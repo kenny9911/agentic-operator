@@ -508,6 +508,11 @@ const PROMPT_PREAMBLE = {
     "",
     "【取数步骤（在产出 JSON 之前必须先按此执行）】",
     "",
+    "第 0 步：**每一次 metaERP 查询都必须带上事件负载里的 unit_code（管理单元编码）**，",
+    "涉及库存的查询再加上 organization_code（库存组织编码）。真实 metaERP 没有这两个",
+    "字段会直接拒绝（`字段:管理单元编码不能为空`），查不到任何数据。事件里给了什么就",
+    "照抄什么，不要自己编。",
+    "",
     "第 1 步：**同一轮一次性并发**调用 queryPbpHeader 与 queryPbpLine，不要串行。",
     "第 2 步：只保留 STATUS=已批准 的计划头，草稿/已取消/已删除一律剔除（R2-01）。",
     "第 3 步：把计划行按其 PBP_HEADER_ID 归到对应计划头下，行的物料、数量、",
@@ -833,6 +838,52 @@ const { values } = parseArgs({
 });
 
 const sourceDir = path.resolve(ROOT, values.source);
+/**
+ * Fields the ontology's scan events need before they can address a real ERP.
+ *
+ * `scan_scope` already says「全集团或指定管理单元」—— but there is no field
+ * carrying WHICH management unit, and every real metaERP query rejects a
+ * request without one (`字段:管理单元编码不能为空`, `organizationCode 不能为空`
+ * …). Against the mock this never showed, because the mock filters on whatever
+ * it is given. See docs/hc-digital-worker-ontology-corrections.md D-08.
+ */
+const SCAN_SCOPE_FIELDS = {
+  DAILY_DEMAND_PLAN_SCAN_SCHEDULED: [
+    {
+      name: "unit_code",
+      type: "String",
+      required: false,
+      description: "管理单元编码；scan_scope=指定管理单元时必填，metaERP 每个查询都要它。",
+    },
+    {
+      name: "organization_code",
+      type: "String",
+      required: false,
+      description: "库存组织编码；库存现有量/预留/水位查询要它。",
+    },
+  ],
+};
+
+/** Append the missing scope fields, leaving every authored field untouched. */
+function withScanScopeFields(events) {
+  return events.map((event) => {
+    const extra = SCAN_SCOPE_FIELDS[event.name];
+    if (!extra) return event;
+    const existing = new Set(
+      (event.payload?.event_data ?? []).map((field) => field.name),
+    );
+    const added = extra.filter((field) => !existing.has(field.name));
+    if (!added.length) return event;
+    return {
+      ...event,
+      payload: {
+        ...event.payload,
+        event_data: [...(event.payload?.event_data ?? []), ...added],
+      },
+    };
+  });
+}
+
 const outDir = path.resolve(ROOT, values.out);
 const domainDir = path.join(outDir, "studio-models", NAMESPACE, DOMAIN);
 
@@ -865,7 +916,7 @@ rmSync(outDir, { recursive: true, force: true });
 writeJson(path.join(domainDir, "actions_v0_1_008.json"), actions);
 writeJson(path.join(domainDir, "events_v0_1_008.json"), {
   metadata: rawEvents.metadata,
-  events: rawEvents.events,
+  events: withScanScopeFields(rawEvents.events),
 });
 writeJson(path.join(domainDir, "objects_v0_1_008.json"), {
   metadata: rawObjects.metadata,

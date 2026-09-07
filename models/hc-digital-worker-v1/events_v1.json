@@ -30,6 +30,18 @@
             "required": false,
             "target_object": "Procurement_Plan",
             "type": "String"
+          },
+          {
+            "description": "管理单元编码；scan_scope=指定管理单元时必填，metaERP 每个查询都要它。",
+            "name": "unit_code",
+            "required": false,
+            "type": "String"
+          },
+          {
+            "description": "库存组织编码；库存现有量/预留/水位查询要它。",
+            "name": "organization_code",
+            "required": false,
+            "type": "String"
           }
         ],
         "source_action": null,

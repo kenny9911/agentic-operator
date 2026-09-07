@@ -267,6 +267,19 @@ export interface CompilerOverlay {
   submission_gates?: Record<string, string>;
   /** actionId → ontology manual-step name → form schema / awaiting role. */
   manual_steps?: Record<string, Record<string, OverlayManualStep>>;
+  /**
+   * eventName → field → the value 「加载示例」 should offer for it.
+   *
+   * The run console derives a payload from the input schema, which can produce
+   * something well-formed but fictional — and against a real ERP a fictional
+   * document number finds nothing, so the run dies at the first query with an
+   * empty result rather than a clear error. Authoring the example lets the
+   * sample carry identifiers that actually exist in the target environment.
+   *
+   * Only the example is authored; the field, its type and whether it is
+   * required still come from the ontology.
+   */
+  input_examples?: Record<string, Record<string, unknown>>;
   /** actionId → tool_arguments template for the ERP write step. */
   tool_arguments?: Record<string, Record<string, OverlayToolArgumentSource>>;
   /** actionId → extra prompt output-contract fields (name → description). */
@@ -359,6 +372,10 @@ export interface AgentInputPort {
   /** JSON Schema fragment — carries `format`/`examples` so the run console
    *  can generate a usable default rather than a placeholder. */
   schema: Record<string, unknown>;
+  /** Authored sample value. Beats both the schema generator and `default` in
+   *  the run console, which is how 「加载示例」 offers an identifier that
+   *  actually exists in the target environment. See `input_examples`. */
+  example?: unknown;
 }
 
 export interface CompiledAgent {

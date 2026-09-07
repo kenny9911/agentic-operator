@@ -538,5 +538,23 @@
         "closure_context": "闭环上下文：{alert_id, deviation_id, chain_id, deviation_eliminated:boolean, verification_result:'属实'|'误报', closed_at}。deviation_eliminated 为 false 时不得闭环，退回重新生成调整方案（BR-CLOSE-01）。"
       }
     }
+  },
+  "input_examples": {
+    "DAILY_DEVIATION_SCAN_SCHEDULED": {
+      "scan_batch_id": "DEV-20260907-001",
+      "chain_scope": "指定单位",
+      "unit_code": "1000",
+      "organization_code": "YF1"
+    },
+    "PROCUREMENT_DOCUMENT_STATUS_CHANGED": {
+      "document_type": "采购订单",
+      "document_id": "HPO1000202609030004",
+      "chain_id": "100020260902000003",
+      "new_status": "已审批",
+      "changed_at": "2026-09-03T10:10:00+08:00"
+    },
+    "ALERT_TIMEOUT_SCAN_SCHEDULED": {
+      "scan_batch_id": "ESC-20260907-001"
+    }
   }
 }

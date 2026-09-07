@@ -92,9 +92,13 @@ function inputPortsFor(ctx: CompileContext, trigger: string[]): AgentInputPort[]
   const ports = new Map<string, AgentInputPort>();
   for (const eventName of trigger) {
     const event = ctx.model.events.find((candidate) => candidate.name === eventName);
+    const examples = ctx.overlay.input_examples?.[eventName];
     for (const field of event?.payload?.event_data ?? []) {
       const id = field.name?.trim();
       if (!id || ports.has(id)) continue;
+      const hasExample =
+        examples !== undefined &&
+        Object.prototype.hasOwnProperty.call(examples, id);
       ports.set(id, {
         id,
         label: id,
@@ -102,10 +106,38 @@ function inputPortsFor(ctx: CompileContext, trigger: string[]): AgentInputPort[]
         kind: "value",
         required: field.required === true,
         schema: ontologyFieldSchema(field),
+        ...(hasExample ? { example: examples[id] } : {}),
       });
     }
   }
   return [...ports.values()];
+}
+
+/**
+ * An overlay example that names an event or a field the ontology does not have
+ * is a typo, and a silently ignored one is worse than none: 「加载示例」 keeps
+ * offering the generated placeholder while the overlay looks correct.
+ */
+function validateInputExamples(ctx: CompileContext): void {
+  for (const [eventName, fields] of Object.entries(ctx.overlay.input_examples ?? {})) {
+    const event = ctx.model.events.find((candidate) => candidate.name === eventName);
+    if (!event) {
+      fail(`overlay input_examples names unknown event '${eventName}'`);
+      continue;
+    }
+    const known = new Set(
+      (event.payload?.event_data ?? [])
+        .map((field) => field.name?.trim())
+        .filter((name): name is string => Boolean(name)),
+    );
+    for (const field of Object.keys(fields)) {
+      if (!known.has(field)) {
+        fail(
+          `overlay input_examples: event '${eventName}' has no field '${field}'`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -1028,6 +1060,8 @@ export function compile(
       );
     }
   }
+
+  validateInputExamples(ctx);
 
   const workflow: CompiledAgent[] = model.actions.map((action) => {
     const kind = action.implementation.kind;

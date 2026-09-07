@@ -377,5 +377,20 @@
       }
     }
   },
-  "submission_gates": {}
+  "submission_gates": {},
+  "input_examples": {
+    "DAILY_DEMAND_PLAN_SCAN_SCHEDULED": {
+      "scan_batch_id": "DW-20260907-001",
+      "scan_scope": "指定管理单元",
+      "plan_id": "",
+      "unit_code": "1000",
+      "organization_code": "YF1"
+    },
+    "DEMAND_PLAN_APPROVED": {
+      "plan_id": "100020260903000006",
+      "plan_no": "100020260903000006",
+      "approved_at": "2026-09-03T10:10:00+08:00",
+      "business_type": "物资"
+    }
+  }
 }
