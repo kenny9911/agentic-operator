@@ -553,6 +553,16 @@ export function nodeVisual(
         pulse: false,
         actionable: false,
       };
+    // 分支被闸口挡下：跑完了，但一步实际工作都没做。绿色会让三个互斥方案
+    // 同时亮起，和「领导只选了一个」直接矛盾——所以它退到与「空闲」同一档，
+    // 只在文案上区分「未执行」与「空闲」。
+    case "skipped":
+      return {
+        accent: "var(--border-2)",
+        emphasis: "quiet",
+        pulse: false,
+        actionable: false,
+      };
     default:
       return {
         accent: "var(--border-2)",

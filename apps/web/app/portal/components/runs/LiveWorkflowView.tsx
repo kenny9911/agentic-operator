@@ -630,9 +630,11 @@ export function LiveNode({
           ? copy(`失败 ${ago ?? ""}`.trim(), `Failed ${ago ?? ""}`.trim())
           : status === "ok"
             ? copy(`已完成 ${ago ?? ""}`.trim(), `Done ${ago ?? ""}`.trim())
-            : agent.actor === "Human"
-              ? copy("人工节点", "Human step")
-              : copy("空闲", "Idle");
+            : status === "skipped"
+              ? copy(`未执行 ${ago ?? ""}`.trim(), `Not taken ${ago ?? ""}`.trim())
+              : agent.actor === "Human"
+                ? copy("人工节点", "Human step")
+                : copy("空闲", "Idle");
   return (
     <button
       type="button"

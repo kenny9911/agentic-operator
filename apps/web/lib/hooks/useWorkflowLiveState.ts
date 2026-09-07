@@ -27,6 +27,14 @@ export type AgentLiveStatus =
   | "idle"
   | "running"
   | "ok"
+  /**
+   * 分支被闸口挡下：运行完成了，但一步实际工作都没做。
+   *
+   * 三个互斥方案由同一个事件触发，被否掉的两个在提交闸口处跳过全部实效步骤后
+   * 照样以 ok 收尾——画成绿色「已完成」时，看板上三个方案全部亮起，与「领导只选了
+   * 一个」直接矛盾。执行过和被跳过必须看得出区别。
+   */
+  | "skipped"
   | "failed"
   | "waiting_human";
 
@@ -48,6 +56,22 @@ export interface AgentLiveState {
   /** Open HITL tasks blocking this agent's runs. */
   waitingTaskIds: string[];
 }
+
+/**
+ * 只有这些步骤类型算「做了事」。
+ *
+ * condition / decision 是闸口与记账：一条被否掉的分支照样会把它们跑成 ok，
+ * 拿它们判断执行与否，等于把「闸口正常工作」读成「分支执行了」。
+ */
+const EFFECT_STEP_TYPES = new Set([
+  "tool",
+  "logic",
+  "manual",
+  "emit",
+  "foreach",
+  "subflow",
+  "delay",
+]);
 
 export interface EdgePulse {
   eventName: string;
@@ -75,6 +99,8 @@ export interface WorkflowLiveState {
   taskAgent: Record<string, string>;
   /** runId → its human tasks, so a terminal run can take its badges down. */
   runTasks: Record<string, string[]>;
+  /** runId → 这次运行是否跑过至少一个实效步骤（见 EFFECT_STEP_TYPES）。 */
+  runDidWork: Record<string, boolean>;
   /**
    * runId → taskIds seen before that run was attributed to an agent.
    *
@@ -105,6 +131,7 @@ export function initialWorkflowLiveState(): WorkflowLiveState {
     latestSubject: null,
     taskAgent: {},
     runTasks: {},
+    runDidWork: {},
     pendingTasks: {},
     pulses: [],
   };
@@ -295,6 +322,9 @@ export function workflowLiveReducer(
     case "run.step.completed": {
       const agentName = state.runAgent[event.runId];
       if (!agentName) return state;
+      if (event.status === "ok" && EFFECT_STEP_TYPES.has(event.stepType)) {
+        state = { ...state, runDidWork: { ...state.runDidWork, [event.runId]: true } };
+      }
       return withAgent(state, agentName, (agent) => ({
         ...agent,
         tokensIn: agent.tokensIn + (event.tokensIn ?? 0),
@@ -304,7 +334,13 @@ export function workflowLiveReducer(
       }));
     }
     case "run.completed":
-      return resolveRun(state, event.runId, event.at, "ok", null);
+      return resolveRun(
+        state,
+        event.runId,
+        event.at,
+        state.runDidWork[event.runId] ? "ok" : "skipped",
+        null,
+      );
     case "run.failed":
       return resolveRun(
         state,

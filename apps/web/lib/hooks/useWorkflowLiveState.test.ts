@@ -50,6 +50,7 @@ function stepCompleted(
     tokensIn: number | null;
     tokensOut: number | null;
     error: string | null;
+    stepType: string;
   }> = {},
 ): RunStreamEvent {
   return {
@@ -60,7 +61,7 @@ function stepCompleted(
     stepId: "stp-1",
     ord: 1,
     name: "rule-gate:EMG-002",
-    stepType: "logic",
+    stepType: overrides.stepType ?? "logic",
     status: overrides.status ?? "ok",
     durationMs: 42,
     provider: "mock",
@@ -137,6 +138,8 @@ describe("workflowLiveReducer", () => {
   it("run.completed settles to ok and clears the active run", () => {
     const state = feed(initialWorkflowLiveState(), [
       runStarted("run-1", "a1"),
+      // 一步实效步骤：没有它，这次运行就是「被闸口挡下」，不是「完成」。
+      stepCompleted("run-1"),
       {
         type: "run.completed",
         tenantId: "tn-1",
@@ -327,6 +330,8 @@ describe("workflowLiveReducer", () => {
         taskId: "tsk-approve",
         decision: "approve",
       },
+      // 人工放行后真的写了一次 ERP——这一步把「执行了」和「被闸口挡下」区分开。
+      stepCompleted("run-t", { stepType: "tool" }),
       {
         type: "run.completed",
         tenantId: "tn-1",
@@ -339,6 +344,39 @@ describe("workflowLiveReducer", () => {
       },
     ]);
     expect(state.agents["action-create-stock-transfer"]!.state).toBe("ok");
+  });
+
+  // 三个互斥方案由同一个事件触发；被否掉的两个在提交闸口处跳过全部实效步骤后照样
+  // 以 run.completed 收尾。画成绿色「已完成」时看板上三个方案全部亮起，与「领导只
+  // 选了一个」直接矛盾。
+  it("a branch that only ran its gates settles to skipped, not ok", () => {
+    const state = feed(initialWorkflowLiveState(), [
+      {
+        type: "run.started",
+        tenantId: "tn-1",
+        at: T0,
+        runId: "run-x",
+        agentName: "compressDownstreamCycle",
+        triggerEvent: null,
+        subject: "s-1",
+        correlationId: "cor-x",
+      },
+      // 闸口判假：它自己是 ok，后面每一步都被跳过。
+      stepCompleted("run-x", { stepType: "condition" }),
+      stepCompleted("run-x", { stepType: "tool", status: "skipped" }),
+      stepCompleted("run-x", { stepType: "emit", status: "skipped" }),
+      {
+        type: "run.completed",
+        tenantId: "tn-1",
+        at: T0 + 200,
+        runId: "run-x",
+        durationMs: 200,
+        tokensIn: null,
+        tokensOut: null,
+        emittedEventId: null,
+      },
+    ]);
+    expect(state.agents["compressDownstreamCycle"]!.state).toBe("skipped");
   });
 });
 
