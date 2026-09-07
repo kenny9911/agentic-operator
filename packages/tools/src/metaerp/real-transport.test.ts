@@ -247,13 +247,7 @@ describe("metaerp real transports", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
       const route = resolveRoute("queryPbpHeader", "query");
       expect(route.defaults).toEqual({
-        pbpNumberList: [
-          "100020260902000001",
-          "100020260902000002",
-          "100020260902000003",
-          "100020260902000004",
-          "100020260831000002",
-        ],
+        pbpNumberList: ["100020260902000001"],
       });
     });
 

@@ -11,6 +11,7 @@ export {
   metaerpInvoke,
   loadMetaerpCatalog,
   _clearMetaerpCatalogCacheForTests,
+  _clearMetaerpCallBudgetForTests,
   type MetaerpCatalogOperation,
   type MetaerpOperationKind,
 } from "./invoke";

@@ -191,6 +191,50 @@ export function loadMetaerpCatalog(
   return map;
 }
 
+/**
+ * 每个运行允许的 ERP 调用次数上限。
+ *
+ * 对着 mock 从来不需要：种子数据只有几条，扇出天然有界。对着真实 ERP，
+ * 同一段提示词会把查到的每条询价单、每条定标结果再展开一遍——实测一次运行打了
+ * 152 次调用、上下文涨到 11 万 token、四次重试全部失败。没有上界时，模型打转的
+ * 代价是无限的，而且失败信息看起来像模型不行，不像扇出失控。
+ *
+ * 预算按 runId 计，**重试共用**：重试会把整个取数循环从头再跑一遍，给它一份新预算
+ * 只是把打转重来一次。宁可第二次就明确失败。
+ */
+const DEFAULT_MAX_CALLS_PER_RUN = 40;
+/** 计数表的条目上限，避免长期运行的进程无限增长。 */
+const MAX_TRACKED_RUNS = 500;
+
+const callsPerRun = new Map<string, number>();
+
+export function _clearMetaerpCallBudgetForTests(): void {
+  callsPerRun.clear();
+}
+
+function maxCallsPerRun(): number {
+  const raw = Number.parseInt(process.env.METAERP_MAX_CALLS_PER_RUN ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_CALLS_PER_RUN;
+}
+
+/** 记一次调用；超预算就失败关闭，并说清是扇出失控而不是接口坏了。 */
+function chargeCallBudget(runId: string | undefined, operation: string): void {
+  if (!runId) return;
+  const limit = maxCallsPerRun();
+  const used = (callsPerRun.get(runId) ?? 0) + 1;
+  callsPerRun.set(runId, used);
+  if (callsPerRun.size > MAX_TRACKED_RUNS) {
+    const oldest = callsPerRun.keys().next().value;
+    if (oldest !== undefined) callsPerRun.delete(oldest);
+  }
+  if (used > limit) {
+    throw new Error(
+      `metaerp.invoke: 本次运行的 ERP 调用已达上限 ${limit} 次（第 ${used} 次调用 '${operation}' 被拒）。` +
+        `这通常意味着取数扇出失控——先收窄查询范围，或调整 METAERP_MAX_CALLS_PER_RUN。`,
+    );
+  }
+}
+
 function readConfig(ctx: ToolContext): MetaerpInvokeConfig {
   return (ctx.config ?? {}) as MetaerpInvokeConfig;
 }
@@ -290,6 +334,8 @@ export const metaerpInvoke = defineTool({
     // Where this operation actually lives. Unlisted operations, and anything
     // held back by the two gates, keep going to the mock ERP exactly as before
     // — a half-migrated estate is a normal state here, not a broken one.
+    chargeCallBudget(ctx.runId, entry.operation);
+
     const route = resolveRoute(entry.operation, entry.kind);
     const routeMeta = {
       tool: "metaerp.invoke",
