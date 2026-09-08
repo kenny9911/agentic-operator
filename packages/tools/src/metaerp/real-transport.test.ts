@@ -767,3 +767,29 @@ describe("租户级路由覆盖", () => {
       .toBe("stub");
   });
 });
+
+describe("租户级默认通道", () => {
+  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  it("pins a whole tenant to the mock while the same operations stay real for everyone else", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_ALLOW_REAL_WRITES = "true";
+    _clearMetaerpRoutesCacheForTests();
+    // 场景一与场景二共用这些操作名；场景一切到真实 ERP 后，场景二曾跟着一起指向 v15。
+    for (const op of ["queryPbpHeader", "queryPr", "createPbp", "createTransactionOrder"]) {
+      const kind = op.startsWith("query") ? "query" : "write";
+      expect(resolveRoute(op, kind, "hc-digital-worker").transport, op).toBe("mock");
+      expect(resolveRoute(op, kind, "hc-procurement").transport, op).not.toBe("mock");
+    }
+    // 不在表里的操作对该租户依旧是 mock，不会因为租户默认而出错。
+    expect(resolveRoute("queryAuditThresholdConfig", "query", "hc-digital-worker").transport).toBe("mock");
+  });
+
+  it("lets an operation-level tenant override beat the tenant default", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    _clearMetaerpRoutesCacheForTests();
+    // hc-procurement 没有租户默认，但 updateTransactionOrder 有操作级覆盖 → stub
+    expect(resolveRoute("updateTransactionOrder", "write", "hc-procurement").transport).toBe("stub");
+  });
+});

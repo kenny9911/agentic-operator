@@ -322,19 +322,20 @@
   "output_contracts": {
     "scanApprovedDemandPlan": {
       "fields": {
-        "demand_plan": "本轮纳入的采购计划头列表：[{plan_id, plan_no, business_type, plan_type, status, demand_organization, demand_department, planner, annual_plan_flag, approved_at}]。只含 status='已批准' 的计划，草稿/已取消/已删除一律不得出现。",
-        "demand_plan_line": "计划行列表（每条归属到其 plan_id）：[{plan_line_id, plan_id, line_type_code, material_code, material_name, quantity, unit, estimated_unit_price, required_arrival_date, inventory_org, split_flag}]。编码一律用 metaERP 返回的原值。",
+        "demand_plan": "本轮纳入的采购计划头列表：[{plan_id, plan_no, business_type, plan_type, status, demand_organization, demand_department, planner, annual_plan_flag, approved_at}]。只含 status='已批准' 的计划，草稿/已取消/已删除一律不得出现。\n【硬性·用 records.project 取，不要手打】queryPbpHeader 返回后，**紧接着同一轮**调用 records.project 投影，然后逐字照抄 rows：\n  records.project({ source: \"rows\", fields: { plan_id: \"PBP_HEADER_ID\", plan_no: \"PLAN_NO\", business_type: \"BUSINESS_TYPE\", plan_type: \"PLAN_TYPE\", status: \"STATUS\", demand_organization: \"DEMAND_ORGANIZATION\", demand_department: \"DEMAND_DEPARTMENT\", planner: \"PLANNER\", annual_plan_flag: \"ANNUAL_PLAN_FLAG\", approved_at: \"APPROVED_AT\" } })\nsource 与源字段名以**接口实际返回**为准：本地 mock 返回 rows[] 且列名是大写下划线（PBP_HEADER_ID）；真实 metaERP 返回 records[] 且是小驼峰（pbpHeaderId）——照返回里出现的写，records.project 找不到字段会直接报错而不是猜。投影后再按 status 过滤，只留已批准。",
+        "demand_plan_line": "计划行列表（每条归属到其 plan_id）：[{plan_line_id, plan_id, line_type_code, material_code, material_name, quantity, unit, estimated_unit_price, required_arrival_date, inventory_org, split_flag}]。\n【硬性·用 records.project 取，不要手打】queryPbpLine 返回后**紧接着**调用：\n  records.project({ source: \"rows\", fields: { plan_line_id: \"PBP_LINE_ID\", plan_id: \"PBP_HEADER_ID\", line_type_code: \"LINE_TYPE_CODE\", material_code: \"MATERIAL_CODE\", material_name: \"MATERIAL_NAME\", quantity: \"QUANTITY\", unit: \"UNIT\", estimated_unit_price: \"ESTIMATED_UNIT_PRICE\", required_arrival_date: \"REQUIRED_ARRIVAL_DATE\", inventory_org: \"INVENTORY_ORG\", split_flag: \"SPLIT_FLAG\" } })\n然后逐字照抄 rows，再只保留 plan_id 落在已批准计划头里的行。**每一行的物料、数量、需求到货日期必须来自它自己那一行**——场景一里同一步把四行三个物料抄成了一个，每个值都看着合理，下游没有任何环节能发现。编码一律用 metaERP 返回的原值。",
         "scanned_line_count": "本轮纳入的计划行条数（整数）。",
         "coverage_note": "本轮范围说明：触发事件带 plan_id 时写明只处理该计划，否则写明已全量纳入所有已批准计划。",
-        "scan_date": "触发事件负载里 scan_date 的值，**原样照抄**（YYYY-MM-DD）。这是业务扫描日期，不是系统时间——与你认知里的今天不同也以它为准。**必填，不得留空**。"
+        "scan_date": "触发事件负载里 scan_date 的值，**原样照抄**（YYYY-MM-DD）。这是业务扫描日期，不是系统时间——与你认知里的今天不同也以它为准。**必填，不得留空**。",
+        "merge_thresholds": "合并/拆分判档阈值，供下一步 analyzeDemandMerge 使用（它没有取数工具，只能从这里拿）：\n{merge_window_days:number, split_window_days:number, threshold_ids:[string]}。\n**必须取自 queryAuditThresholdConfig**（与 queryPbpHeader/queryPbpLine 同一轮并发调用）：THRESHOLD_CODE=MERGE_WINDOW_DAYS 的 THRESHOLD_VALUE 填 merge_window_days，THRESHOLD_CODE=SPLIT_WINDOW_DAYS 的填 split_window_days，两条的 AUDIT_THRESHOLD_ID 填 threshold_ids。**不得写死、不得凭记忆填 30/60**——配置里查不到就在 coverage_note 写明缺哪一条并停下，不要带着默认值往下走。"
       }
     },
     "analyzeDemandMerge": {
       "fields": {
         "demand_plan_line": "原样透传上游计划行列表，不得改写。",
-        "merge_suggestion": "合并建议列表：[{merge_suggestion_id, split_option_label, plan_line_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。\n其中两个字段直接决定人工闸口能否作答，必须填：\n- `plan_line_id`：本条建议要拆分/合并的**目标计划行编号**，取自 member_plan_line_ids 中作为主行的那一条。计划员在待办里选中本条建议时，系统就用它回写 metaERP。\n- `split_option_label`：给人看的短名，**不超过 20 字、不带标点**，一眼说清这条建议是什么，例如「M-BRK-126 三行合并」「M-CAB-240 跨期拆分」。不要写成编号，也不要重复 merge_reason。",
+        "merge_suggestion": "合并建议列表：[{merge_suggestion_id, split_option_label, plan_line_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。\n其中两个字段直接决定人工闸口能否作答，必须填：\n- `plan_line_id`：本条建议要拆分/合并的**目标计划行编号**，取自 member_plan_line_ids 中作为主行的那一条。计划员在待办里选中本条建议时，系统就用它回写 metaERP。\n- `split_option_label`：给人看的短名，**不超过 20 字、不带标点**，一眼说清这条建议是什么，例如「M-BRK-126 三行合并」「M-CAB-240 跨期拆分」。不要写成编号，也不要重复 merge_reason。\n【日期差怎么算】date_span_days = 组内最晚需求到货日期 − 最早需求到货日期，按日历天数算，写明用到的两个日期。分档用 thresholds_used 里的两个窗口：≤ merge_window_days → mergeable；> split_window_days → split_required；介于两者之间 → needs_confirmation。",
         "split_required": "**必填布尔值**。只要有任意一组 suggestion='split_required' 就填 true，否则 false。工作流据此决定走拆分分支还是直接进库存校验——填错会让整条链路走错方向。",
-        "thresholds_used": "本次采用的分档阈值：{merge_window_days:number, split_window_days:number}。",
+        "thresholds_used": "本次采用的分档阈值：{merge_window_days:number, split_window_days:number, threshold_ids:[string]}。\n**必须逐字照抄上游事件负载里的 merge_thresholds**（那是 scanApprovedDemandPlan 从 queryAuditThresholdConfig 取回的），threshold_ids 一并带上。上游没有 merge_thresholds 就把 split_required 置 false、merge_suggestion 置空数组并在 merge_reason 写明「缺少合并阈值配置」——**不得用 30/60 这类默认值顶上**：阈值是规则评审组维护的配置，不是模型的常识。",
         "scan_date": "原样透传上游 scan_date。",
         "merge_reason": "可选。每条建议的成因说明（一句话），写在 merge_suggestion[].merge_reason 里，供计划员判断时阅读。"
       }
@@ -350,10 +351,10 @@
     "derivePurchaseSchedule": {
       "fields": {
         "demand_plan_line": "原样透传上游计划行列表。",
-        "backward_schedule_plan": "倒排计划：[{schedule_plan_id, plan_line_id, required_arrival_date, business_type, schedule_derived:boolean}]。",
-        "backward_schedule_stage": "各节点计划完成时间：[{schedule_stage_id, schedule_plan_id, stage_node, stage_sequence:1-8, standard_cycle_days:number, planned_finish_date:'YYYY-MM-DD'}]。按倒排公式逐字计算，并做正排交叉校验。",
-        "schedule_derived": "**必填布尔值**。所有计划行都完成倒排且两向校验一致才填 true。",
-        "time_conflict": "**必填布尔值**。倒排出的第一个节点计划完成时间早于 scan_date（工期已经不够）时填 true，否则 false。",
+        "backward_schedule_plan": "倒排计划：[{schedule_plan_id, plan_line_id, required_arrival_date, business_type, total_cycle_days:number, earliest_start_date:'YYYY-MM-DD', slack_days:number, time_conflict:boolean, schedule_derived:boolean, note:string}]。total_cycle_days / earliest_start_date / slack_days / time_conflict 全部照抄工具返回。",
+        "backward_schedule_stage": "各节点计划完成时间：[{schedule_stage_id, schedule_plan_id, stage_node, stage_sequence:1-8, standard_cycle_days:number, planned_finish_date:'YYYY-MM-DD'}]。\n【硬性·唯一来源】**逐字照抄 planning.backwardSchedule 工具返回的 planned_dates**，一个日期都不许自己心算。每条计划行调一次：\n  planning.backwardSchedule({ required_arrival_date: <该计划行的 required_arrival_date>, business_type: <该计划行所属计划头的 business_type>, reference_date: <scan_date>, stages: <queryStageCycleConfig 返回的原始行，整段原样传，不要改字段名、不要自己筛> })\n工具做的事：最后一个节点落在需求到货日当天，其余节点减去其后所有节点周期之和；按 business_type 筛配置，筛不到直接报错并列出配置里实际存在的业务类型。\n【为什么必须走工具】场景一同一步的模型把提示词里举例的七个日期整段抄进了输出，只替换了最后一个，排出「订单晚于到货」的表还声称校验通过。日期算术一律交给工具。",
+        "schedule_derived": "**必填布尔值**。每条计划行都拿到了 planning.backwardSchedule 的成功返回才填 true；任一条工具报错（缺周期配置、业务类型查不到）填 false，并把工具报错原文写进 backward_schedule_plan 对应条目的 note。",
+        "time_conflict": "**必填布尔值**。**逐字照抄**工具返回的 time_conflict（给了 reference_date=scan_date 工具就会算 slack_days = 最早开工日 − scan_date，为负即冲突）。多条计划行时任一条为 true 即 true。不要自己比日期。",
         "scan_date": "原样透传上游 scan_date。"
       }
     },
@@ -380,6 +381,7 @@
   "submission_gates": {},
   "input_examples": {
     "DAILY_DEMAND_PLAN_SCAN_SCHEDULED": {
+      "scan_date": "2027-01-05",
       "scan_batch_id": "DW-20260907-001",
       "scan_scope": "指定管理单元",
       "plan_id": "",
@@ -387,10 +389,22 @@
       "organization_code": "YF1"
     },
     "DEMAND_PLAN_APPROVED": {
-      "plan_id": "100020260903000006",
-      "plan_no": "100020260903000006",
-      "approved_at": "2026-09-03T10:10:00+08:00",
+      "plan_id": "PBP-2027-0101",
+      "plan_no": "PBP-2027-0101",
+      "approved_at": "2026-11-28T16:30:00+08:00",
       "business_type": "物资"
     }
+  },
+  "extra_tools": {
+    "scanApprovedDemandPlan": [
+      {
+        "name": "records.project"
+      }
+    ],
+    "derivePurchaseSchedule": [
+      {
+        "name": "planning.backwardSchedule"
+      }
+    ]
   }
 }

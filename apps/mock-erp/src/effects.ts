@@ -45,6 +45,10 @@ function required(payload: Row, ...names: string[]): unknown {
   return value;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function num(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   const n = Number(value);
@@ -1595,39 +1599,95 @@ const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
   /** 场景二的调拨建单：上游版本在 option_type 缺失时改走 createDemandTransfer，
    *  那条路要 MATERIAL_CODE，而数字化员工发的是另一套字段。 */
   createTransactionOrder: (store, payload) => {
-    const optionType = String(pick(payload, "option_type") ?? "");
-    if (optionType !== "执行调拨") {
-      return { ok: true, id: "SKIPPED", applied: false, skipped_reason: optionType };
+    const optionType = pick(payload, "option_type");
+    // 场景一：领导拍板后的「执行调拨」方案，payload 带 option_type。
+    if (optionType !== undefined) {
+      if (String(optionType) !== "执行调拨") {
+        return { ok: true, id: "SKIPPED", applied: false, skipped_reason: String(optionType) };
+      }
+      const source = (pick(payload, "transfer_source") ?? payload) as Row;
+      const id = makeId("TRO");
+      const leadDays = num(pick(source, "TRANSFER_LEAD_DAYS", "transfer_lead_days")) ?? 7;
+      const expected = new Date(Date.now() + leadDays * 86_400_000).toISOString().slice(0, 10);
+      const row: Row = {
+        TRANSFER_REQUEST_ID: id,
+        TRANSFER_NO: id,
+        OPTION_ID: pick(payload, "option_id") ?? "",
+        CHAIN_ID: pick(payload, "chain_id") ?? "",
+        MATERIAL_CODE: required(source, "ITEM_CODE", "item_code", "material_code"),
+        TRANSFER_QUANTITY: num(required(source, "TRANSFER_QUANTITY", "transfer_quantity")) ?? 0,
+        SOURCE_WAREHOUSE: required(source, "WAREHOUSE_ID", "warehouse_id", "source_warehouse"),
+        TARGET_WAREHOUSE: pick(payload, "target_warehouse") ?? "需求单位库",
+        REQUEST_STATUS: "已提交",
+        EXPECTED_ARRIVAL_DATE: expected,
+        CREATED_AT: new Date().toISOString(),
+      };
+      store.rows("inv_transaction_order_t").push(row);
+      return {
+        ok: true,
+        id,
+        row,
+        applied: true,
+        transfer_request_id: id,
+        transfer_no: id,
+        option_id: row["OPTION_ID"],
+        chain_id: row["CHAIN_ID"],
+        transfer_quantity: row["TRANSFER_QUANTITY"],
+        expected_arrival_date: expected,
+      };
     }
-    const source = (pick(payload, "transfer_source") ?? payload) as Row;
-    const id = makeId("TRO");
-    const leadDays = num(pick(source, "TRANSFER_LEAD_DAYS", "transfer_lead_days")) ?? 7;
-    const expected = new Date(Date.now() + leadDays * 86_400_000).toISOString().slice(0, 10);
-    const row: Row = {
-      TRANSFER_REQUEST_ID: id,
-      TRANSFER_NO: id,
-      OPTION_ID: pick(payload, "option_id") ?? "",
-      CHAIN_ID: pick(payload, "chain_id") ?? "",
-      MATERIAL_CODE: required(source, "ITEM_CODE", "item_code", "material_code"),
-      TRANSFER_QUANTITY: num(required(source, "TRANSFER_QUANTITY", "transfer_quantity")) ?? 0,
-      SOURCE_WAREHOUSE: required(source, "WAREHOUSE_ID", "warehouse_id", "source_warehouse"),
-      TARGET_WAREHOUSE: pick(payload, "target_warehouse") ?? "需求单位库",
-      REQUEST_STATUS: "已提交",
-      EXPECTED_ARRIVAL_DATE: expected,
-      CREATED_AT: new Date().toISOString(),
-    };
-    store.rows("inv_transaction_order_t").push(row);
+
+    // 场景二（R2-02 转调拨）：库存校验判「可调度」的计划行，逐行建调拨。
+    // 这条路此前会因为没有 option_type 而返回 SKIPPED（applied:false）——步骤显示
+    // 成功、库里一张单都没有，正是场景一里「报告成功但 ERP 没单」的同款。
+    const checks = pick(payload, "stock_check_result", "stock_checks");
+    const eligible = (Array.isArray(checks) ? checks : [])
+      .filter((entry): entry is Row => isRecord(entry))
+      .filter((entry) => String(pick(entry, "stock_check_flag", "STOCK_CHECK_FLAG") ?? "") === "可调度");
+    if (eligible.length === 0) {
+      throw new MockErpError(
+        400,
+        "createTransactionOrder: 没有可调度的计划行——payload 需要带 option_type（场景一）或 stock_check_result[] 中至少一条 stock_check_flag='可调度'（场景二）",
+      );
+    }
+    const lines = (pick(payload, "demand_plan_line") ?? []) as unknown;
+    const lineById = new Map<string, Row>();
+    if (Array.isArray(lines)) {
+      for (const line of lines) {
+        if (isRecord(line)) {
+          const id = pick(line, "plan_line_id", "PBP_LINE_ID", "pbp_line_id");
+          if (id !== undefined) lineById.set(String(id), line as Row);
+        }
+      }
+    }
+    const created: Row[] = eligible.map((check) => {
+      const planLineId = String(pick(check, "plan_line_id", "PBP_LINE_ID") ?? "");
+      const line = lineById.get(planLineId);
+      const id = makeId("TRO");
+      const row: Row = {
+        TRANSFER_REQUEST_ID: id,
+        TRANSFER_NO: id,
+        PBP_LINE_ID: planLineId,
+        MATERIAL_CODE: String(pick(check, "material_code", "MATERIAL_CODE") ?? pick(line ?? {}, "material_code") ?? ""),
+        INVENTORY_ORG: String(pick(check, "inventory_org", "INVENTORY_ORG") ?? pick(line ?? {}, "inventory_org") ?? ""),
+        TRANSFER_QUANTITY:
+          num(pick(check, "required_qty", "demand_qty", "quantity")) ??
+          num(pick(line ?? {}, "quantity", "QUANTITY")) ??
+          0,
+        AVAILABLE_QTY: num(pick(check, "available_qty", "AVAILABLE_QTY")) ?? null,
+        REQUEST_STATUS: "已提交",
+        CREATED_AT: new Date().toISOString(),
+      };
+      store.rows("inv_transaction_order_t").push(row);
+      return row;
+    });
     return {
       ok: true,
-      id,
-      row,
+      id: String(created[0]!["TRANSFER_REQUEST_ID"]),
+      rows: created,
       applied: true,
-      transfer_request_id: id,
-      transfer_no: id,
-      option_id: row["OPTION_ID"],
-      chain_id: row["CHAIN_ID"],
-      transfer_quantity: row["TRANSFER_QUANTITY"],
-      expected_arrival_date: expected,
+      transfer_request_ids: created.map((row) => row["TRANSFER_REQUEST_ID"]),
+      transfer_count: created.length,
     };
   },
 
@@ -1689,51 +1749,65 @@ const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
 
   /** R2-05 标注 — 把组包方案落成采购包行，带框架协议/集采标识。 */
   createProcPackageLines: (store, payload) => {
-    const schemeId = String(
-      required(payload, "PACKAGE_SCHEME_ID", "package_scheme_id"),
-    );
-    const headerId = makeId("PKG");
-    const header: Row = {
-      PACKAGE_ID: headerId,
-      PACKAGE_NO: headerId,
-      PACKAGE_SCHEME_ID: schemeId,
-      PACKAGE_NAME: String(pick(payload, "package_name") ?? headerId),
-      CATEGORY_CODE: String(pick(payload, "category_code") ?? ""),
-      STATUS: "已组包",
-      CREATED_AT: new Date().toISOString(),
-    };
-    store.rows("ss_proc_package_header_t").push(header);
-
-    // The scheme names its member plan lines; one package line per member.
-    const members = pick(payload, "member_plan_line_ids", "plan_line_ids");
-    const memberIds = Array.isArray(members)
-      ? members.map((value) => String(value))
-      : String(members ?? "")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean);
-    const rows: Row[] = memberIds.map((planLineId, index) => {
-      const line: Row = {
-        PACKAGE_LINE_ID: `${headerId}-${String(index + 1).padStart(2, "0")}`,
+    // recommendPackagingScheme 的产出是 package_scheme: [{package_scheme_id, ...}] 列表，
+    // 而这里此前只认顶层 package_scheme_id——真实模型跑到这一步必然 400。端到端测试
+    // 之前没暴露，是因为它用 carry() 往载荷顶层塞了一个 package_scheme_id。
+    const schemes = pick(payload, "package_scheme", "package_schemes");
+    const schemeList: Row[] = Array.isArray(schemes)
+      ? schemes.filter((entry): entry is Row => isRecord(entry))
+      : isRecord(schemes)
+        ? [schemes as Row]
+        : [payload];
+    const packages = schemeList.map((scheme) => {
+      const schemeId = String(
+        required(scheme, "PACKAGE_SCHEME_ID", "package_scheme_id"),
+      );
+      const headerId = makeId("PKG");
+      const header: Row = {
         PACKAGE_ID: headerId,
-        PBP_LINE_ID: planLineId,
-        FRAME_AGREEMENT_NO: String(pick(payload, "frame_agreement_no") ?? ""),
-        CENTRAL_PURCHASE_FLAG: pick(payload, "central_purchase_flag") === true,
-        EXECUTE_MODE: String(pick(payload, "execute_mode") ?? "公开询价"),
+        PACKAGE_NO: headerId,
+        PACKAGE_SCHEME_ID: schemeId,
+        PACKAGE_NAME: String(pick(scheme, "package_name") ?? pick(payload, "package_name") ?? headerId),
+        CATEGORY_CODE: String(pick(scheme, "category_code") ?? pick(payload, "category_code") ?? ""),
+        STATUS: "已组包",
+        CREATED_AT: new Date().toISOString(),
       };
-      store.rows("ss_proc_package_line_t").push(line);
-      return line;
-    });
+      store.rows("ss_proc_package_header_t").push(header);
 
+      // The scheme names its member plan lines; one package line per member.
+      const members = pick(scheme, "member_plan_line_ids", "plan_line_ids") ?? pick(payload, "member_plan_line_ids", "plan_line_ids");
+      const memberIds = Array.isArray(members)
+        ? members.map((value) => String(value))
+        : String(members ?? "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+      const rows: Row[] = memberIds.map((planLineId, index) => {
+        const line: Row = {
+          PACKAGE_LINE_ID: `${headerId}-${String(index + 1).padStart(2, "0")}`,
+          PACKAGE_ID: headerId,
+          PBP_LINE_ID: planLineId,
+          FRAME_AGREEMENT_NO: String(pick(scheme, "frame_agreement_no") ?? pick(payload, "frame_agreement_no") ?? ""),
+          CENTRAL_PURCHASE_FLAG: (pick(scheme, "central_purchase_flag") ?? pick(payload, "central_purchase_flag")) === true,
+          EXECUTE_MODE: String(pick(scheme, "execute_mode") ?? pick(payload, "execute_mode") ?? "公开询价"),
+        };
+        store.rows("ss_proc_package_line_t").push(line);
+        return line;
+      });
+      return { header, rows };
+    });
+    const first = packages[0]!;
     return {
       ok: true,
-      id: headerId,
-      row: header,
-      rows,
+      id: String(first.header["PACKAGE_ID"]),
+      row: first.header,
+      rows: packages.flatMap((entry) => entry.rows),
       applied: true,
-      package_id: headerId,
-      package_scheme_id: schemeId,
-      package_line_count: rows.length,
+      package_id: first.header["PACKAGE_ID"],
+      package_ids: packages.map((entry) => entry.header["PACKAGE_ID"]),
+      package_scheme_id: first.header["PACKAGE_SCHEME_ID"],
+      package_count: packages.length,
+      package_line_count: packages.reduce((sum, entry) => sum + entry.rows.length, 0),
     };
   },
 

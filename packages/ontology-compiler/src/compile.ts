@@ -163,6 +163,11 @@ function backwardScheduleToolUseEntry(grant: OverlayExtraTool): CompiledToolUseE
           description:
             "\u53ef\u9009\uff1a\u6309\u4e1a\u52a1\u7c7b\u578b\u7b5b\u9009 stages\uff1b\u7b5b\u4e0d\u5230\u4f1a\u62a5\u9519\u5e76\u5217\u51fa\u914d\u7f6e\u91cc\u5b9e\u9645\u5b58\u5728\u7684\u4e1a\u52a1\u7c7b\u578b\u3002",
         },
+        reference_date: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u53c2\u8003\u65e5\uff08\u4f20 scan_date\uff0cYYYY-MM-DD\uff09\u3002\u7ed9\u4e86\u5c31\u8fd4\u56de slack_days \u4e0e time_conflict\uff0c\u5de5\u671f\u591f\u4e0d\u591f\u7531\u5de5\u5177\u7b97\u5b8c\u3002",
+        },
         stages: {
           type: "array",
           description:

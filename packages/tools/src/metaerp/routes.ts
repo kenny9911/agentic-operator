@@ -117,7 +117,58 @@ export interface MetaerpRoute {
 
 const DEFAULT_ROUTES_FILE = path.join("config", "metaerp-routes.json");
 
-let cache: { path: string; routes: Map<string, MetaerpRoute> } | null = null;
+let cache: {
+  path: string;
+  routes: Map<string, MetaerpRoute>;
+  tenants: Map<string, TenantRouteDefault>;
+} | null = null;
+
+/**
+ * 租户级默认通道。
+ *
+ * 路由表按操作名归属，而操作名是跨租户共用的：场景二的 queryPbpHeader / createPbp /
+ * createTransactionOrder 与场景一同名。场景一切到真实 ERP 后，场景二的 13 个操作
+ * 跟着一起指向了 v15——其中两个是真实写入，还会带上场景一钉死的 pbpNumberList 过滤。
+ * 「先在 mock 上把整条链路跑通」需要一句话就能把一个租户整体钉住，而不是给 35 个
+ * 操作各写一段 tenant_overrides。操作级 tenant_overrides 仍然更具体，可以覆盖它。
+ */
+export interface TenantRouteDefault {
+  transport: MetaerpTransport;
+  reason?: string;
+}
+
+function normalizeTenantDefaults(raw: unknown): Map<string, TenantRouteDefault> {
+  const out = new Map<string, TenantRouteDefault>();
+  if (raw === undefined) return out;
+  if (!isRecord(raw)) {
+    throw new Error("metaerp routes: top-level 'tenants' must be an object keyed by tenant slug");
+  }
+  for (const [slug, value] of Object.entries(raw)) {
+    if (!isRecord(value)) {
+      throw new Error(`metaerp routes: tenants.${slug} must be an object`);
+    }
+    const transport = value.transport;
+    if (transport !== "mock" && transport !== "stub") {
+      // A tenant default may only point AWAY from the real estate. Pointing a
+      // whole tenant at a real transport by default would let one line in a
+      // config file switch every write it makes to live documents.
+      throw new Error(
+        `metaerp routes: tenants.${slug}.transport must be mock | stub (got '${String(transport)}')`,
+      );
+    }
+    out.set(slug, {
+      transport,
+      ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+    });
+  }
+  return out;
+}
+
+export function metaerpTenantDefault(tenantSlug: string | undefined): TenantRouteDefault | undefined {
+  if (!tenantSlug) return undefined;
+  loadMetaerpRoutes();
+  return cache?.tenants.get(tenantSlug);
+}
 
 export function _clearMetaerpRoutesCacheForTests(): void {
   cache = null;
@@ -255,6 +306,7 @@ export function loadMetaerpRoutes(): Map<string, MetaerpRoute> {
   const file = metaerpRoutesFilePath();
   if (cache?.path === file) return cache.routes;
   const routes = new Map<string, MetaerpRoute>();
+  let parsedTenants: unknown;
   if (fs.existsSync(file)) {
     let parsed: unknown;
     try {
@@ -268,11 +320,12 @@ export function loadMetaerpRoutes(): Map<string, MetaerpRoute> {
     if (!table) {
       throw new Error(`metaerp routes: ${file} must be { "routes": { ... } }`);
     }
+    parsedTenants = isRecord(parsed) ? parsed.tenants : undefined;
     for (const [operation, raw] of Object.entries(table)) {
       routes.set(operation, normalizeRoute(operation, raw));
     }
   }
-  cache = { path: file, routes };
+  cache = { path: file, routes, tenants: normalizeTenantDefaults(parsedTenants) };
   return routes;
 }
 
@@ -370,8 +423,15 @@ export function resolveRoute(
 ): ResolvedRoute {
   const base = loadMetaerpRoutes().get(operation);
   const override = tenantSlug ? base?.tenant_overrides?.[tenantSlug] : undefined;
-  // 浅合并：覆盖块只需写它要改的字段，其余沿用主声明。
-  const stored = base && override ? { ...base, ...override } : base;
+  const tenantDefault = override ? undefined : metaerpTenantDefault(tenantSlug);
+  // 优先级：操作级 tenant_overrides > 租户级默认 > 主声明。浅合并，覆盖块只写要改的字段。
+  // `override` 只可能来自 `base.tenant_overrides`，所以它存在时 base 必然存在。
+  const stored: MetaerpRoute | undefined =
+    base && override
+      ? ({ ...base, ...override } as MetaerpRoute)
+      : tenantDefault
+        ? { ...(base ?? { transport: "mock" as const }), transport: tenantDefault.transport }
+        : base;
   const declared: MetaerpRoute = stored
     ? {
         ...stored,

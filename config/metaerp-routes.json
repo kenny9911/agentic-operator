@@ -1,5 +1,11 @@
 {
   "_readme": "Meta ERP 操作路由表。transport: mock | openapi | uiapi；未列出的操作一律走 mock。两道闸口：METAERP_TRANSPORT_MODE=real 本表才生效；写操作还需 METAERP_ALLOW_REAL_WRITES=true。path 不带环境前缀，运行时按 METAERP_ENV 归一到 /v15 或 /beta。",
+  "tenants": {
+    "hc-digital-worker": {
+      "transport": "mock",
+      "reason": "场景二先在本地 mock（:3621）上把整条链路跑通。它与场景一共用 queryPbpHeader / queryPr / createPbp / createTransactionOrder 等 13 个操作名，不钉住会跟着场景一一起打到真实 v15，其中两个是真实写入。切真实 ERP 时删掉这一段即可。"
+    }
+  },
   "routes": {
     "queryPbpHeader": {
       "transport": "openapi",

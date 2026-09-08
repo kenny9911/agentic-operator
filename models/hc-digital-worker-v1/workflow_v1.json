@@ -2,9 +2,10 @@
   {
     "actions": [
       {
-        "action_prompt": "【查】每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤掉草稿、已取消、已删除的单据，圈定当日需求合并的作业范围(R2-01)。扫描一次覆盖全集团，替代计划员逐条翻看。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 0 步：管理单元与库存组织由平台自动补进每个查询（unitCode / organizationCode），\n**你不要再传这两个字段，也不要改写它们**。其余入参一律用 metaERP 的小驼峰命名\n（如 pbpNumberList、itemCodeList），不要用本体里的下划线写法。\n\n第 1 步：**同一轮一次性并发**调用 queryPbpHeader 与 queryPbpLine，不要串行。\n第 2 步：只保留 STATUS=已批准 的计划头，草稿/已取消/已删除一律剔除（R2-01）。\n第 3 步：把计划行按其 PBP_HEADER_ID 归到对应计划头下，行的物料、数量、\n需求到货日期、计划行类型编码原样带出，不得改写编码。\n\nscan_date **原样照抄**触发事件负载里的 scan_date，不得用你认知里的今天。\n\n执行步骤：\n1. anchorScanDate：把本次扫描业务日期锚定为事件携带的 scan_date，作为后续日期差、查重窗口、倒排「当前日期」的唯一定义，禁止各环节各取系统当下时间。\n2. writeScanTrace：记录扫描范围、命中条数、过滤条数与耗时，形成可审计留痕。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan`、`demand_plan_line`、`scanned_line_count`、`coverage_note`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan\": <见字段说明>,\n  \"demand_plan_line\": <见字段说明>,\n  \"scanned_line_count\": <见字段说明>,\n  \"coverage_note\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- scan_batch_id: 扫描批次号。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- scan_date: 扫描业务日期。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- in_scope_line_count: 纳入范围的计划行条数。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- filtered_line_count: 被过滤的计划行条数。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- plan_id: 本批次覆盖的采购计划。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- demand_plan: 本轮纳入的采购计划头列表：[{plan_id, plan_no, business_type, plan_type, status, demand_organization, demand_department, planner, annual_plan_flag, approved_at}]。只含 status='已批准' 的计划，草稿/已取消/已删除一律不得出现。\n- demand_plan_line: 计划行列表（每条归属到其 plan_id）：[{plan_line_id, plan_id, line_type_code, material_code, material_name, quantity, unit, estimated_unit_price, required_arrival_date, inventory_org, split_flag}]。编码一律用 metaERP 返回的原值。\n- scanned_line_count: 本轮纳入的计划行条数（整数）。\n- coverage_note: 本轮范围说明：触发事件带 plan_id 时写明只处理该计划，否则写明已全量纳入所有已批准计划。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "action_prompt": "【查】每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤掉草稿、已取消、已删除的单据，圈定当日需求合并的作业范围(R2-01)。扫描一次覆盖全集团，替代计划员逐条翻看。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 0 步：管理单元与库存组织由平台自动补进每个查询（unitCode / organizationCode），\n**你不要再传这两个字段，也不要改写它们**。其余入参一律用 metaERP 的小驼峰命名\n（如 pbpNumberList、itemCodeList），不要用本体里的下划线写法。\n\n第 1 步：**同一轮一次性并发**调用 queryPbpHeader 与 queryPbpLine，不要串行。\n第 2 步：只保留 STATUS=已批准 的计划头，草稿/已取消/已删除一律剔除（R2-01）。\n第 3 步：把计划行按其 PBP_HEADER_ID 归到对应计划头下，行的物料、数量、\n需求到货日期、计划行类型编码原样带出，不得改写编码。\n\nscan_date **原样照抄**触发事件负载里的 scan_date，不得用你认知里的今天。\n\n执行步骤：\n1. anchorScanDate：把本次扫描业务日期锚定为事件携带的 scan_date，作为后续日期差、查重窗口、倒排「当前日期」的唯一定义，禁止各环节各取系统当下时间。\n2. writeScanTrace：记录扫描范围、命中条数、过滤条数与耗时，形成可审计留痕。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan`、`demand_plan_line`、`scanned_line_count`、`coverage_note`、`scan_date`、`merge_thresholds` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan\": <见字段说明>,\n  \"demand_plan_line\": <见字段说明>,\n  \"scanned_line_count\": <见字段说明>,\n  \"coverage_note\": <见字段说明>,\n  \"scan_date\": <见字段说明>,\n  \"merge_thresholds\": <见字段说明>\n}\n字段说明：\n- scan_batch_id: 扫描批次号。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- scan_date: 扫描业务日期。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- in_scope_line_count: 纳入范围的计划行条数。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- filtered_line_count: 被过滤的计划行条数。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- plan_id: 本批次覆盖的采购计划。（事件 APPROVED_DEMAND_PLAN_SCANNED 的 payload 段）\n- demand_plan: 本轮纳入的采购计划头列表：[{plan_id, plan_no, business_type, plan_type, status, demand_organization, demand_department, planner, annual_plan_flag, approved_at}]。只含 status='已批准' 的计划，草稿/已取消/已删除一律不得出现。\n【硬性·用 records.project 取，不要手打】queryPbpHeader 返回后，**紧接着同一轮**调用 records.project 投影，然后逐字照抄 rows：\n  records.project({ source: \"rows\", fields: { plan_id: \"PBP_HEADER_ID\", plan_no: \"PLAN_NO\", business_type: \"BUSINESS_TYPE\", plan_type: \"PLAN_TYPE\", status: \"STATUS\", demand_organization: \"DEMAND_ORGANIZATION\", demand_department: \"DEMAND_DEPARTMENT\", planner: \"PLANNER\", annual_plan_flag: \"ANNUAL_PLAN_FLAG\", approved_at: \"APPROVED_AT\" } })\nsource 与源字段名以**接口实际返回**为准：本地 mock 返回 rows[] 且列名是大写下划线（PBP_HEADER_ID）；真实 metaERP 返回 records[] 且是小驼峰（pbpHeaderId）——照返回里出现的写，records.project 找不到字段会直接报错而不是猜。投影后再按 status 过滤，只留已批准。\n- demand_plan_line: 计划行列表（每条归属到其 plan_id）：[{plan_line_id, plan_id, line_type_code, material_code, material_name, quantity, unit, estimated_unit_price, required_arrival_date, inventory_org, split_flag}]。\n【硬性·用 records.project 取，不要手打】queryPbpLine 返回后**紧接着**调用：\n  records.project({ source: \"rows\", fields: { plan_line_id: \"PBP_LINE_ID\", plan_id: \"PBP_HEADER_ID\", line_type_code: \"LINE_TYPE_CODE\", material_code: \"MATERIAL_CODE\", material_name: \"MATERIAL_NAME\", quantity: \"QUANTITY\", unit: \"UNIT\", estimated_unit_price: \"ESTIMATED_UNIT_PRICE\", required_arrival_date: \"REQUIRED_ARRIVAL_DATE\", inventory_org: \"INVENTORY_ORG\", split_flag: \"SPLIT_FLAG\" } })\n然后逐字照抄 rows，再只保留 plan_id 落在已批准计划头里的行。**每一行的物料、数量、需求到货日期必须来自它自己那一行**——场景一里同一步把四行三个物料抄成了一个，每个值都看着合理，下游没有任何环节能发现。编码一律用 metaERP 返回的原值。\n- scanned_line_count: 本轮纳入的计划行条数（整数）。\n- coverage_note: 本轮范围说明：触发事件带 plan_id 时写明只处理该计划，否则写明已全量纳入所有已批准计划。\n- merge_thresholds: 合并/拆分判档阈值，供下一步 analyzeDemandMerge 使用（它没有取数工具，只能从这里拿）：\n{merge_window_days:number, split_window_days:number, threshold_ids:[string]}。\n**必须取自 queryAuditThresholdConfig**（与 queryPbpHeader/queryPbpLine 同一轮并发调用）：THRESHOLD_CODE=MERGE_WINDOW_DAYS 的 THRESHOLD_VALUE 填 merge_window_days，THRESHOLD_CODE=SPLIT_WINDOW_DAYS 的填 split_window_days，两条的 AUDIT_THRESHOLD_ID 填 threshold_ids。**不得写死、不得凭记忆填 30/60**——配置里查不到就在 coverage_note 写明缺哪一条并停下，不要带着默认值往下走。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
         "allowed_tools": [
-          "metaerp.invoke"
+          "metaerp.invoke",
+          "records.project"
         ],
         "description": "【查】每日定时或需求计划审批通过时触发，拉取全集团已审批的采购业务计划头与计划行，过滤掉草稿、已取消、已删除的单据，圈定当日需求合并的作业范围(R2-01)。扫描一次覆盖全集团，替代计划员逐条翻看。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 0 步：管理单元与库存组织由平台自动补进每个查询（unitCode / organizationCode），\n**你不要再传这两个字段，也不要改写它们**。其余入参一律用 metaERP 的小驼峰命名\n（如 pbpNumberList、itemCodeList），不要用本体里的下划线写法。\n\n第 1 步：**同一轮一次性并发**调用 queryPbpHeader 与 queryPbpLine，不要串行。\n第 2 步：只保留 STATUS=已批准 的计划头，草稿/已取消/已删除一律剔除（R2-01）。\n第 3 步：把计划行按其 PBP_HEADER_ID 归到对应计划头下，行的物料、数量、\n需求到货日期、计划行类型编码原样带出，不得改写编码。\n\nscan_date **原样照抄**触发事件负载里的 scan_date，不得用你认知里的今天。",
         "name": "analyze",
@@ -31,6 +32,7 @@
     "inputs": [
       {
         "description": "扫描业务日期，全流程「当前日期」的唯一定义。",
+        "example": "2027-01-05",
         "id": "scan_date",
         "kind": "value",
         "label": "scan_date",
@@ -101,7 +103,7 @@
       },
       {
         "description": "采购计划编号。",
-        "example": "100020260903000006",
+        "example": "PBP-2027-0101",
         "id": "plan_no",
         "kind": "value",
         "label": "plan_no",
@@ -112,7 +114,7 @@
       },
       {
         "description": "审批通过时间。",
-        "example": "2026-09-03T10:10:00+08:00",
+        "example": "2026-11-28T16:30:00+08:00",
         "id": "approved_at",
         "kind": "value",
         "label": "approved_at",
@@ -173,6 +175,33 @@
         },
         "name": "metaerp.invoke",
         "side_effect": "read"
+      },
+      {
+        "config": {},
+        "description": "从上一个工具的返回值里按字段映射逐行原样取值（纯计算）。标识符、物料号、单据号这类值一律用它取，不要自己拄。",
+        "execution_policy": {
+          "effect_scope": "none",
+          "operation": "compute",
+          "sandbox_policy": "pure"
+        },
+        "input_schema": {
+          "properties": {
+            "fields": {
+              "description": "{输出字段名: 源字段名}；值以 \"$root.\" 开头则从结果根部取一个表头值盖到每一行。",
+              "type": "object"
+            },
+            "source": {
+              "description": "可选：指向行数组的路径，如 records[0].prLineList。省略则上一结果本身即数组。",
+              "type": "string"
+            }
+          },
+          "required": [
+            "fields"
+          ],
+          "type": "object"
+        },
+        "name": "records.project",
+        "side_effect": "read"
       }
     ],
     "trigger": [
@@ -186,7 +215,7 @@
   {
     "actions": [
       {
-        "action_prompt": "【析】按「物料编码 + 计划行类型编码」聚类已审批需求计划行，组内两两比需求日期差，算出可合并簇、需拆分行与待确认灰区，并给出合并数量与加权预估单价(R2-01)。把计划员 10-15 分钟一次的人工比对压到分钟级，且口径全集团一致。\n\n【判定步骤】\n\n第 1 步：按 `物料编码 + 计划行类型编码` 聚类，同组内两两比较需求到货日期。\n第 2 步：按天数差分档（阈值取自上游 thresholds_used，缺失时用 30/60 默认值）：\n  ≤30 天 → 可合并 mergeable；>60 天 → 需拆分 split_required；\n  介于两者之间 → 待计划员确认 needs_confirmation。\n第 3 步：可合并组算合并数量之和与**按数量加权**的预估单价：\n  weighted_price = Σ(qty_i × price_i) / Σ(qty_i)，保留两位小数。\n第 4 步：只要有任意一组落在 split_required，就把 split_required 置 true。\n\n组内计划行编号一律用 metaERP 返回的原值，不得自造。\n\n执行步骤：\n1. groupByMergeKey：以合并键 = 物料编码 + 计划行类型编码 对计划行聚类，管理单元与库存组织不同的不并组。\n2. computeDateGap：组内两两计算需求日期差取最大值 max_date_gap_days：≤30 天判可合并(BR2-MERGE-01)，>60 天判需拆分(BR2-MERGE-02)，30~60 天判待计划员确认(BR2-MERGE-03)。\n3. computeMergedQuantityAndPrice：合并数量 = 组内数量求和；预估单价 = 组内单价按数量加权平均；合并后需求日期取组内最早日期；合并金额 = 合并数量 × 加权单价。\n4. scoreMergeConfidence：按物料一致度、类型一致度、日期紧密度加权算出 0~100 的合并匹配度，并生成一句话可读理由，让计划员一眼看懂为什么这么归。\n5. emitMergeAndSplitList：输出可合并清单与需拆分清单：需拆分的走 b2 分支，其余进入库存校验。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`merge_suggestion`、`split_required`、`thresholds_used`、`scan_date`、`merge_reason` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"merge_suggestion\": <见字段说明>,\n  \"split_required\": <见字段说明>,\n  \"thresholds_used\": <见字段说明>,\n  \"scan_date\": <见字段说明>,\n  \"merge_reason\": <见字段说明>\n}\n字段说明：\n- merge_suggestion_id: 合并建议标识。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merge_group_id: 合并组编号。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- suggestion_type: 建议结论：可合并/需拆分/待计划员确认。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merged_quantity: 合并数量。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merge_score: 合并匹配度。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- max_date_gap_days: 组内需求日期最大差值。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- plan_line_id: 待拆分的计划行。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- split_reason: 拆分理由。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表，不得改写。\n- merge_suggestion: 合并建议列表：[{merge_suggestion_id, split_option_label, plan_line_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。\n其中两个字段直接决定人工闸口能否作答，必须填：\n- `plan_line_id`：本条建议要拆分/合并的**目标计划行编号**，取自 member_plan_line_ids 中作为主行的那一条。计划员在待办里选中本条建议时，系统就用它回写 metaERP。\n- `split_option_label`：给人看的短名，**不超过 20 字、不带标点**，一眼说清这条建议是什么，例如「M-BRK-126 三行合并」「M-CAB-240 跨期拆分」。不要写成编号，也不要重复 merge_reason。\n- split_required: **必填布尔值**。只要有任意一组 suggestion='split_required' 就填 true，否则 false。工作流据此决定走拆分分支还是直接进库存校验——填错会让整条链路走错方向。\n- thresholds_used: 本次采用的分档阈值：{merge_window_days:number, split_window_days:number}。\n- scan_date: 原样透传上游 scan_date。\n- merge_reason: 可选。每条建议的成因说明（一句话），写在 merge_suggestion[].merge_reason 里，供计划员判断时阅读。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "action_prompt": "【析】按「物料编码 + 计划行类型编码」聚类已审批需求计划行，组内两两比需求日期差，算出可合并簇、需拆分行与待确认灰区，并给出合并数量与加权预估单价(R2-01)。把计划员 10-15 分钟一次的人工比对压到分钟级，且口径全集团一致。\n\n【判定步骤】\n\n第 1 步：按 `物料编码 + 计划行类型编码` 聚类，同组内两两比较需求到货日期。\n第 2 步：按天数差分档（阈值取自上游 thresholds_used，缺失时用 30/60 默认值）：\n  ≤30 天 → 可合并 mergeable；>60 天 → 需拆分 split_required；\n  介于两者之间 → 待计划员确认 needs_confirmation。\n第 3 步：可合并组算合并数量之和与**按数量加权**的预估单价：\n  weighted_price = Σ(qty_i × price_i) / Σ(qty_i)，保留两位小数。\n第 4 步：只要有任意一组落在 split_required，就把 split_required 置 true。\n\n组内计划行编号一律用 metaERP 返回的原值，不得自造。\n\n执行步骤：\n1. groupByMergeKey：以合并键 = 物料编码 + 计划行类型编码 对计划行聚类，管理单元与库存组织不同的不并组。\n2. computeDateGap：组内两两计算需求日期差取最大值 max_date_gap_days：≤30 天判可合并(BR2-MERGE-01)，>60 天判需拆分(BR2-MERGE-02)，30~60 天判待计划员确认(BR2-MERGE-03)。\n3. computeMergedQuantityAndPrice：合并数量 = 组内数量求和；预估单价 = 组内单价按数量加权平均；合并后需求日期取组内最早日期；合并金额 = 合并数量 × 加权单价。\n4. scoreMergeConfidence：按物料一致度、类型一致度、日期紧密度加权算出 0~100 的合并匹配度，并生成一句话可读理由，让计划员一眼看懂为什么这么归。\n5. emitMergeAndSplitList：输出可合并清单与需拆分清单：需拆分的走 b2 分支，其余进入库存校验。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`merge_suggestion`、`split_required`、`thresholds_used`、`scan_date`、`merge_reason` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"merge_suggestion\": <见字段说明>,\n  \"split_required\": <见字段说明>,\n  \"thresholds_used\": <见字段说明>,\n  \"scan_date\": <见字段说明>,\n  \"merge_reason\": <见字段说明>\n}\n字段说明：\n- merge_suggestion_id: 合并建议标识。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merge_group_id: 合并组编号。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- suggestion_type: 建议结论：可合并/需拆分/待计划员确认。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merged_quantity: 合并数量。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- merge_score: 合并匹配度。（事件 DEMAND_MERGE_ANALYZED 的 payload 段）\n- max_date_gap_days: 组内需求日期最大差值。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- plan_line_id: 待拆分的计划行。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- split_reason: 拆分理由。（事件 DEMAND_SPLIT_REQUIRED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表，不得改写。\n- merge_suggestion: 合并建议列表：[{merge_suggestion_id, split_option_label, plan_line_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。\n其中两个字段直接决定人工闸口能否作答，必须填：\n- `plan_line_id`：本条建议要拆分/合并的**目标计划行编号**，取自 member_plan_line_ids 中作为主行的那一条。计划员在待办里选中本条建议时，系统就用它回写 metaERP。\n- `split_option_label`：给人看的短名，**不超过 20 字、不带标点**，一眼说清这条建议是什么，例如「M-BRK-126 三行合并」「M-CAB-240 跨期拆分」。不要写成编号，也不要重复 merge_reason。\n【日期差怎么算】date_span_days = 组内最晚需求到货日期 − 最早需求到货日期，按日历天数算，写明用到的两个日期。分档用 thresholds_used 里的两个窗口：≤ merge_window_days → mergeable；> split_window_days → split_required；介于两者之间 → needs_confirmation。\n- split_required: **必填布尔值**。只要有任意一组 suggestion='split_required' 就填 true，否则 false。工作流据此决定走拆分分支还是直接进库存校验——填错会让整条链路走错方向。\n- thresholds_used: 本次采用的分档阈值：{merge_window_days:number, split_window_days:number, threshold_ids:[string]}。\n**必须逐字照抄上游事件负载里的 merge_thresholds**（那是 scanApprovedDemandPlan 从 queryAuditThresholdConfig 取回的），threshold_ids 一并带上。上游没有 merge_thresholds 就把 split_required 置 false、merge_suggestion 置空数组并在 merge_reason 写明「缺少合并阈值配置」——**不得用 30/60 这类默认值顶上**：阈值是规则评审组维护的配置，不是模型的常识。\n- scan_date: 原样透传上游 scan_date。\n- merge_reason: 可选。每条建议的成因说明（一句话），写在 merge_suggestion[].merge_reason 里，供计划员判断时阅读。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
         "allowed_tools": [],
         "description": "【析】按「物料编码 + 计划行类型编码」聚类已审批需求计划行，组内两两比需求日期差，算出可合并簇、需拆分行与待确认灰区，并给出合并数量与加权预估单价(R2-01)。把计划员 10-15 分钟一次的人工比对压到分钟级，且口径全集团一致。\n\n【判定步骤】\n\n第 1 步：按 `物料编码 + 计划行类型编码` 聚类，同组内两两比较需求到货日期。\n第 2 步：按天数差分档（阈值取自上游 thresholds_used，缺失时用 30/60 默认值）：\n  ≤30 天 → 可合并 mergeable；>60 天 → 需拆分 split_required；\n  介于两者之间 → 待计划员确认 needs_confirmation。\n第 3 步：可合并组算合并数量之和与**按数量加权**的预估单价：\n  weighted_price = Σ(qty_i × price_i) / Σ(qty_i)，保留两位小数。\n第 4 步：只要有任意一组落在 split_required，就把 split_required 置 true。\n\n组内计划行编号一律用 metaERP 返回的原值，不得自造。",
         "name": "analyze",
@@ -393,6 +422,19 @@
         ],
         "description": "写回 Meta ERP：splitDemandLine。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "2",
         "result_key": "splitOversizedDemand",
         "tool_arguments": {
@@ -802,6 +844,19 @@
         ],
         "description": "写回 Meta ERP：createTransactionOrder。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "2",
         "result_key": "createInventoryTransferOrder",
         "tool_arguments": {
@@ -938,9 +993,10 @@
   {
     "actions": [
       {
-        "action_prompt": "【析】以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点的计划完成时间，并判定时间冲突(R2-03)。人工倒排 8-12 分钟一单、口径还各不相同的活归零，冲突当天就暴露。\n\n【倒排步骤（逐字照算，不得凭感觉）】\n\n节点顺序固定：立项1／组包2／分配3／询价4／应答5／评标6／定标7／合同签订8。\n标准周期取自 queryStageCycleConfig 中该 business_type 的行。\n\n  planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)，j 从 k+1 到 8\n\n即最后一个节点（合同签订）的计划完成时间**就是**需求到货日期本身；\n其余节点 = 需求到货日期 减去**它之后**所有节点的标准周期之和，**不含本节点周期**。\n\n正排交叉校验：planned_finish(k) 应等于 planned_finish(k−1) + standard_cycle_days(k)。\n两向一致才置 schedule_derived=true。\n若倒排出的立项计划完成时间早于 scan_date，置 time_conflict=true 并说明缺口天数。\n\n执行步骤：\n1. computeTotalCycle：采购总周期 = 各节点标准周期天数之和；紧急采购改取最短周期天数(BR2-SCHED-02)。\n2. backwardSchedule：以需求到货日期为基准日，按节点顺序号从末节点向前逐级倒推：节点计划完成日期 = 后一节点计划开始日期 − 1 天，节点计划开始日期 = 节点计划完成日期 − 套用周期天数 + 1 天；末节点计划完成日期即需求到货日期。\n3. detectTimeConflict：冲突缺口天数 = 当前日期 + 采购总周期 − 需求到货日期；大于 0 即判定时间冲突(BR2-SCHED-01)。当前日期取本次扫描业务日期，不取系统当下时间。\n4. recommendAdjustScheme：冲突时推荐「缩短周期／调整需求日期／拆分批次」三种方案；紧急采购先走绿色通道按最短周期重算，仍冲突则升级采购部门领导(BR2-SCHED-03)。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`backward_schedule_plan`、`backward_schedule_stage`、`schedule_derived`、`time_conflict`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"backward_schedule_plan\": <见字段说明>,\n  \"backward_schedule_stage\": <见字段说明>,\n  \"schedule_derived\": <见字段说明>,\n  \"time_conflict\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- schedule_plan_id: 倒排计划标识。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- total_cycle_days: 采购总周期天数。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- time_conflict: 是否存在时间冲突。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- green_channel: 是否走紧急绿色通道。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- stage_count: 生成的阶段节点计划条数。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- conflict_gap_days: 冲突缺口天数。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- adjust_scheme: 推荐调整方案：缩短周期/调整需求日期/拆分批次。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- escalated_to_leader: 是否已升级采购部门领导。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表。\n- backward_schedule_plan: 倒排计划：[{schedule_plan_id, plan_line_id, required_arrival_date, business_type, schedule_derived:boolean}]。\n- backward_schedule_stage: 各节点计划完成时间：[{schedule_stage_id, schedule_plan_id, stage_node, stage_sequence:1-8, standard_cycle_days:number, planned_finish_date:'YYYY-MM-DD'}]。按倒排公式逐字计算，并做正排交叉校验。\n- schedule_derived: **必填布尔值**。所有计划行都完成倒排且两向校验一致才填 true。\n- scan_date: 原样透传上游 scan_date。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
+        "action_prompt": "【析】以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点的计划完成时间，并判定时间冲突(R2-03)。人工倒排 8-12 分钟一单、口径还各不相同的活归零，冲突当天就暴露。\n\n【倒排步骤（逐字照算，不得凭感觉）】\n\n节点顺序固定：立项1／组包2／分配3／询价4／应答5／评标6／定标7／合同签订8。\n标准周期取自 queryStageCycleConfig 中该 business_type 的行。\n\n  planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)，j 从 k+1 到 8\n\n即最后一个节点（合同签订）的计划完成时间**就是**需求到货日期本身；\n其余节点 = 需求到货日期 减去**它之后**所有节点的标准周期之和，**不含本节点周期**。\n\n正排交叉校验：planned_finish(k) 应等于 planned_finish(k−1) + standard_cycle_days(k)。\n两向一致才置 schedule_derived=true。\n若倒排出的立项计划完成时间早于 scan_date，置 time_conflict=true 并说明缺口天数。\n\n执行步骤：\n1. computeTotalCycle：采购总周期 = 各节点标准周期天数之和；紧急采购改取最短周期天数(BR2-SCHED-02)。\n2. backwardSchedule：以需求到货日期为基准日，按节点顺序号从末节点向前逐级倒推：节点计划完成日期 = 后一节点计划开始日期 − 1 天，节点计划开始日期 = 节点计划完成日期 − 套用周期天数 + 1 天；末节点计划完成日期即需求到货日期。\n3. detectTimeConflict：冲突缺口天数 = 当前日期 + 采购总周期 − 需求到货日期；大于 0 即判定时间冲突(BR2-SCHED-01)。当前日期取本次扫描业务日期，不取系统当下时间。\n4. recommendAdjustScheme：冲突时推荐「缩短周期／调整需求日期／拆分批次」三种方案；紧急采购先走绿色通道按最短周期重算，仍冲突则升级采购部门领导(BR2-SCHED-03)。\n\n输出契约（硬性）：仅输出一个 JSON 对象，不得输出任何其他文本。\n顶层键必须且只能是：`demand_plan_line`、`backward_schedule_plan`、`backward_schedule_stage`、`schedule_derived`、`time_conflict`、`scan_date` —— 不得增删、不得改名、不得另立自创结构（如 decision/result/summary 等一律不允许作为顶层键）。\n骨架：\n{\n  \"demand_plan_line\": <见字段说明>,\n  \"backward_schedule_plan\": <见字段说明>,\n  \"backward_schedule_stage\": <见字段说明>,\n  \"schedule_derived\": <见字段说明>,\n  \"time_conflict\": <见字段说明>,\n  \"scan_date\": <见字段说明>\n}\n字段说明：\n- schedule_plan_id: 倒排计划标识。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- total_cycle_days: 采购总周期天数。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- time_conflict: 是否存在时间冲突。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- green_channel: 是否走紧急绿色通道。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- stage_count: 生成的阶段节点计划条数。（事件 PURCHASE_SCHEDULE_DERIVED 的 payload 段）\n- conflict_gap_days: 冲突缺口天数。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- adjust_scheme: 推荐调整方案：缩短周期/调整需求日期/拆分批次。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- escalated_to_leader: 是否已升级采购部门领导。（事件 SCHEDULE_TIME_CONFLICT_DETECTED 的 payload 段）\n- demand_plan_line: 原样透传上游计划行列表。\n- backward_schedule_plan: 倒排计划：[{schedule_plan_id, plan_line_id, required_arrival_date, business_type, total_cycle_days:number, earliest_start_date:'YYYY-MM-DD', slack_days:number, time_conflict:boolean, schedule_derived:boolean, note:string}]。total_cycle_days / earliest_start_date / slack_days / time_conflict 全部照抄工具返回。\n- backward_schedule_stage: 各节点计划完成时间：[{schedule_stage_id, schedule_plan_id, stage_node, stage_sequence:1-8, standard_cycle_days:number, planned_finish_date:'YYYY-MM-DD'}]。\n【硬性·唯一来源】**逐字照抄 planning.backwardSchedule 工具返回的 planned_dates**，一个日期都不许自己心算。每条计划行调一次：\n  planning.backwardSchedule({ required_arrival_date: <该计划行的 required_arrival_date>, business_type: <该计划行所属计划头的 business_type>, reference_date: <scan_date>, stages: <queryStageCycleConfig 返回的原始行，整段原样传，不要改字段名、不要自己筛> })\n工具做的事：最后一个节点落在需求到货日当天，其余节点减去其后所有节点周期之和；按 business_type 筛配置，筛不到直接报错并列出配置里实际存在的业务类型。\n【为什么必须走工具】场景一同一步的模型把提示词里举例的七个日期整段抄进了输出，只替换了最后一个，排出「订单晚于到货」的表还声称校验通过。日期算术一律交给工具。\n- schedule_derived: **必填布尔值**。每条计划行都拿到了 planning.backwardSchedule 的成功返回才填 true；任一条工具报错（缺周期配置、业务类型查不到）填 false，并把工具报错原文写进 backward_schedule_plan 对应条目的 note。\n- scan_date: 原样透传上游 scan_date。\n下游步骤按上述键名逐字段取数，键名不符将导致整条业务链路中断（fail-closed）。",
         "allowed_tools": [
-          "metaerp.invoke"
+          "metaerp.invoke",
+          "planning.backwardSchedule"
         ],
         "description": "【析】以需求到货日期为终点，按业务类型套阶段周期配置逐级倒推立项、组包、分配、询价、应答、评标、定标、合同签订各节点的计划完成时间，并判定时间冲突(R2-03)。人工倒排 8-12 分钟一单、口径还各不相同的活归零，冲突当天就暴露。\n\n【倒排步骤（逐字照算，不得凭感觉）】\n\n节点顺序固定：立项1／组包2／分配3／询价4／应答5／评标6／定标7／合同签订8。\n标准周期取自 queryStageCycleConfig 中该 business_type 的行。\n\n  planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)，j 从 k+1 到 8\n\n即最后一个节点（合同签订）的计划完成时间**就是**需求到货日期本身；\n其余节点 = 需求到货日期 减去**它之后**所有节点的标准周期之和，**不含本节点周期**。\n\n正排交叉校验：planned_finish(k) 应等于 planned_finish(k−1) + standard_cycle_days(k)。\n两向一致才置 schedule_derived=true。\n若倒排出的立项计划完成时间早于 scan_date，置 time_conflict=true 并说明缺口天数。",
         "name": "analyze",
@@ -1091,6 +1147,59 @@
         },
         "name": "metaerp.invoke",
         "side_effect": "read"
+      },
+      {
+        "config": {},
+        "description": "按需求到货日期与各节点标准周期倒排出每个节点的计划完成时间（纯计算，不访问外部系统）。",
+        "execution_policy": {
+          "effect_scope": "none",
+          "operation": "compute",
+          "sandbox_policy": "pure"
+        },
+        "input_schema": {
+          "properties": {
+            "business_type": {
+              "description": "可选：按业务类型筛选 stages；筛不到会报错并列出配置里实际存在的业务类型。",
+              "type": "string"
+            },
+            "reference_date": {
+              "description": "可选：参考日（传 scan_date，YYYY-MM-DD）。给了就返回 slack_days 与 time_conflict，工期够不够由工具算完。",
+              "type": "string"
+            },
+            "required_arrival_date": {
+              "description": "需求到货日期，YYYY-MM-DD。倒排基准。",
+              "type": "string"
+            },
+            "stages": {
+              "description": "周期配置行。把 queryStageCycleConfig 返回的原始行整段传进来（带 BUSINESS_TYPE），不要自己誊写。",
+              "items": {
+                "properties": {
+                  "stage_node": {
+                    "description": "节点名（或 STAGE_NODE）",
+                    "type": "string"
+                  },
+                  "stage_sequence": {
+                    "description": "节点序号，从 1 开始连续（或 STAGE_SEQUENCE）",
+                    "type": "number"
+                  },
+                  "standard_cycle_days": {
+                    "description": "标准周期天数（或 STANDARD_CYCLE_DAYS）",
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "required_arrival_date",
+            "stages"
+          ],
+          "type": "object"
+        },
+        "name": "planning.backwardSchedule",
+        "side_effect": "read"
       }
     ],
     "trigger": [
@@ -1133,6 +1242,19 @@
         ],
         "description": "写回 Meta ERP：createPbp。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "3",
         "result_key": "generateExecutionPlanDraft",
         "tool_arguments": {
@@ -1596,6 +1718,19 @@
         ],
         "description": "写回 Meta ERP：pushTask。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "2",
         "result_key": "returnPlanForRectification",
         "tool_arguments": {
@@ -2023,6 +2158,19 @@
         ],
         "description": "写回 Meta ERP：createProcPackageLines。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "1",
         "result_key": "annotateFrameAndCentralPurchase",
         "tool_arguments": {
@@ -2139,6 +2287,19 @@
         ],
         "description": "写回 Meta ERP：pushTask。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "1",
         "result_key": "raisePackagingComplianceAlert",
         "tool_arguments": {
@@ -2327,6 +2488,19 @@
         ],
         "description": "写回 Meta ERP：writeOperationLog。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "3",
         "result_key": "confirmPlanAndPackage",
         "tool_arguments": {
@@ -2537,6 +2711,19 @@
         ],
         "description": "写回 Meta ERP：submitApproval。",
         "name": "metaerp.invoke",
+        "on_error": [
+          {
+            "do": "retry",
+            "when": "kind == integration_unreachable || code == integration_unreachable"
+          },
+          {
+            "do": "terminal",
+            "when": "status >= 400 && status < 500"
+          },
+          {
+            "default": "retry"
+          }
+        ],
         "order": "2",
         "result_key": "submitPlanForApproval",
         "tool_arguments": {

@@ -134,3 +134,32 @@ describe("computeBackwardSchedule", () => {
     ).toThrow(/非空数组/);
   });
 });
+
+describe("工期够不够，由工具算完", () => {
+  it("reports slack against a reference date and flags a conflict when negative", () => {
+    // 155 天总周期，需求到货 2027-05-20：最早要在 2026-12-16 开工。
+    const fits = computeBackwardSchedule({
+      required_arrival_date: "2027-05-20",
+      reference_date: "2026-12-01",
+      stages: HC_ROWS,
+    });
+    expect(fits.earliest_start_date).toBe("2026-12-16");
+    expect(fits.slack_days).toBe(15);
+    expect(fits.time_conflict).toBe(false);
+
+    const late = computeBackwardSchedule({
+      required_arrival_date: "2027-05-20",
+      reference_date: "2027-01-05",
+      stages: HC_ROWS,
+    });
+    expect(late.slack_days).toBe(-20);
+    expect(late.time_conflict).toBe(true);
+  });
+
+  it("leaves the verdict null when no reference date was given", () => {
+    const out = computeBackwardSchedule({ required_arrival_date: "2027-05-20", stages: HC_ROWS });
+    expect(out.reference_date).toBeNull();
+    expect(out.slack_days).toBeNull();
+    expect(out.time_conflict).toBeNull();
+  });
+});

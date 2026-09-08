@@ -189,3 +189,68 @@ CEL 判据是 `line.draft_confirmed_by != "" && scheme.scheme_status == "已选�
 
 当前取值（来源：`数据信息.xlsx`，v15 已建数据）：
 管理单元 `1000`（扬帆能源）、库存组织 `YF1`、已审批采购需求计划 `100020260903000006`。
+
+---
+
+## D-10 场景二的 13 个操作名与场景一共用，场景一切真实 ERP 后它们跟着指向了 v15
+
+**现状**：`config/metaerp-routes.json` 按**操作名**归属通道，而 queryPbpHeader / queryPr /
+queryOnhandQuantity / createPbp / createTransactionOrder 等 13 个操作在两个场景的目录里同名。
+场景一为了连 v15 把它们改成 openapi/uiapi 后，场景二在 `METAERP_TRANSPORT_MODE=real` 下
+也跟着打真实 ERP——其中 createPbp、createTransactionOrder 是真实写入，queryPbpHeader 还
+带着场景一钉死的 `pbpNumberList` 过滤。
+
+**平台侧现状**：路由表新增顶层 `tenants` 块（租户级默认通道，只允许 mock/stub），
+`hc-digital-worker` 整体钉在 mock；操作级 `tenant_overrides` 仍更具体、可覆盖它。
+切真实 ERP 时删掉这一段即可。
+
+## D-11 倒排工期由模型逐字心算——与场景一 C-12 同款
+
+**现状**：`derivePurchaseSchedule` 的提示词给出倒排公式并要求「逐字照算、正排交叉校验」。
+场景一同一步的模型把提示词里举例的七个日期整段抄进输出，只替换了最后一个。
+
+**平台侧现状**：授予 `planning.backwardSchedule`，合约改为逐字照抄工具返回。工具新增
+`reference_date`：传 scan_date 后直接返回 `slack_days` 与 `time_conflict`，
+「工期够不够」也不再让模型比日期。八节点周期配置由工具按 business_type 筛，筛不到报错。
+
+## D-12 计划头/行由模型转写——与场景一同款
+
+**现状**：`scanApprovedDemandPlan` 把 queryPbpHeader / queryPbpLine 的返回誊写成
+demand_plan / demand_plan_line。场景一同一类步骤把四行三个物料抄成了一个。
+
+**平台侧现状**：授予 `records.project`，合约要求取数后紧接着投影并逐字照抄 rows；
+本地 mock 与真实 metaERP 的列名风格不同（大写下划线 / 小驼峰），合约写明按实际返回映射，
+找不到字段工具会直接报错而不是猜。
+
+## D-13 合并/拆分阈值被写死成 30/60
+
+**现状**：`analyzeDemandMerge` 没有取数工具，提示词写着「阈值取自上游 thresholds_used，
+缺失时用 30/60 默认值」，而上游 scan 的输出里根本没有阈值字段——于是永远用默认值。
+mock 配置表 `cfg_audit_threshold_t` 里其实有 MERGE_WINDOW_DAYS / SPLIT_WINDOW_DAYS。
+
+**平台侧现状**：scan 的合约新增 `merge_thresholds`（必须取自 queryAuditThresholdConfig，
+带 threshold_ids）；merge 的合约改为逐字照抄上游 merge_thresholds，上游缺失则置空并说明，
+禁止默认值顶上。阈值是规则评审组维护的配置，不是模型的常识。
+
+## D-14 mock 写效果对场景二的载荷形状「静默跳过」或直接 400
+
+**现状**：
+- `createTransactionOrder` 只认场景一的 `option_type`，场景二的转调拨没有这个字段，
+  返回 `SKIPPED`（applied:false）——步骤显示成功、库里一张单都没有。
+- `createProcPackageLines` 只认顶层 `package_scheme_id`，而 `recommendPackagingScheme`
+  的产出是 `package_scheme: [...]` 列表，真实模型跑到这一步必然 400。
+端到端测试此前没暴露，是因为 `carry()` 往每一跳的载荷顶层塞了 package_scheme_id /
+plan_line_id 等标识。
+
+**平台侧现状**：两个写效果按合约形状改写（按 `stock_check_result[]` 里「可调度」的行
+逐行建调拨，没有可调度行就报错；按 `package_scheme[]` 逐方案建包）。端到端测试的
+`carry()` 只保留 scan_date，脚本化产出改成合约形状，让形状问题在测试里就能红。
+
+## D-15 「加载示例」缺 scan_date，且指向真实 ERP 的单号
+
+**现状**：`scan_date` 是全流程「今天」的唯一定义、必填，示例里却没有；mock 数据是
+2027 年的（计划 2026-11 审批、到货 2027-03~06），示例若不带 scan_date 则倒排无从谈起。
+`DEMAND_PLAN_APPROVED` 的示例单号是 v15 的采购需求号，mock 里不存在。
+
+**平台侧现状**：示例补 `scan_date=2027-01-05`；`DEMAND_PLAN_APPROVED` 先指向 mock 的
+`PBP-2027-0101`。切回真实 ERP 时改回 `100020260903000006`。
