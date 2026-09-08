@@ -510,33 +510,41 @@ lineList[]: itemCode, organizationCode, storehouseCode,
     sourceObjectNumber, sourceObjectLineId
 ```
 
-**调拨是跨库存组织的，不是组织内换库位**——这是本轮最关键的发现，靠 ERP 自己的报错
-逼出来的：给 `transferStorehouseCode` 填同组织下的另一个库位（Stage / 100000）时返回
-`transfer organization code is same with organization code.`。
-
-`INOT` + `INTRANSIT_ISSUE` = 在途交易出货，出/入必须是**不同的库存组织**。
-`LYY1` / `LYY2` 正是库存组织编码（不是库位编码，也不是 sourceSystemCode 那个 LYY2）。
-
-调入方要的是**一整套镜像字段**，只给一个编码过不了校验：
+**已在 v15 实跑建单成功**：单号 `INOT20260908YF100004`，行状态 DRAFT、无错误。
+完整可用报文（每一项都由实跑逐个逼出）：
 
 ```
-transferOrganizationCode, transferStorehouseCode, transferLocatorCode,
-transferPropertyType/Code/TxnCode, transferPrivateType/Code/TxnCode,
-transferStorehouseType, transferInventoryStatusCode, transferLotNumber
+头: unitCode=1000, organizationCode=YF1(发出库存组织),
+    transferOrganizationCode=YF2(接收库存组织，必须与发出不同),
+    sourceSystemCode=LYY2, txnOrderTypeCode=INOT,
+    transactionTypeCode=ORGANIZATION_TRANSFER(直接跨组织转库),
+    autoSubmit=Y, submittedBy=1, sourceCode=<采购需求编号>,
+    requiredDate=<需求到货日期>, uniqueSequenceNumber=<runId>
+行: itemCode, organizationCode=YF1, storehouseCode=300000(发出存储库),
+    locatorCode=LC001(发出货位), transferStorehouseCode=1000(接收存储库),
+    transactionQuantity, transactionUomCode=EA,
+    requiredDate=<**必须早于当前时刻**>, sourceObjectNumber, sourceObjectLineId
 ```
 
-字段全集来自 `OrderLineDTO`（OrderOpenAPI yaml，57 字段）——请求用的
-`OrderCreatePubLineDTO` 标着 `x-unresolved`，但两者结构一致，可直接照用。
+三个反直觉的点，都是被 ERP 报错逐个逼出来的：
 
-沿途还确认了一条业务约束：`source and target asset storehouse flag not same.`
-——资产存储库与非资产存储库之间不能互调（成品库=资产，费用库=非资产）。
+1. **交易类型是 `ORGANIZATION_TRANSFER`（直接跨组织转库），不是 `INTRANSIT_ISSUE`**。
+   后者是在途出货，另一套两步流程。
+2. **行上的 `requiredDate` 被当作交易时间校验，必须早于当前时刻**——填需求到货日期
+   （未来）会被拒：`The transaction time must before now.`。头上的 requiredDate 仍是
+   需求日期，两者语义不同却同名。
+3. **发出货位必填**：成品库启用了货位控制，缺 `locatorCode` 报
+   `The locator is enabled, but the locator code is not transferred`，而 UI 上这一栏
+   是空的——界面会自动补，接口不会。
 
-**唯一仍缺**：物料在**目标库存组织**下的配置。填齐上述字段后报错变为
-`An error occurred when querying limit between item and storehouse limit`，
-即演示物料（10000008 等）在 LYY1/LYY2 下没有建立物料-库位关系/库存限额。
-属 ERP 主数据，需业务侧补。
+**方法教训（值得单独记）**：中途把多个假设塞进同一张单的多行做批量探测，ERP 会把整批
+报成同一个错误，导致「错误前进了一格 = 这个字段对了」的推断连续多轮失真——曾据此错误
+断定 LYY1/LYY2 是库位、又断定是组织。**每次只改一个变量、每张单只放一行**之后，三轮
+之内就走通了。真正解题的是用户提供的 UI 截图（发出/接收库存组织 YF1→YF2、交易类型
+ORGANIZATION_TRANSFER），不是继续猜。
 
-**探测残留**：v15 中共 8 张只有头、行为 FAILED 的调拨单
-（1992656320092771594 / 1992657793393300749 / 1992656606487975180 /
-1992656320092837130 / 1992657793393366285 / 1992656606488040716 /
-1992657793393431821 / 1992656321485542667），演示前建议清理。
+**仍待确认**：行状态是 `DRAFT` 而非已提交，`autoSubmit=Y` 似乎未生效，可能取值不是 Y
+（也可能提交是独立动作）。演示若要求单据处于已提交状态，需再确认这一项。
+
+**探测残留**：v15 中共 13 张只有头、行为 FAILED 的调拨单，加 1 张成功单
+（INOT20260908YF100004）。失败单演示前建议清理。

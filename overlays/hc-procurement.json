@@ -463,7 +463,7 @@
     },
     "createStockTransferRequest": {
       "payload": {
-        "from": "event.data.transfer_order"
+        "from": "event.data.transfer_order_line"
       }
     },
     "trackTransferFulfillment": {
@@ -529,10 +529,11 @@
         "options_generated": "布尔值：预警等级为红色或黄色时为 true 并给出三个方案；蓝色时为 false 且 options 为空数组（BR-OPT-01：蓝色不生成方案）。",
         "options": "三个可执行方案，缺一不可（BR-OPT-02）：[{option_id, alert_id, chain_id, option_type:'压缩后续周期'|'调整需求日期'|'执行调拨', option_summary, expected_arrival_date_after:Date, arrival_impact_days:number, arrival_impact_simulated:true（未完成推演的方案不得上会，BR-OPT-03）, feasibility_note, is_recommended:boolean, is_high_risk:boolean（暂停申请、整单调剂标为 true，BR-OPT-06）, option_status:'待决策', decision_role:'分管领导'（红色）|'部门领导'（黄色）（BR-OPT-04）}]。三个 option_type 必须各出现一次。",
         "recommended_option": "被推荐的那一条方案对象（is_recommended=true），另附 recommendation_basis 说明为何推荐它：结合成因标签、按期概率与三个方案的到货影响天数对比。",
-        "transfer_source": "方案③的调拨来源，取自 queryTransferableStock（真实接口为库存现有量查询）。**字段名照抄该接口的返回**：{itemCode, organizationCode, storehouseCode, storehouseName, quantity（现有量）, availableTransQty（可处理量，即可调数量）}，另加你算出的 transfer_quantity = min(availableTransQty, 需求数量)。该接口**不返回调拨提前期**，不要编造 transfer_lead_days。查询时用需求行的物料编码（itemCodeList），不要用别处看到的编码；无可调库存时给 {transfer_quantity: 0} 并在该方案的 feasibility_note 说明。",
+        "transfer_source": "方案③的调拨来源，取自 queryTransferableStock（真实接口为库存现有量查询）。字段名照抄该接口返回：{itemCode, organizationCode, storehouseCode, storehouseName, locatorCode, quantity, availableTransQty（可处理量，即可调数量）}，另加 transfer_quantity = min(availableTransQty, 需求数量)。该接口不返回调拨提前期，不要编造 transfer_lead_days。查询用需求行的物料编码（itemCodeList）。无可调库存时给 {transfer_quantity: 0} 并在该方案的 feasibility_note 说明。",
         "alert_context": "原样透传预警上下文：{alert_id, chain_id, deviation_id, alert_level, notified_role}。",
         "_parallel_tool_calls": "【并发取数（硬性）】本步的这些查询彼此独立、没有先后依赖，请在**同一轮**里一次性发出全部 metaerp.invoke 工具调用，不要一个一个串行来回——运行时支持一轮多调用（step-engine 按数组逐个执行），串行会把这一步拖成十几分钟。只有当后一个查询确实要用前一个的返回值做入参时，才允许分轮。本步需要的查询：queryStageCycleConfig、queryTransferableStock。第一轮一次性发出。本字段只是取数纪律说明，输出 JSON 里填一句确认语即可。",
-        "transfer_order": "方案③要写进 ERP 的调拨单请求体（createTransactionOrder）。**字段名与结构由真实接口实测确定，swagger 里 OrderCreatePubLineDTO 是未解析的，照抄下面这份**：\n{sourceCode:'<采购需求编号>', requiredDate:'YYYY-MM-DD HH:mm:ss'（取需求行 needByDate）, lineList:[{itemCode, organizationCode, storehouseCode（取 transfer_source 的调出库点）, transactionQuantity:'<数量字符串>', transactionUomCode:'<主单位，如 EA>', requiredDate:'YYYY-MM-DD HH:mm:ss'（行上也必须有，与头同值）, sourceObjectNumber:'<采购需求编号>', sourceObjectLineId:'<采购需求行ID>'}]}\nunitCode / organizationCode / sourceSystemCode / txnOrderTypeCode / transactionTypeCode / autoSubmit / submittedBy / uniqueSequenceNumber **由平台自动补上，你不要写**。无可调库存（transfer_quantity=0）时该字段给 null。"
+        "transfer_order": "方案③要写进 ERP 的调拨单请求体（createTransactionOrder）。**字段名与结构由真实接口实测确定，swagger 里 OrderCreatePubLineDTO 是未解析的，照抄下面这份**：\n{sourceCode:'<采购需求编号>', requiredDate:'YYYY-MM-DD HH:mm:ss'（取需求行 needByDate）, lineList:[{itemCode, organizationCode, storehouseCode（取 transfer_source 的调出库点）, transactionQuantity:'<数量字符串>', transactionUomCode:'<主单位，如 EA>', requiredDate:'YYYY-MM-DD HH:mm:ss'（行上也必须有，与头同值）, sourceObjectNumber:'<采购需求编号>', sourceObjectLineId:'<采购需求行ID>'}]}\nunitCode / organizationCode / sourceSystemCode / txnOrderTypeCode / transactionTypeCode / autoSubmit / submittedBy / uniqueSequenceNumber **由平台自动补上，你不要写**。无可调库存（transfer_quantity=0）时该字段给 null。",
+        "transfer_order_line": "方案③落地时要写进 createTransactionOrder 的**行**，逐字段照下面给（已在 v15 实跑通过，单号 INOT20260908YF100004）：\n{itemCode, organizationCode（发出库存组织）, storehouseCode（发出存储库）, locatorCode（发出货位；成品库启用货位，缺了报 'The locator is enabled...'）, transferStorehouseCode（接收存储库）, transactionQuantity, transactionUomCode, requiredDate, sourceObjectNumber（采购需求编号）, sourceObjectLineId（需求行ID）}\n【硬性】`requiredDate` 在行上被 ERP 当作**交易时间**校验，**必须早于当前时刻**——填需求到货日期（未来）会被拒：'The transaction time must before now.'。填扫描时刻即可。\n接收库存组织、单据类型、交易类型、来源系统由平台自动补上，不要写进来。"
       }
     },
     "closeDeviationHandling": {
