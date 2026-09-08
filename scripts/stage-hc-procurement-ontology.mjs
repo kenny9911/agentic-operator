@@ -84,7 +84,15 @@ const ACTION_MAP = {
   calculateExecutionDeviation: {
     kind: "prompt",
     queries: [
-      { operation: "queryStageCycleConfig", description: "按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。" },
+      {
+        operation: "queryStageCycleConfig",
+        description:
+          "按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 " +
+          "getStageCycleConfig）。**BUSINESS_TYPE 只有 物资 / 工程 / 服务 三档**——" +
+          "链路上的 business_type 若是「采购需求」这类单据类型而不是这三档之一，" +
+          "按物资取配置，不要用它去过滤，否则查回空集、倒排不出计划完成时间、" +
+          "整条链路会被误判成无偏差。",
+      },
       { operation: "queryAlertThresholdConfig", description: "取时间/进度偏差判定阈值（BR-DEV-02：阈值必须来自配置，不得写死）。" },
     ],
   },
