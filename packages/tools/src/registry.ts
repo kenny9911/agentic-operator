@@ -448,7 +448,7 @@ const REGISTRATIONS: ToolRegistration[] = [
         stages: {
           type: "array",
           description:
-            "\u5468\u671f\u914d\u7f6e\u884c\uff0c\u6bcf\u884c\u542b stage_node / stage_sequence / standard_cycle_days\uff08\u5927\u5199 STAGE_NODE \u7b49\u540c\u6837\u53ef\u4ee5\uff09\u3002",
+            "\u5468\u671f\u914d\u7f6e\u884c\u3002\u76f4\u63a5\u628a queryStageCycleConfig \u8fd4\u56de\u7684\u539f\u59cb\u884c\u6574\u6bb5\u4f20\u8fdb\u6765\uff08\u5e26 BUSINESS_TYPE\uff09\uff0c\u4e0d\u8981\u81ea\u5df1\u8a8a\u5199\uff1a\u8a8a\u5199\u4f1a\u4e22\u6389 BUSINESS_TYPE\uff0c\u4e5f\u591a\u4e00\u4e2a\u6284\u9519\u5468\u671f\u5929\u6570\u7684\u673a\u4f1a\u3002\u6bcf\u884c\u81f3\u5c11\u542b stage_node / stage_sequence / standard_cycle_days\uff08\u5927\u5199 STAGE_NODE \u7b49\u540c\u6837\u53ef\u4ee5\uff09\u3002",
         },
         business_type: {
           type: "string",
@@ -467,6 +467,7 @@ const REGISTRATIONS: ToolRegistration[] = [
       returnsSchema: {
         required_arrival_date: { type: "string" },
         business_type: { type: "string | null" },
+        business_type_filtered: { type: "boolean" },
         stage_count: { type: "number" },
         total_cycle_days: { type: "number" },
         earliest_start_date: { type: "string" },
@@ -479,6 +480,7 @@ const REGISTRATIONS: ToolRegistration[] = [
       returnsExample: {
         required_arrival_date: "2026-09-10",
         business_type: "\u7269\u54c1\u91c7\u8d2d",
+        business_type_filtered: true,
         stage_count: 2,
         total_cycle_days: 80,
         earliest_start_date: "2026-06-22",

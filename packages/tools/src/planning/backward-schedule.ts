@@ -93,6 +93,9 @@ export interface BackwardScheduleStage {
 export interface BackwardScheduleResult {
   required_arrival_date: string;
   business_type: string | null;
+  /** false when the rows carried no business type at all, i.e. the caller had
+   * already filtered them and this tool matched nothing on its own. */
+  business_type_filtered: boolean;
   stage_count: number;
   total_cycle_days: number;
   earliest_start_date: string;
@@ -129,21 +132,29 @@ export function computeBackwardSchedule(input: unknown): BackwardScheduleResult 
   // Filtering here rather than in the prompt is deliberate: when the requested
   // business type has no configuration the caller gets the list of types that
   // DO exist, instead of quietly falling back to whichever rows looked close.
-  const selected = businessType
-    ? rows.filter((row) => pick(row, BUSINESS_TYPE_KEYS) === businessType)
-    : rows;
+  //
+  // A caller that already filtered — every row carries no business type at all —
+  // is a different case from "this type has no config", and rejecting it wastes
+  // a tool-loop iteration on a retry that is not actually a correction. The
+  // near-match hazard only exists when OTHER types are present to be mistaken
+  // for this one, so accept pre-filtered rows and report that in the result.
+  const available = [
+    ...new Set(
+      rows
+        .map((row) => pick(row, BUSINESS_TYPE_KEYS))
+        .filter((value): value is string => typeof value === "string"),
+    ),
+  ].sort();
+  const preFiltered = businessType != null && available.length === 0;
+  const selected =
+    businessType && !preFiltered
+      ? rows.filter((row) => pick(row, BUSINESS_TYPE_KEYS) === businessType)
+      : rows;
   if (selected.length === 0) {
-    const available = [
-      ...new Set(
-        rows
-          .map((row) => pick(row, BUSINESS_TYPE_KEYS))
-          .filter((value): value is string => typeof value === "string"),
-      ),
-    ].sort();
     throw new Error(
-      `业务类型「${businessType}」在周期配置中没有任何行；配置里现有的业务类型为 ${
-        available.length > 0 ? available.map((t) => `「${t}」`).join("、") : "（无）"
-      }。请补配置或用真实存在的业务类型重试，不要改用近似的一档。`,
+      `业务类型「${businessType}」在周期配置中没有任何行；配置里现有的业务类型为 ${available
+        .map((t) => `「${t}」`)
+        .join("、")}。请补配置或用真实存在的业务类型重试，不要改用近似的一档。`,
     );
   }
 
@@ -197,6 +208,7 @@ export function computeBackwardSchedule(input: unknown): BackwardScheduleResult 
   return {
     required_arrival_date: formatDate(arrivalMs),
     business_type: businessType,
+    business_type_filtered: businessType != null && !preFiltered,
     stage_count: planned.length,
     total_cycle_days: totalCycleDays,
     earliest_start_date: formatDate(arrivalMs - totalCycleDays * DAY_MS),
@@ -207,6 +219,7 @@ export function computeBackwardSchedule(input: unknown): BackwardScheduleResult 
 export const backwardScheduleOutputSchema = z.object({
   required_arrival_date: z.string(),
   business_type: z.string().nullable(),
+  business_type_filtered: z.boolean(),
   stage_count: z.number(),
   total_cycle_days: z.number(),
   earliest_start_date: z.string(),

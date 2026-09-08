@@ -107,6 +107,12 @@
       "allow_real_write": true,
       "idempotency_field": "uniqueSequenceNumber",
       "defaults": {
+        "autoSubmit": {
+          "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
+        }
+      },
+      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。payload 必须是带 lineList 的完整单据头，不是单独一行；部署级编码与时间戳由 overrides / line_overrides 打进去，模型只负责物料、数量、发出存储库、来源单据这些业务值。",
+      "overrides": {
         "sourceSystemCode": {
           "$env": "METAERP_SOURCE_SYSTEM_CODE"
         },
@@ -128,11 +134,79 @@
         "submittedBy": {
           "$env": "METAERP_TRANSFER_SUBMITTED_BY"
         },
-        "autoSubmit": {
-          "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
+        "infoTransactionActionCode": "",
+        "requiredDate": {
+          "$now": {}
         }
       },
-      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。"
+      "line_field": "lineList",
+      "line_defaults": {
+        "lineNumber": "10",
+        "operationType": "ADD",
+        "itemVersion": "",
+        "lotNumber": "",
+        "locatorCode": {
+          "$env": "METAERP_TRANSFER_FROM_LOCATOR_CODE"
+        },
+        "transferStorehouseCode": {
+          "$env": "METAERP_TRANSFER_TO_STOREHOUSE_CODE"
+        },
+        "transferLocatorCode": "",
+        "primaryUomCode": {
+          "$env": "METAERP_TRANSFER_UOM_CODE"
+        },
+        "transactionUomCode": {
+          "$env": "METAERP_TRANSFER_UOM_CODE"
+        }
+      },
+      "line_overrides": {
+        "unitCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE"
+        },
+        "organizationCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "transferOrganizationCode": {
+          "$env": "METAERP_TRANSFER_TO_ORGANIZATION_CODE"
+        },
+        "txnOrderTypeCode": {
+          "$env": "METAERP_TRANSFER_TXN_ORDER_TYPE_CODE"
+        },
+        "transactionTypeCode": {
+          "$env": "METAERP_TRANSFER_TRANSACTION_TYPE_CODE"
+        },
+        "transactionActionCode": {
+          "$env": "METAERP_TRANSFER_ACTION_CODE"
+        },
+        "submittedBy": {
+          "$env": "METAERP_TRANSFER_SUBMITTED_BY"
+        },
+        "sourceCode": {
+          "$env": "METAERP_TRANSFER_SOURCE_CODE"
+        },
+        "propertyType": "ORG",
+        "propertyCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "propertyTxnCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "privateType": "NORM",
+        "privateCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "privateTxnCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "transferPrivateType": "",
+        "transferPrivateCode": "",
+        "transferPrivateTxnCode": "",
+        "requiredDate": {
+          "$now": {
+            "minus_seconds": 60
+          }
+        }
+      }
     },
     "changePbp": {
       "transport": "openapi",

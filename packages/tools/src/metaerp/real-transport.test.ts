@@ -21,6 +21,7 @@ import { normalizeMetaerpResponse } from "./envelope";
 import { callMetaerpOpenapi, _clearMetaerpTokenCacheForTests } from "./openapi-transport";
 import { callMetaerpUiapi, _clearMetaerpSessionCacheForTests } from "./uiapi-transport";
 import { _clearMetaerpRoutesCacheForTests, resolveRoute } from "./routes";
+import { _applyLineScopeForTests } from "./invoke";
 
 interface Recorded {
   method: string;
@@ -540,5 +541,95 @@ describe("metaerp real transports", () => {
       ).rejects.toThrow(/CSB-Auth-Token/);
       await portal.close();
     });
+  });
+});
+
+describe("createTransactionOrder · 单据行由平台补齐", () => {
+  const LINE_ENV = {
+    METAERP_DEFAULT_UNIT_CODE: "1000",
+    METAERP_DEFAULT_ORGANIZATION_CODE: "YF1",
+    METAERP_SOURCE_SYSTEM_CODE: "LYY2",
+    METAERP_TRANSFER_SOURCE_CODE: "INV",
+    METAERP_TRANSFER_TXN_ORDER_TYPE_CODE: "INOT",
+    METAERP_TRANSFER_TRANSACTION_TYPE_CODE: "ORGANIZATION_TRANSFER",
+    METAERP_TRANSFER_ACTION_CODE: "ORGANIZATION_TRANSFER",
+    METAERP_TRANSFER_TO_ORGANIZATION_CODE: "YF2",
+    METAERP_TRANSFER_SUBMITTED_BY: "10000422",
+    METAERP_TRANSFER_FROM_LOCATOR_CODE: "LC001",
+    METAERP_TRANSFER_TO_STOREHOUSE_CODE: "1000",
+    METAERP_TRANSFER_UOM_CODE: "EA",
+  } as const;
+
+  beforeEach(() => {
+    for (const [key, value] of Object.entries(LINE_ENV)) process.env[key] = value;
+    _clearMetaerpRoutesCacheForTests();
+  });
+  afterEach(() => {
+    for (const key of Object.keys(LINE_ENV)) delete process.env[key];
+    _clearMetaerpRoutesCacheForTests();
+  });
+
+  /** The model authors only business values; every code comes from the route. */
+  function scope(payload: Record<string, unknown>) {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_ALLOW_REAL_WRITES = "true";
+    const route = resolveRoute("createTransactionOrder", "write");
+    return _applyLineScopeForTests("createTransactionOrder", route, payload, "run-abc123");
+  }
+
+  it("injects the deployment codes into every line and overwrites what the model guessed", () => {
+    const out = scope({
+      lineList: [
+        {
+          itemCode: "10000009",
+          transactionQuantity: "100",
+          storehouseCode: "300000",
+          sourceObjectNumber: "100020260902000003",
+          sourceObjectLineId: "2033239140312683600",
+          // 实跑里模型填的业务单号——必须被覆盖成 INV
+          sourceCode: "100020260902000003",
+        },
+      ],
+    });
+    const line = (out.lineList as Record<string, unknown>[])[0]!;
+    expect(line.sourceCode).toBe("INV");
+    expect(line.transactionTypeCode).toBe("ORGANIZATION_TRANSFER");
+    expect(line.txnOrderTypeCode).toBe("INOT");
+    expect(line.transferOrganizationCode).toBe("YF2");
+    expect(line.submittedBy).toBe("10000422");
+    expect(line.unitCode).toBe("1000");
+    expect(line.propertyCode).toBe("YF1");
+    expect(line.privateType).toBe("NORM");
+    // 幂等键与头同值，而不是行自己生成一个
+    expect(line.uniqueSequenceNumber).toBe("run-abc123");
+    // 业务值保持模型给的
+    expect(line.itemCode).toBe("10000009");
+    expect(line.storehouseCode).toBe("300000");
+    // 缺省补齐：模型没给的收货库与货位
+    expect(line.transferStorehouseCode).toBe("1000");
+    expect(line.locatorCode).toBe("LC001");
+    expect(line.lineNumber).toBe("10");
+    expect(line.operationType).toBe("ADD");
+  });
+
+  it("stamps requiredDate in local time, with the line strictly earlier than the header", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_ALLOW_REAL_WRITES = "true";
+    const route = resolveRoute("createTransactionOrder", "write");
+    const header = route.overrides?.requiredDate as string;
+    const line = route.line_overrides?.requiredDate as string;
+    expect(header).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(line).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(Date.parse(line.replace(" ", "T"))).toBeLessThan(
+      Date.parse(header.replace(" ", "T")),
+    );
+    // 本地时间，不是 UTC：模型曾用 ISO 时间戳，让 17:14 的申请在 ERP 里显示成 09:14
+    const localHour = String(new Date().getHours()).padStart(2, "0");
+    expect(header.slice(11, 13)).toBe(localHour);
+  });
+
+  it("names the empty line array instead of letting ERP answer with its opaque 430138", () => {
+    expect(() => scope({ requiredDate: "2026-09-08 17:00:00" })).toThrow(/lineList 为空/);
+    expect(() => scope({ lineList: [] })).toThrow(/lineList 为空/);
   });
 });

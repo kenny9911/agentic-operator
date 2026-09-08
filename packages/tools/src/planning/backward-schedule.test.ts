@@ -69,6 +69,26 @@ describe("computeBackwardSchedule", () => {
     );
   });
 
+  it("accepts rows the caller already filtered, rather than burning a retry", () => {
+    // The live run passed business_type plus hand-retyped rows carrying no
+    // BUSINESS_TYPE. There is no near match to guard against, so schedule them.
+    const stripped = HC_ROWS.map(({ BUSINESS_TYPE: _drop, ...rest }) => rest);
+    const result = computeBackwardSchedule({
+      required_arrival_date: "2026-09-10",
+      business_type: "物品采购",
+      stages: stripped,
+    });
+    expect(result.business_type_filtered).toBe(false);
+    expect(result.planned_dates.at(-1)!.planned_finish_date).toBe("2026-09-10");
+    expect(
+      computeBackwardSchedule({
+        required_arrival_date: "2026-09-10",
+        business_type: "物品采购",
+        stages: HC_ROWS,
+      }).business_type_filtered,
+    ).toBe(true);
+  });
+
   it("names the configured business types instead of falling back to a near match", () => {
     expect(() =>
       computeBackwardSchedule({

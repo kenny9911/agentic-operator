@@ -38,7 +38,7 @@ import { findRepoRoot } from "../fs/_shared";
 import { resolveMetaerpCredentials } from "./config";
 import { normalizeMetaerpResponse } from "./envelope";
 import { callMetaerpOpenapi } from "./openapi-transport";
-import { resolveRoute } from "./routes";
+import { resolveRoute, type MetaerpRoute } from "./routes";
 import { callMetaerpUiapi } from "./uiapi-transport";
 
 export type MetaerpOperationKind = "query" | "write";
@@ -225,6 +225,74 @@ function maxCallsPerRun(): number {
  * correlationId 是**整条级联共用**的，单用它会让下游 agent 继承上游花掉的预算，
  * 一个取数扇出失控会饿死后面每一步。
  */
+/**
+ * Apply a route's line-level scope to a document payload.
+ *
+ * The header's `defaults`/`overrides` merge at the top level only, so nothing
+ * reached the entries of `lineList` — and the LLM that authors those entries
+ * left out the deployment-wide codes (transactionTypeCode, txnOrderTypeCode,
+ * submittedBy) while filling `sourceCode` with a business document number.
+ * Same lesson as the backward schedule: codes and constants are the platform's
+ * job, the model supplies the business values.
+ *
+ * Also fails closed on a missing/empty line array. ERP answers a line-less
+ * document with "Cannot submit because there is no detailed line information",
+ * which names neither the document nor the field; catching it here says which
+ * operation and which payload key were empty.
+ */
+export function _applyLineScopeForTests(
+  operation: string,
+  route: MetaerpRoute,
+  payload: Record<string, unknown>,
+  idempotencyKey: string | null,
+): Record<string, unknown> {
+  return applyLineScope(operation, route, payload, idempotencyKey);
+}
+
+function applyLineScope(
+  operation: string,
+  route: MetaerpRoute,
+  payload: Record<string, unknown>,
+  idempotencyKey: string | null,
+): Record<string, unknown> {
+  const field = route.line_field;
+  if (!field) return payload;
+
+  const raw = payload[field];
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 的行数组 ${field} 为空——单据必须至少有一行。` +
+        `收到的 payload 顶层字段为 [${Object.keys(payload).join(", ")}]。` +
+        `请把带 ${field} 的完整单据头作为 payload 传入，而不是单独一行。`,
+    );
+  }
+
+  const lineDefaults = route.line_defaults ?? {};
+  const lineOverrides = route.line_overrides ?? {};
+  // The line carries the header's idempotency value, not one of its own.
+  const lineIdempotency =
+    route.idempotency_field && idempotencyKey
+      ? { [route.idempotency_field]: idempotencyKey }
+      : {};
+
+  return {
+    ...payload,
+    [field]: raw.map((line, index) => {
+      if (typeof line !== "object" || line === null || Array.isArray(line)) {
+        throw new Error(
+          `metaerp.invoke: '${operation}' 的 ${field}[${index}] 不是对象`,
+        );
+      }
+      return {
+        ...lineDefaults,
+        ...(line as Record<string, unknown>),
+        ...lineOverrides,
+        ...lineIdempotency,
+      };
+    }),
+  };
+}
+
 function budgetKey(ctx: ToolContext): string {
   return ctx.runId ?? `${ctx.correlationId}:${ctx.agentName}`;
 }
@@ -381,12 +449,13 @@ export const metaerpInvoke = defineTool({
               ...(idempotencyKey ? { [route.idempotency_field!]: idempotencyKey } : {}),
             }
           : undefined;
+      const scopedPayload = applyLineScope(entry.operation, route, payload, idempotencyKey);
       const call =
         route.transport === "openapi" ? callMetaerpOpenapi : callMetaerpUiapi;
       const result = await call({
         operation: entry.operation,
         path: route.path ?? entry.path,
-        payload,
+        payload: scopedPayload,
         credentials,
         timeoutMs,
         ...(routeDefaults ? { defaults: routeDefaults } : {}),

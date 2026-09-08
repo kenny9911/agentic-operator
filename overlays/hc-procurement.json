@@ -463,7 +463,7 @@
     },
     "createStockTransferRequest": {
       "payload": {
-        "from": "event.data.transfer_order_line"
+        "from": "event.data.transfer_order"
       }
     },
     "trackTransferFulfillment": {
@@ -540,6 +540,11 @@
     "closeDeviationHandling": {
       "fields": {
         "closure_context": "闭环上下文：{alert_id, deviation_id, chain_id, deviation_eliminated:boolean, verification_result:'属实'|'误报', closed_at}。deviation_eliminated 为 false 时不得闭环，退回重新生成调整方案（BR-CLOSE-01）。"
+      }
+    },
+    "createStockTransferRequest": {
+      "fields": {
+        "transfer_order": "调拨单据头，**必须带 lineList 数组**——平台就是把这个对象整个发给 ERP 的 createTransactionOrder。\n你只负责业务值，编码和时间戳由平台注入，别自己填：\n  头：{ lineList: [...] }（其余字段平台补齐；不要写 sourceCode / txnOrderTypeCode / transactionTypeCode /\n      transferOrganizationCode / submittedBy / requiredDate / autoSubmit——写了也会被覆盖）\n  行：{ itemCode, transactionQuantity, storehouseCode（发出存储库）, sourceObjectNumber（来源单据号）,\n      sourceObjectLineId（来源单据行 ID） }，其余同样由平台补齐。\nitemCode / storehouseCode / sourceObjectNumber / sourceObjectLineId / transactionQuantity 一律取自\nqueryTransferableStock 与上游透传的真实值，不得自造。\n【硬性】lineList 为空或缺失时平台会直接报错停下：ERP 对无行单据只回一句\n「Cannot submit because there is no detailed line information」，既不说哪张单也不说缺什么。"
       }
     }
   },

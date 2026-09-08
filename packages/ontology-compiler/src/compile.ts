@@ -104,7 +104,7 @@ function backwardScheduleToolUseEntry(grant: OverlayExtraTool): CompiledToolUseE
         stages: {
           type: "array",
           description:
-            "\u5468\u671f\u914d\u7f6e\u884c\uff0c\u76f4\u63a5\u4f20 queryStageCycleConfig \u8fd4\u56de\u7684\u539f\u59cb\u884c\u5373\u53ef\u3002",
+            "\u5468\u671f\u914d\u7f6e\u884c\u3002\u628a queryStageCycleConfig \u8fd4\u56de\u7684\u539f\u59cb\u884c\u6574\u6bb5\u4f20\u8fdb\u6765\uff08\u5e26 BUSINESS_TYPE\uff09\uff0c\u4e0d\u8981\u81ea\u5df1\u8a8a\u5199\u3002",
           items: {
             type: "object",
             properties: {

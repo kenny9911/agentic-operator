@@ -52,6 +52,21 @@ export interface MetaerpRoute {
    * 不能是模型的自由度。
    */
   overrides?: Record<string, unknown>;
+  /**
+   * 单据行数组在 payload 里的字段名（如 `lineList`）。声明了它，`line_defaults`
+   * 与 `line_overrides` 才会逐行生效，并且**空行会被就地拦下**——ERP 对无行单据
+   * 只回一句 "Cannot submit because there is no detailed line information"，
+   * 不说是哪张单、也不说缺什么，排查成本远高于在这里报错。
+   */
+  line_field?: string;
+  /** 逐行合并在调用方**之下**：调用方没给才补。业务字段用这个。 */
+  line_defaults?: Record<string, unknown>;
+  /**
+   * 逐行合并在调用方**之上**。行上的交易类型、单据类型、接收组织、申请人这类
+   * 部署级编码属于这里：实测模型给的行漏了 transactionTypeCode / txnOrderTypeCode /
+   * submittedBy，还把 sourceCode 填成了业务单号——这些不该是模型的自由度。
+   */
+  line_overrides?: Record<string, unknown>;
   allow_real_write?: boolean;
   /**
    * 让运行时把稳定的幂等键写进这个字段。
@@ -118,11 +133,35 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
   ) {
     throw new Error(`metaerp routes: entry '${operation}' overrides must be an object`);
   }
+  const objectField = (key: "line_defaults" | "line_overrides") => {
+    const value = (raw as Record<string, unknown>)[key];
+    if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+      throw new Error(`metaerp routes: entry '${operation}' ${key} must be an object`);
+    }
+    return value as Record<string, unknown> | undefined;
+  };
+  const lineDefaults = objectField("line_defaults");
+  const lineOverrides = objectField("line_overrides");
+  const lineFieldRaw = (raw as { line_field?: unknown }).line_field;
+  const lineField = typeof lineFieldRaw === "string" ? lineFieldRaw.trim() : "";
+  if (lineFieldRaw !== undefined && !lineField) {
+    throw new Error(`metaerp routes: entry '${operation}' line_field must be a non-empty string`);
+  }
+  // Per-line scoping is only applied when line_field names the array, so a
+  // table that declares one without the other would silently do nothing.
+  if (!lineField && (lineDefaults || lineOverrides)) {
+    throw new Error(
+      `metaerp routes: entry '${operation}' declares line_defaults/line_overrides without line_field`,
+    );
+  }
   return {
     transport,
     ...(routePath ? { path: routePath } : {}),
     ...(routeDefaults ? { defaults: routeDefaults as Record<string, unknown> } : {}),
     ...(routeOverrides ? { overrides: routeOverrides as Record<string, unknown> } : {}),
+    ...(lineField ? { line_field: lineField } : {}),
+    ...(lineDefaults ? { line_defaults: lineDefaults } : {}),
+    ...(lineOverrides ? { line_overrides: lineOverrides } : {}),
     ...((raw as { allow_real_write?: unknown }).allow_real_write === true
       ? { allow_real_write: true }
       : {}),
@@ -204,6 +243,27 @@ export interface ResolvedRoute extends MetaerpRoute {
  * 更不该由模型猜——猜错了轻则再被拒，重则在真实 ERP 里建出错误的单据类型。
  * 环境变量没配就整个字段省略：ERP 自己的报错会点名缺哪个字段，比我们编一个值好。
  */
+/**
+ * `{"$now": {}}` → the ERP's "YYYY-MM-DD HH:mm:ss" in LOCAL time.
+ *
+ * The model used to author these. It reached for the alert's ISO timestamp,
+ * which is UTC — so a 17:14 request landed in the ERP as 09:14 and the 申请时间
+ * column read eight hours early. `minus_seconds` covers the line-level field,
+ * which the ERP requires to be strictly earlier than the moment of submission.
+ */
+function erpTimestamp(spec: unknown): string {
+  const minus =
+    spec && typeof spec === "object" && "minus_seconds" in spec
+      ? Number((spec as { minus_seconds?: unknown }).minus_seconds)
+      : 0;
+  const at = new Date(Date.now() - (Number.isFinite(minus) ? minus : 0) * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
+    `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`
+  );
+}
+
 function expandDefaults(
   defaults: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
@@ -215,6 +275,10 @@ function expandDefaults(
       const resolved =
         typeof name === "string" ? process.env[name]?.trim() : undefined;
       if (resolved) out[key] = resolved;
+      continue;
+    }
+    if (value && typeof value === "object" && !Array.isArray(value) && "$now" in value) {
+      out[key] = erpTimestamp((value as { $now?: unknown }).$now);
       continue;
     }
     out[key] = value;
@@ -232,6 +296,12 @@ export function resolveRoute(
         ...stored,
         ...(stored.defaults ? { defaults: expandDefaults(stored.defaults) } : {}),
         ...(stored.overrides ? { overrides: expandDefaults(stored.overrides) } : {}),
+        ...(stored.line_defaults
+          ? { line_defaults: expandDefaults(stored.line_defaults) }
+          : {}),
+        ...(stored.line_overrides
+          ? { line_overrides: expandDefaults(stored.line_overrides) }
+          : {}),
       }
     : { transport: "mock" as const };
   if (declared.transport === "mock") return declared;

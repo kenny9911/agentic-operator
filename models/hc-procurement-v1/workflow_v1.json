@@ -421,7 +421,7 @@
               "type": "string"
             },
             "stages": {
-              "description": "周期配置行，直接传 queryStageCycleConfig 返回的原始行即可。",
+              "description": "周期配置行。把 queryStageCycleConfig 返回的原始行整段传进来（带 BUSINESS_TYPE），不要自己誊写。",
               "items": {
                 "properties": {
                   "stage_node": {
@@ -2143,7 +2143,7 @@
         "result_key": "createStockTransferRequest",
         "tool_arguments": {
           "payload": {
-            "from": "event.data.transfer_order_line"
+            "from": "event.data.transfer_order"
           }
         },
         "type": "tool"
