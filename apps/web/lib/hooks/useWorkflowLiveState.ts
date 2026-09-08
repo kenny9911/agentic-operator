@@ -84,6 +84,16 @@ export interface WorkflowLiveState {
   /** runId → agentName registry (bounded to MAX_TRACKED_RUNS). */
   runAgent: Record<string, string>;
   /**
+   * runId → 该次运行的 subject。
+   *
+   * 画布按 subject 收敛到「当前这条链路」，但待人工徽标原本不收敛：一个 agent 的
+   * waitingTaskIds 跨运行累积，昨天另一条链路留下的未处理任务会挂在今天这次运行的
+   * 节点上——看板显示「待人工」，点开却是别的 subject 的旧任务。
+   */
+  runSubject: Record<string, string | null>;
+  /** taskId → 该任务所属运行的 subject，供画布按当前链路过滤待人工徽标。 */
+  taskSubject: Record<string, string | null>;
+  /**
    * Subject of the newest run seen — the chain currently being watched.
    *
    * Every agent in a chain carries the same subject, so this is what separates
@@ -127,6 +137,8 @@ export function initialWorkflowLiveState(): WorkflowLiveState {
   return {
     agents: {},
     runAgent: {},
+    runSubject: {},
+    taskSubject: {},
     runOrder: [],
     latestSubject: null,
     taskAgent: {},
@@ -257,6 +269,7 @@ function attachTask(
   const next: WorkflowLiveState = {
     ...state,
     taskAgent: { ...state.taskAgent, [taskId]: agentName },
+    taskSubject: { ...state.taskSubject, [taskId]: state.runSubject[runId] ?? null },
     runTasks: owned.includes(taskId)
       ? state.runTasks
       : { ...state.runTasks, [runId]: [...owned, taskId] },
@@ -286,11 +299,15 @@ export function workflowLiveReducer(
     case "run.started": {
       const registered = registerRun(state, event.runId, event.agentName);
       const parked = registered.pendingTasks[event.runId] ?? [];
+      const scoped = {
+        ...registered,
+        runSubject: { ...registered.runSubject, [event.runId]: event.subject ?? null },
+      };
       // The newest run names the chain being watched. Frames replay oldest
       // first, so the last one to arrive is the current one.
       const withSubject = event.subject
-        ? { ...registered, latestSubject: event.subject }
-        : registered;
+        ? { ...scoped, latestSubject: event.subject }
+        : scoped;
       let next = withAgent(withSubject, event.agentName, (agent) => ({
         ...agent,
         runningCount: agent.runningCount + 1,
@@ -413,6 +430,8 @@ export interface UseWorkflowLiveStateResult {
   activeEventNames: Set<string>;
   /** Subject of the newest run — the chain the canvas defaults to showing. */
   latestSubject: string | null;
+  /** taskId → 该任务所属运行的 subject，供画布按当前链路过滤待人工徽标。 */
+  taskSubject: Record<string, string | null>;
 }
 
 export function useWorkflowLiveState(
@@ -478,5 +497,6 @@ export function useWorkflowLiveState(
     pulses: state.pulses,
     activeEventNames,
     latestSubject: state.latestSubject,
+    taskSubject: state.taskSubject,
   };
 }

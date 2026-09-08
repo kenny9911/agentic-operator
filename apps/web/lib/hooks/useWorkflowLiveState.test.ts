@@ -346,6 +346,31 @@ describe("workflowLiveReducer", () => {
     expect(state.agents["action-create-stock-transfer"]!.state).toBe("ok");
   });
 
+  // 一个 agent 的 waitingTaskIds 跨运行累积：昨天另一条链路留下的未处理任务会挂在
+  // 今天这次运行的节点上。画布靠 taskSubject 把徽标收敛到当前链路。
+  it("records which chain each human task belongs to", () => {
+    const state = feed(initialWorkflowLiveState(), [
+      {
+        type: "run.started", tenantId: "tn-1", at: T0, runId: "run-old",
+        agentName: "handleBlueAlertLocally", triggerEvent: null,
+        subject: "昨天", correlationId: "cor-1",
+      },
+      {
+        type: "task.created", tenantId: "tn-1", at: T0 + 10, taskId: "tsk-old",
+        runId: "run-old", taskType: "approval", title: "旧任务",
+        awaitingRole: "计划员", priority: "medium",
+      },
+      {
+        type: "run.started", tenantId: "tn-1", at: T0 + 100, runId: "run-new",
+        agentName: "handleBlueAlertLocally", triggerEvent: null,
+        subject: "今天", correlationId: "cor-2",
+      },
+    ]);
+    expect(state.taskSubject["tsk-old"]).toBe("昨天");
+    // agent 上仍然累积着这个任务——过滤发生在画布侧，用的就是这张表。
+    expect(state.agents["handleBlueAlertLocally"]!.waitingTaskIds).toContain("tsk-old");
+  });
+
   // 三个互斥方案由同一个事件触发；被否掉的两个在提交闸口处跳过全部实效步骤后照样
   // 以 run.completed 收尾。画成绿色「已完成」时看板上三个方案全部亮起，与「领导只
   // 选了一个」直接矛盾。
