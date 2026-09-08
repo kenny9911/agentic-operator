@@ -88,6 +88,7 @@ import { documentConvert } from "./document";
 import { inspectEnvironmentReferencesTool } from "./config";
 import { metaerpInvoke } from "./metaerp";
 import { powerPurchaseEvaluateTimeliness } from "./power-purchase";
+import { planningBackwardSchedule } from "./planning";
 import {
   browserOpenSession,
   browserNavigate,
@@ -422,6 +423,86 @@ const GOHIRE_CONFIG_EXAMPLE = {
 };
 
 const REGISTRATIONS: ToolRegistration[] = [
+  // ── planning.* — pure date arithmetic, no external system. ──────────────
+  {
+    descriptor: planningBackwardSchedule,
+    catalog: {
+      name: "planning.backwardSchedule",
+      category: "planning",
+      sideEffect: "read",
+      operation: "compute",
+      effectScope: "none",
+      sandboxPolicy: "pure",
+      probeRequired: false,
+      testPolicy: "allow",
+      credentialPosture: "none",
+      summary:
+        "\u6309\u9700\u6c42\u5230\u8d27\u65e5\u671f\u4e0e\u5404\u8282\u70b9\u6807\u51c6\u5468\u671f\uff0c\u786e\u5b9a\u6027\u5730\u5012\u6392\u51fa\u6bcf\u4e2a\u8282\u70b9\u7684\u8ba1\u5212\u5b8c\u6210\u65f6\u95f4\u3002",
+      description:
+        "planned_finish(k) = required_arrival_date \u2212 \u03a3 standard_cycle_days(j>k)\uff1a\u6700\u540e\u4e00\u4e2a\u8282\u70b9\u843d\u5728\u9700\u6c42\u5230\u8d27\u65e5\u5f53\u5929\uff0c\u5176\u4f59\u8282\u70b9\u51cf\u53bb\u5176\u540e\u6240\u6709\u8282\u70b9\u7684\u5468\u671f\u4e4b\u548c\uff08\u4e0d\u542b\u81ea\u8eab\u5468\u671f\uff09\u3002\u884c\u53ef\u76f4\u63a5\u4f20 ERP \u914d\u7f6e\u8868\u539f\u59cb\u5927\u5199\u5b57\u6bb5\u3002\u4f20\u4e86 business_type \u5c31\u5148\u6309\u5b83\u7b5b\u884c\uff0c\u7b5b\u4e0d\u5230\u76f4\u63a5\u62a5\u9519\u5e76\u5217\u51fa\u914d\u7f6e\u91cc\u5b9e\u9645\u5b58\u5728\u7684\u4e1a\u52a1\u7c7b\u578b\uff0c\u4e0d\u4f1a\u9759\u9ed8\u964d\u7ea7\u5230\u76f8\u8fd1\u7684\u4e00\u6863\u3002\u5e8f\u53f7\u5fc5\u987b\u662f\u4ece 1 \u5f00\u59cb\u4e0d\u91cd\u4e0d\u6f0f\u7684\u8fde\u7eed\u6574\u6570\u3002",
+      argsSchema: {
+        required_arrival_date: {
+          type: "string",
+          description: "\u9700\u6c42\u5230\u8d27\u65e5\u671f\uff0cYYYY-MM-DD\u3002\u5012\u6392\u57fa\u51c6\u3002",
+        },
+        stages: {
+          type: "array",
+          description:
+            "\u5468\u671f\u914d\u7f6e\u884c\uff0c\u6bcf\u884c\u542b stage_node / stage_sequence / standard_cycle_days\uff08\u5927\u5199 STAGE_NODE \u7b49\u540c\u6837\u53ef\u4ee5\uff09\u3002",
+        },
+        business_type: {
+          type: "string",
+          description: "\u53ef\u9009\uff1a\u6309\u4e1a\u52a1\u7c7b\u578b\u7b5b\u9009 stages\uff1b\u7b5b\u4e0d\u5230\u62a5\u9519\u3002",
+        },
+      },
+      argsExample: {
+        required_arrival_date: "2026-09-10",
+        business_type: "\u7269\u54c1\u91c7\u8d2d",
+        stages: [
+          { STAGE_NODE: "\u7acb\u9879", STAGE_SEQUENCE: 1, STANDARD_CYCLE_DAYS: 10, BUSINESS_TYPE: "\u7269\u54c1\u91c7\u8d2d" },
+          { STAGE_NODE: "\u5230\u8d27", STAGE_SEQUENCE: 2, STANDARD_CYCLE_DAYS: 70, BUSINESS_TYPE: "\u7269\u54c1\u91c7\u8d2d" },
+        ],
+      },
+      configSchema: {},
+      returnsSchema: {
+        required_arrival_date: { type: "string" },
+        business_type: { type: "string | null" },
+        stage_count: { type: "number" },
+        total_cycle_days: { type: "number" },
+        earliest_start_date: { type: "string" },
+        planned_dates: {
+          type: "array",
+          description:
+            "[{stage_node, stage_sequence, standard_cycle_days, planned_finish_date, planned_date_derived:true}]",
+        },
+      },
+      returnsExample: {
+        required_arrival_date: "2026-09-10",
+        business_type: "\u7269\u54c1\u91c7\u8d2d",
+        stage_count: 2,
+        total_cycle_days: 80,
+        earliest_start_date: "2026-06-22",
+        planned_dates: [
+          {
+            stage_node: "\u7acb\u9879",
+            stage_sequence: 1,
+            standard_cycle_days: 10,
+            planned_finish_date: "2026-07-02",
+            planned_date_derived: true,
+          },
+          {
+            stage_node: "\u5230\u8d27",
+            stage_sequence: 2,
+            standard_cycle_days: 70,
+            planned_finish_date: "2026-09-10",
+            planned_date_derived: true,
+          },
+        ],
+      },
+      sourcePath: "packages/tools/src/planning/backward-schedule.ts",
+    },
+  },
+
   // ── power-purchase.* — pure shadow decision support. This intentionally
   //    declares no external-system capability: computing a recommendation
   //    must never be mistaken for an ERP integration or alert dispatcher. ──

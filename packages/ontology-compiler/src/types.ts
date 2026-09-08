@@ -304,7 +304,8 @@ export interface CompilerOverlay {
 // ── compiled output ───────────────────────────────────────────────────────────
 
 /** Reviewed execution policy — must byte-match the global registry entry for
- * the named tool (metaerp.invoke and ontology.query respectively). */
+ * the named tool (metaerp.invoke, ontology.query and planning.backwardSchedule
+ * respectively). */
 export type CompiledExecutionPolicy =
   | {
       operation: "read_write";
@@ -315,6 +316,11 @@ export type CompiledExecutionPolicy =
       operation: "read";
       effect_scope: "external";
       sandbox_policy: "live_external";
+    }
+  | {
+      operation: "compute";
+      effect_scope: "none";
+      sandbox_policy: "pure";
     };
 
 export interface CompiledToolUseEntry {

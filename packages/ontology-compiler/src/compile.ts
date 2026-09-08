@@ -69,6 +69,62 @@ const ONTOLOGY_QUERY_REVIEWED_POLICY = {
   effect_scope: "external",
   sandbox_policy: "live_external",
 } as const;
+
+/** planning.backwardSchedule — pure date arithmetic, no I/O. Same byte-equality
+ * contract as the two policies above: the runtime rejects any manifest whose
+ * declared policy differs from the reviewed global-registry entry. */
+const BACKWARD_SCHEDULE_TOOL = "planning.backwardSchedule";
+const BACKWARD_SCHEDULE_REVIEWED_POLICY = {
+  operation: "compute",
+  effect_scope: "none",
+  sandbox_policy: "pure",
+} as const;
+
+function backwardScheduleToolUseEntry(grant: OverlayExtraTool): CompiledToolUseEntry {
+  return {
+    name: BACKWARD_SCHEDULE_TOOL,
+    description:
+      grant.description ??
+      "\u6309\u9700\u6c42\u5230\u8d27\u65e5\u671f\u4e0e\u5404\u8282\u70b9\u6807\u51c6\u5468\u671f\u5012\u6392\u51fa\u6bcf\u4e2a\u8282\u70b9\u7684\u8ba1\u5212\u5b8c\u6210\u65f6\u95f4\uff08\u7eaf\u8ba1\u7b97\uff0c\u4e0d\u8bbf\u95ee\u5916\u90e8\u7cfb\u7edf\uff09\u3002",
+    side_effect: "read",
+    execution_policy: BACKWARD_SCHEDULE_REVIEWED_POLICY,
+    input_schema: {
+      type: "object",
+      required: ["required_arrival_date", "stages"],
+      properties: {
+        required_arrival_date: {
+          type: "string",
+          description: "\u9700\u6c42\u5230\u8d27\u65e5\u671f\uff0cYYYY-MM-DD\u3002\u5012\u6392\u57fa\u51c6\u3002",
+        },
+        business_type: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u6309\u4e1a\u52a1\u7c7b\u578b\u7b5b\u9009 stages\uff1b\u7b5b\u4e0d\u5230\u4f1a\u62a5\u9519\u5e76\u5217\u51fa\u914d\u7f6e\u91cc\u5b9e\u9645\u5b58\u5728\u7684\u4e1a\u52a1\u7c7b\u578b\u3002",
+        },
+        stages: {
+          type: "array",
+          description:
+            "\u5468\u671f\u914d\u7f6e\u884c\uff0c\u76f4\u63a5\u4f20 queryStageCycleConfig \u8fd4\u56de\u7684\u539f\u59cb\u884c\u5373\u53ef\u3002",
+          items: {
+            type: "object",
+            properties: {
+              stage_node: { type: "string", description: "\u8282\u70b9\u540d\uff08\u6216 STAGE_NODE\uff09" },
+              stage_sequence: {
+                type: "number",
+                description: "\u8282\u70b9\u5e8f\u53f7\uff0c\u4ece 1 \u5f00\u59cb\u8fde\u7eed\uff08\u6216 STAGE_SEQUENCE\uff09",
+              },
+              standard_cycle_days: {
+                type: "number",
+                description: "\u6807\u51c6\u5468\u671f\u5929\u6570\uff08\u6216 STANDARD_CYCLE_DAYS\uff09",
+              },
+            },
+          },
+        },
+      },
+    },
+    config: narrowOverlayToolConfig(grant.config),
+  };
+}
 /** Extra judge-prompt line appended when an overlay grants ontology.query to
  * rule-gate judges (grant_to_judges) — evidence-fetch instruction, keeping
  * the fail-closed floor intact. */
@@ -609,6 +665,18 @@ function narrowOverlayToolConfig(
   return narrowed;
 }
 
+/** Tools an overlay may grant, each mapped to the builder that emits its
+ * reviewed execution_policy. A name absent from this table is rejected: an
+ * overlay is tenant-authored config and must never be able to ship an
+ * unreviewed policy. */
+const EXTRA_TOOL_BUILDERS: Record<
+  string,
+  ((grant: OverlayExtraTool) => CompiledToolUseEntry) | undefined
+> = {
+  [ONTOLOGY_QUERY_TOOL]: ontologyQueryToolUseEntry,
+  [BACKWARD_SCHEDULE_TOOL]: backwardScheduleToolUseEntry,
+};
+
 /** Apply overlay `extra_tools` grants to a compiled agent in place: append
  * the tool_use entry (after metaerp.invoke if present), grant the analyze
  * logic step, and — with grant_to_judges — every `rule-gate:*` LLM judge,
@@ -622,9 +690,10 @@ function applyExtraTools(
 ): void {
   const grants = ctx.overlay.extra_tools?.[action.id] ?? [];
   for (const grant of grants) {
-    if (grant.name !== ONTOLOGY_QUERY_TOOL) {
+    const buildEntry = EXTRA_TOOL_BUILDERS[grant.name];
+    if (!buildEntry) {
       fail(
-        `overlay extra_tools for ${action.id} grants unsupported tool "${grant.name}" — only ${ONTOLOGY_QUERY_TOOL} has a compiler-known reviewed execution policy`,
+        `overlay extra_tools for ${action.id} grants unsupported tool "${grant.name}" — only ${Object.keys(EXTRA_TOOL_BUILDERS).join(", ")} have a compiler-known reviewed execution policy`,
       );
     }
     if (compiled.toolUse.some((entry) => entry.name === grant.name)) {
@@ -632,14 +701,14 @@ function applyExtraTools(
     }
     // One entry per tool NAME per agent: the runtime lifts config by name
     // (first match wins) and providers reject duplicate tool names.
-    compiled.toolUse.push(ontologyQueryToolUseEntry(grant));
+    compiled.toolUse.push(buildEntry(grant));
     for (const step of compiled.steps) {
       if (step.type !== "logic") continue;
       const isJudge = step.name.startsWith("rule-gate:");
       if (isJudge && grant.grant_to_judges !== true) continue;
       const allowed = step.allowed_tools ?? (step.allowed_tools = []);
       if (!allowed.includes(grant.name)) allowed.push(grant.name);
-      if (isJudge && step.action_prompt) {
+      if (isJudge && step.action_prompt && grant.name === ONTOLOGY_QUERY_TOOL) {
         step.action_prompt = `${step.action_prompt}\n\n${JUDGE_ONTOLOGY_QUERY_LINE}`;
       }
     }
