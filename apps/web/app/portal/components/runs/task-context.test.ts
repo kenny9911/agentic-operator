@@ -5,6 +5,7 @@ import {
   contextInsights,
   contextSummary,
   decisionOptions,
+  pickContext,
   formatContextValue,
   prefillFromContext,
 } from "./task-context";
@@ -349,6 +350,17 @@ describe("the three things an approver needs", () => {
       "M-CAB-240 跨期拆分",
       "M-BRK-126 三行合并",
     ]);
+  });
+
+  // API 对运行载荷有 24KB 上限，真实链路一超限就整个塌成 {_truncated} 标记，
+  // 「采购概况」「判断依据」两栏因此空着——审批人没有任何依据可看。
+  it("falls back to the task's own brief when the run payload was truncated", () => {
+    const truncated = { _truncated: true, _bytes: 49443, _preview: "{...}" };
+    const brief = { alert_level: "红色", chain_id: "C-1", cause_explanation: "定标节点停滞 46 天，后续周期已赶不上到货日。" };
+    expect(pickContext(truncated, brief)).toBe(brief);
+    expect(contextSummary(pickContext(truncated, brief)).length).toBeGreaterThan(0);
+    // 载荷完整时仍优先用它——信息更全。
+    expect(pickContext(brief, truncated)).toBe(brief);
   });
 
   it("keeps the facts when the options differ in nothing", () => {

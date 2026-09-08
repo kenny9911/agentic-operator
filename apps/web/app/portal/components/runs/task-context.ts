@@ -312,6 +312,24 @@ function isProse(value: string): boolean {
  * late, how severe. Short values only, deduped by key, first occurrence wins —
  * the same id repeats across most records and is worth showing once.
  */
+/**
+ * 挑一个真正有内容的上下文来源。
+ *
+ * 面板原本只读运行载荷，而 API 对它有 24KB 上限——真实链路一超限就整个塌成
+ * `{_truncated}` 标记，于是「采购概况」和「判断依据」两栏空着：审批人要在没有任何
+ * 依据的情况下做决定。任务自己带的 preparedContext 是上一步刚算出来的决策简报，
+ * 正是这时候该顶上的东西。
+ *
+ * 顺序是「先运行载荷、后任务简报」：载荷完整时信息更全，塌了才退。
+ */
+export function pickContext(...sources: unknown[]): unknown {
+  for (const source of sources) {
+    if (source == null) continue;
+    if (contextGroups(source).length > 0) return source;
+  }
+  return null;
+}
+
 export function contextSummary(payload: unknown): ContextFact[] {
   const seen = new Set<string>();
   const facts: ContextFact[] = [];

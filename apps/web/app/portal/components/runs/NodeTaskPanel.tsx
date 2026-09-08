@@ -35,6 +35,7 @@ import {
   actorDefaults,
   contextInsights,
   contextSummary,
+  pickContext,
   decisionOptions,
   prefillFromContext,
   type ContextFact,
@@ -95,7 +96,12 @@ export function NodeTaskPanel({
     () => definition.fields.map((field) => field.name),
     [definition],
   );
-  const runPayload = run.data?.run?.inputPayload;
+  // 运行载荷超过 API 的 24KB 上限就整个塌成 {_truncated} 标记——真实链路必然超。
+  // 那时退回任务自己带的决策简报，而不是给审批人两栏空白。
+  const runPayload = useMemo(
+    () => pickContext(run.data?.run?.inputPayload, payload.preparedContext),
+    [run.data, payload.preparedContext],
+  );
   const summary = useMemo(() => contextSummary(runPayload), [runPayload]);
   const insights = useMemo(() => contextInsights(runPayload), [runPayload]);
   const options = useMemo(
