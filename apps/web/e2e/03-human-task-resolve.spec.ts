@@ -27,6 +27,12 @@
  *      — the resolve route validates the payload against the task's form
  *      schema, so the four required fields are supplied.
  *   4. Polls /v1/tasks/:id and asserts the status left `open`.
+ *
+ * Note on scope: the gate is the agent's FIRST action, so the task's
+ * `preparedContext` is null — the runtime seeds it from the previous step's
+ * result and there is none. The event payload is therefore asserted where it
+ * demonstrably lands (the event ledger), not in the task row. Binding trigger
+ * data into a first-action manual task is a separate runtime question.
  */
 
 import { test, expect } from "@playwright/test";
@@ -34,6 +40,7 @@ import { apiFetch, waitFor } from "./helpers";
 
 const TENANT = "procurement-hc-formal";
 const AGENT = "approveAdjustmentOption";
+const TASK_TYPE = "adjustment.select";
 
 test.describe("P4-TEST-03: human task resolve E2E", () => {
   test("event → manual task row → resolve flips status", async () => {
@@ -71,6 +78,25 @@ test.describe("P4-TEST-03: human task resolve E2E", () => {
       }),
     });
     expect(ingest.status, JSON.stringify(ingest.body)).toBe(200);
+    if (!ingest.body.ok) throw new Error("event ingest failed");
+
+    // The ingest answers 200 even when the body is discarded — under the wrong
+    // key Zod strips it and the gate below still opens, so every later
+    // assertion would pass on an empty payload. Read the event back (the detail
+    // endpoint resolves the real payload from the ledger) and prove the fields
+    // survived. This is what makes `payload:` above a tested contract.
+    const stored = await apiFetch<{
+      id: string;
+      payload?: { option_ids?: string[]; alert_context?: { alert_level?: string } };
+    }>(`/v1/events/${ingest.body.data.event_id}`, { tenantSlug: TENANT });
+    expect(stored.status).toBe(200);
+    if (!stored.body.ok) throw new Error("event detail fetch failed");
+    expect(stored.body.data.payload?.option_ids).toEqual([
+      "OPT-E2E-1",
+      "OPT-E2E-2",
+      "OPT-E2E-3",
+    ]);
+    expect(stored.body.data.payload?.alert_context?.alert_level).toBe("红色");
 
     // 2) The human gate materialises as an open task for our agent. Filter
     //    by creation time so a long-lived dev database with older open
@@ -90,6 +116,11 @@ test.describe("P4-TEST-03: human task resolve E2E", () => {
           (t) =>
             t.status === "open" &&
             t.payloadJson?.agentName === AGENT &&
+            // Filter on type as well: once the gate below is resolved the SAME
+            // agent opens `adjustment.planner-confirm`, which stays open. On a
+            // retry that leftover satisfies every other clause and the type
+            // assertion then fails on the wrong row.
+            t.type === TASK_TYPE &&
             t.createdAt != null &&
             new Date(t.createdAt).getTime() >= startedAt - 5_000,
         );
@@ -97,11 +128,11 @@ test.describe("P4-TEST-03: human task resolve E2E", () => {
       },
       // On a CI runner the Inngest dev server dispatches a step in tens of
       // seconds, not milliseconds.
-      { timeoutMs: process.env.CI ? 120_000 : 30_000, label: `${AGENT} open task`, intervalMs: 500 },
+      { timeoutMs: process.env.CI ? 120_000 : 30_000, label: `${AGENT} ${TASK_TYPE} task`, intervalMs: 500 },
     );
     expect(task.id).toMatch(/^(tsk-|TASK-)/);
     expect(task.status).toBe("open");
-    expect(task.type).toBe("adjustment.select");
+    expect(task.type).toBe(TASK_TYPE);
 
     // 3) Resolve with the form the gate declares (all four required fields).
     const resolve = await apiFetch<{ task_id: string; decision: string }>(
