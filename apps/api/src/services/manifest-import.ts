@@ -98,7 +98,8 @@ import {
   productionCodeActManifestSha256,
   canonicalWorkflowVersionId,
   legacyWorkflowVersionId,
-  workflowVersionContentMatches,
+  loadActionsFromDisk,
+  workflowVersionContentCompatible,
   type LintConflict,
   type LintIssue,
   type LiveWorkflowSnapshot,
@@ -1177,6 +1178,39 @@ export async function removeTenantModelDirs(slug: string): Promise<string[]> {
     removed.push(d.folder);
   }
   return removed;
+}
+
+/**
+ * The actions the runtime will load beside a manifest published for `slug` when
+ * this import carries none of its own. `resolveModelFile` picks the highest
+ * `actions_v*.json` independently of the workflow file, so the effective pair
+ * after a workflow-only publish is (new manifest, existing actions) — and
+ * version identity has to be computed over exactly that pair.
+ *
+ * Reads the actions file directly rather than through `loadManifestFromDisk`:
+ * that would first parse and validate the tenant's CURRENT workflow file, and a
+ * tenant whose on-disk workflow no longer validates would silently fall back to
+ * "no actions" — reintroducing the identity drift this exists to prevent.
+ * Returns undefined when there is no models dir or no actions; the hash treats
+ * undefined and [] alike, so identity is unchanged in that case.
+ */
+async function actionsPairedOnDisk(slug: string): Promise<unknown[] | undefined> {
+  let dir: string | undefined;
+  try {
+    dir = (await findTenantDirs(slug))[0]?.absDir;
+  } catch (error) {
+    // An unconfigured or not-yet-created models root simply has nothing to
+    // pair. Any other failure (EACCES, EIO) is a real fault: masking it would
+    // publish an identity that disagrees with disk.
+    const message = (error as Error | null)?.message ?? "";
+    if (/models root does not exist|AGENTIC_MODELS_DIR/i.test(message)) {
+      return undefined;
+    }
+    throw error;
+  }
+  if (!dir) return undefined;
+  const actions = await loadActionsFromDisk(dir);
+  return Array.isArray(actions) && actions.length > 0 ? actions : undefined;
 }
 
 async function pickNextVersion(
@@ -2442,7 +2476,9 @@ function storedWorkflowVersionMatchesMigrated(
     Array.isArray((stored as { agents?: unknown }).agents)
       ? (stored as { agents: unknown }).agents
       : stored;
-  return workflowVersionContentMatches(
+  // Compatible, not identical: a row that recorded no actions (a workflow-only
+  // publish) is not a content conflict with the actions the runtime pairs.
+  return workflowVersionContentCompatible(
     { manifestJson: normalizedManifest, actionsJson: row.actionsJson },
     migratedManifest,
     actions,
@@ -2579,9 +2615,22 @@ export async function commit(
   const identityManifestJson = bootstrapIdentityManifestJson(
     result.persistedManifest,
   );
+  // Same invariant, actions half. The runtime resolves `workflow_v*.json` and
+  // `actions_v*.json` INDEPENDENTLY (highest version wins per family), so a
+  // commit that carries no new actions publishes a manifest that bootstrap
+  // will re-load beside the tenant's EXISTING actions file. Hashing
+  // `result.actions` (undefined) described a pair that exists nowhere on disk:
+  // the re-registration inside this very commit therefore saw a brand-new
+  // version, inserted its own live deployment, and assertDeploymentOwnsLiveLane
+  // 500ed the FIRST publish for every tenant that has an actions file (the
+  // identical second publish then succeeded, because that bootstrap-derived
+  // version row already existed). Hash the actions the runtime will really
+  // pair, and store them on the row so the boot-time content check agrees too.
+  const identityActions =
+    result.actions ?? (await actionsPairedOnDisk(ctx.tenantSlug));
   const desiredVersion = canonicalWorkflowVersionId(
     migratedForIdentity,
-    result.actions,
+    identityActions,
   );
   const legacyDesiredVersion = legacyWorkflowVersionId(migratedForIdentity);
   // Capture the authoritative last-good view before the first durable write.
@@ -2763,7 +2812,7 @@ export async function commit(
             !storedWorkflowVersionMatchesMigrated(
               fullExisting,
               migratedForIdentity,
-              result.actions,
+              identityActions,
             )
           ) {
             throw new Error("full workflow version digest collision");
@@ -2786,7 +2835,7 @@ export async function commit(
             storedWorkflowVersionMatchesMigrated(
               legacyExisting,
               migratedForIdentity,
-              result.actions,
+              identityActions,
             )
               ? legacyExisting
               : undefined);
@@ -2804,7 +2853,7 @@ export async function commit(
               !storedWorkflowVersionMatchesMigrated(
                 pendingVersion,
                 migratedForIdentity,
-                result.actions,
+                identityActions,
               )
             ) {
               throw new ManifestImportConcurrencyConflictError(
@@ -2844,7 +2893,7 @@ export async function commit(
               !storedWorkflowVersionMatchesMigrated(
                 pendingVersion,
                 migratedForIdentity,
-                result.actions,
+                identityActions,
               )
             ) {
               throw new ManifestImportConcurrencyConflictError(
@@ -2890,7 +2939,7 @@ export async function commit(
             !storedWorkflowVersionMatchesMigrated(
               fullExisting,
               migratedForIdentity,
-              result.actions,
+              identityActions,
             )
           ) {
             throw new Error("full workflow version digest collision");
@@ -2913,7 +2962,7 @@ export async function commit(
             storedWorkflowVersionMatchesMigrated(
               legacyExisting,
               migratedForIdentity,
-              result.actions,
+              identityActions,
             )
               ? legacyExisting
               : undefined);
@@ -2933,6 +2982,15 @@ export async function commit(
                 // collision. `storedWorkflowVersionMatchesMigrated` normalizes
                 // the agents out for content comparison.
                 manifestJson: identityManifestJson as object,
+                // What this publish AUTHORED — null when it carried no actions.
+                // Not `identityActions`: authoring surfaces read this column as
+                // the payload to inherit/republish (saveWorkflowDraft policy-
+                // checks it, getWorkflowPublishSnapshot republishes it), so
+                // recording carried-forward disk actions here would make every
+                // later canvas save fail its persistence policy and would let a
+                // republish overwrite the tenant's actions file with a stale
+                // snapshot. Identity still covers the real pair; the boot-side
+                // guard treats a null column as unrecorded, not contradictory.
                 actionsJson: (result.actions ?? null) as unknown as object,
               })
               .run();

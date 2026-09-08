@@ -126,7 +126,8 @@ test.describe("P4-TEST-06: CLI init + deploy round-trip E2E", () => {
       cwd,
     );
     expect(r.code, `stderr=${r.stderr}\nstdout=${r.stdout}`).toBe(0);
-    const version = r.stdout.match(/Deployed (auto-[a-f0-9]{8})/)?.[1];
+    // Full content digest; the 8-char form is the legacy id (see spec 05).
+    const version = r.stdout.match(/Deployed (auto-[a-f0-9]{64})/)?.[1];
     expect(version).toBeTruthy();
     deployedVersion = version ?? "";
   });

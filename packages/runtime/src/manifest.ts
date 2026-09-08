@@ -1239,6 +1239,28 @@ async function readJsonFileOptional<T>(
 }
 
 /**
+ * Load ONLY the actions half of a model dir, resolved exactly the way
+ * `loadManifestFromDisk` resolves it (highest `actions_v*.json`, bare
+ * `actions.json` counting as v1). Callers that need to know which actions the
+ * runtime will pair with a manifest — version identity, most of all — must use
+ * this rather than re-implementing the resolution, and must not have to parse
+ * the workflow file to get here: a tenant whose current workflow no longer
+ * validates still has a perfectly readable actions file.
+ *
+ * Returns undefined when the dir (or an actions file in it) does not exist. A
+ * malformed actions file throws — it would break the next bootstrap anyway, and
+ * silently treating it as "no actions" is how identity drifts from disk.
+ */
+export async function loadActionsFromDisk(
+  workflowDir: string,
+): Promise<ActionsManifest | undefined> {
+  const actionsPath = await resolveModelFile(workflowDir, ["actions.json"]);
+  if (!actionsPath) return undefined;
+  const raw = JSON.parse(await readFile(actionsPath, "utf8")) as unknown;
+  return ActionsManifestSchema.parse(raw);
+}
+
+/**
  * Backwards-compat wrapper: loads workflow + actions from a dir.
  * Accepts versioned names (`workflow_v1.json`).
  */

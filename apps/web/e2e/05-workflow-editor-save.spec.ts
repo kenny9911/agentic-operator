@@ -93,7 +93,10 @@ test.describe("P4-TEST-05: workflow editor save E2E", () => {
     } = upload.body.data;
     expect(workflow_version_id).toMatch(/^wfv-/);
     expect(deployment_id).toMatch(/^dpl-/);
-    expect(version).toMatch(/^auto-[a-f0-9]{8}$/);
+    // `auto-<sha256>` — the full content digest over (agents, actions).
+    // The 8-char form is `legacyWorkflowVersionId`, kept only so old rows
+    // still resolve; nothing mints it any more.
+    expect(version).toMatch(/^auto-[a-f0-9]{64}$/);
     expect(diff.added).toContain("e2e-test-agent");
     expect(inngest_fns_registered).toBeGreaterThan(0);
     await expect(access(file_written)).resolves.toBeUndefined();

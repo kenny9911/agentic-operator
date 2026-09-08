@@ -51,7 +51,11 @@ test.describe("P4-TEST-03: human task resolve E2E", () => {
       body: JSON.stringify({
         name: "ADJUSTMENT_OPTIONS_GENERATED",
         subject,
-        data: {
+        // `payload`, not `data`: IngestEventBody declares {name, subject,
+        // payload} and the `data` shape is a RAAS/zhaopin-gated compatibility
+        // form. Under any other tenant Zod strips the unknown key, so the event
+        // still ingests 200 but the agent runs on an empty payload.
+        payload: {
           alert_id: alertId,
           chain_id: chainId,
           option_ids: ["OPT-E2E-1", "OPT-E2E-2", "OPT-E2E-3"],
