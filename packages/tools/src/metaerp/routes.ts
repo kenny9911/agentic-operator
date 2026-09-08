@@ -21,7 +21,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { findRepoRoot } from "../fs/_shared";
 
-export type MetaerpTransport = "mock" | "openapi" | "uiapi";
+/**
+ * `stub` answers from the routing table itself — no HTTP call at all, not even
+ * to the local mock ERP. Use it for a step that must simply pass in a demo
+ * because the real operation has no counterpart on the target estate (the
+ * transfer order lives in v15, so the mock's store has no row to update and
+ * its handler 404s). Every stub answer is marked `simulated` in the run trace:
+ * an operator reading a run must never mistake it for a real ERP call.
+ */
+export type MetaerpTransport = "mock" | "openapi" | "uiapi" | "stub";
 
 export interface MetaerpRoute {
   transport: MetaerpTransport;
@@ -67,6 +75,26 @@ export interface MetaerpRoute {
    * submittedBy，还把 sourceCode 填成了业务单号——这些不该是模型的自由度。
    */
   line_overrides?: Record<string, unknown>;
+  /** Canned answer for `transport: "stub"`. Required by that transport. */
+  stub_response?: Record<string, unknown>;
+  /** Why this operation is stubbed — surfaced in the run trace. */
+  stub_reason?: string;
+  /**
+   * 写回执的成功判据。ERP 会用 HTTP 200 + 顶层 status 正常，却把失败塞在行里：
+   * 实测 createTransactionOrder 返回 affectedRows:0、没有单号，行里写着
+   * "The outbound quantity is not enough." / txnOrderLineStatus:"FAILED"，
+   * 整单其实没落库。信封校验看不到这些，于是「创建成功但 ERP 里没有单」。
+   */
+  write_receipt?: {
+    /** 这些字段必须存在且非空，否则判失败。 */
+    require_fields?: string[];
+    /** 行状态字段名（行数组取 line_field）。 */
+    line_status_field?: string;
+    /** 行状态取到这些值即判失败。 */
+    line_failed_values?: string[];
+    /** 这些行字段非空即判失败，其内容原样带进报错。 */
+    line_error_fields?: string[];
+  };
   allow_real_write?: boolean;
   /**
    * 让运行时把稳定的幂等键写进这个字段。
@@ -104,13 +132,30 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
     throw new Error(`metaerp routes: entry '${operation}' must be an object`);
   }
   const transport = raw.transport;
-  if (transport !== "mock" && transport !== "openapi" && transport !== "uiapi") {
+  if (
+    transport !== "mock" &&
+    transport !== "openapi" &&
+    transport !== "uiapi" &&
+    transport !== "stub"
+  ) {
     throw new Error(
-      `metaerp routes: entry '${operation}' has transport '${String(transport)}' (expected mock | openapi | uiapi)`,
+      `metaerp routes: entry '${operation}' has transport '${String(transport)}' (expected mock | openapi | uiapi | stub)`,
+    );
+  }
+  const stubResponse = (raw as { stub_response?: unknown }).stub_response;
+  if (transport === "stub") {
+    if (!stubResponse || typeof stubResponse !== "object" || Array.isArray(stubResponse)) {
+      throw new Error(
+        `metaerp routes: entry '${operation}' is stub and needs a 'stub_response' object`,
+      );
+    }
+  } else if (stubResponse !== undefined) {
+    throw new Error(
+      `metaerp routes: entry '${operation}' declares stub_response but transport is '${transport}'`,
     );
   }
   const routePath = typeof raw.path === "string" ? raw.path.trim() : "";
-  if (transport !== "mock") {
+  if (transport !== "mock" && transport !== "stub") {
     // A real transport without a path would silently fall back to the mock
     // path, i.e. call the wrong system while looking configured.
     if (!routePath.startsWith("/") || routePath.includes("..")) {
@@ -162,6 +207,13 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
     ...(lineField ? { line_field: lineField } : {}),
     ...(lineDefaults ? { line_defaults: lineDefaults } : {}),
     ...(lineOverrides ? { line_overrides: lineOverrides } : {}),
+    ...(stubResponse ? { stub_response: stubResponse as Record<string, unknown> } : {}),
+    ...(typeof (raw as { stub_reason?: unknown }).stub_reason === "string"
+      ? { stub_reason: (raw as { stub_reason: string }).stub_reason }
+      : {}),
+    ...((raw as { write_receipt?: unknown }).write_receipt
+      ? { write_receipt: (raw as { write_receipt: MetaerpRoute["write_receipt"] }).write_receipt }
+      : {}),
     ...((raw as { allow_real_write?: unknown }).allow_real_write === true
       ? { allow_real_write: true }
       : {}),
@@ -304,7 +356,10 @@ export function resolveRoute(
           : {}),
       }
     : { transport: "mock" as const };
-  if (declared.transport === "mock") return declared;
+  // A stub reaches no system at all, so neither gate applies to it: there is
+  // nothing to protect against and downgrading it to the mock would send an
+  // HTTP call the table just said not to make.
+  if (declared.transport === "mock" || declared.transport === "stub") return declared;
   if (metaerpTransportMode() !== "real") {
     return {
       transport: "mock",

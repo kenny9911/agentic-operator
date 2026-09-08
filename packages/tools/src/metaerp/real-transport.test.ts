@@ -21,7 +21,11 @@ import { normalizeMetaerpResponse } from "./envelope";
 import { callMetaerpOpenapi, _clearMetaerpTokenCacheForTests } from "./openapi-transport";
 import { callMetaerpUiapi, _clearMetaerpSessionCacheForTests } from "./uiapi-transport";
 import { _clearMetaerpRoutesCacheForTests, resolveRoute } from "./routes";
-import { _applyLineScopeForTests, _markAppliedForTests } from "./invoke";
+import {
+  _applyLineScopeForTests,
+  _assertWriteReceiptForTests,
+  _markAppliedForTests,
+} from "./invoke";
 
 interface Recorded {
   method: string;
@@ -651,5 +655,64 @@ describe("写操作成功后补 applied 标记", () => {
     expect(_markAppliedForTests("query", { records: [] })).toEqual({ records: [] });
     expect(_markAppliedForTests("write", [1, 2])).toEqual([1, 2]);
     expect(_markAppliedForTests("write", null)).toBeNull();
+  });
+});
+
+describe("写回执判据：ERP 用 200 回一张没落库的单", () => {
+  const route = {
+    transport: "openapi" as const,
+    line_field: "lineList",
+    write_receipt: {
+      require_fields: ["txnOrderHeaderNumber"],
+      line_status_field: "txnOrderLineStatus",
+      line_failed_values: ["FAILED", "ERROR"],
+      line_error_fields: ["errorMessage"],
+    },
+  };
+
+  it("rejects the real receipt that reported success with nothing written", () => {
+    // run-66b191a09941 的原始回执：affectedRows 0、没有单号、两行 FAILED。
+    expect(() =>
+      _assertWriteReceiptForTests("createTransactionOrder", route, {
+        affectedRows: 0,
+        txnOrderHeaderId: "1992897911985607954",
+        lineList: [
+          { itemCode: "10000008", txnOrderLineStatus: "FAILED", errorMessage: "The outbound quantity is not enough." },
+          { itemCode: "10000008", txnOrderLineStatus: "FAILED", errorMessage: "The outbound quantity is not enough." },
+          { itemCode: "10000007", txnOrderLineStatus: "DRAFT", errorMessage: null },
+        ],
+      }),
+    ).toThrow(/txnOrderHeaderNumber[\s\S]*The outbound quantity is not enough/);
+  });
+
+  it("accepts the receipt of an order that really landed", () => {
+    expect(() =>
+      _assertWriteReceiptForTests("createTransactionOrder", route, {
+        affectedRows: 1,
+        txnOrderHeaderNumber: "INOT20260908YF100013",
+        lineList: [{ txnOrderLineStatus: "DRAFT", errorMessage: null, txnOrderLineId: "199289791" }],
+      }),
+    ).not.toThrow();
+  });
+
+  it("does nothing for a route that declares no receipt rule", () => {
+    expect(() =>
+      _assertWriteReceiptForTests("whatever", { transport: "openapi" }, { anything: true }),
+    ).not.toThrow();
+  });
+});
+
+describe("stub 通道", () => {
+  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  it("returns the declared answer without either gate downgrading it", () => {
+    process.env.METAERP_TRANSPORT_MODE = "mock";
+    process.env.METAERP_ALLOW_REAL_WRITES = "false";
+    const route = resolveRoute("updateTransactionOrder", "write");
+    // 桩不碰任何系统，所以两道闸口都不适用——降级到 mock 反而会发出一次 HTTP 调用
+    expect(route.transport).toBe("stub");
+    expect(route.downgradedFrom).toBeUndefined();
+    expect(route.stub_response?.fulfilled).toBe(true);
   });
 });

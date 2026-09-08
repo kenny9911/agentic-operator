@@ -255,6 +255,77 @@ function maxCallsPerRun(): number {
  * Set only when absent: a mock write that reports `applied: false` (option type
  * not applicable) must keep saying so.
  */
+/**
+ * Reject a write whose envelope said fine but whose receipt says nothing landed.
+ *
+ * ERP answers a rejected transfer order with HTTP 200 and no top-level ERROR:
+ * the header comes back with `affectedRows: 0` and NO `txnOrderHeaderNumber`,
+ * and the reason sits per line — `txnOrderLineStatus: "FAILED"` with
+ * `errorMessage: "The outbound quantity is not enough."`. Nothing above this
+ * can see that, so the platform reported success, stamped `applied: true`, and
+ * the workflow marched on past a transfer order that does not exist.
+ *
+ * The route declares what a real receipt must contain; anything short of it
+ * throws with the ERP's own wording, per line.
+ */
+export function _assertWriteReceiptForTests(
+  operation: string,
+  route: MetaerpRoute,
+  data: unknown,
+): void {
+  assertWriteReceipt(operation, route, data);
+}
+
+function assertWriteReceipt(
+  operation: string,
+  route: MetaerpRoute,
+  data: unknown,
+): void {
+  const spec = route.write_receipt;
+  if (!spec) return;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 的回执不是对象，无法确认写入是否落库`,
+    );
+  }
+  const receipt = data as Record<string, unknown>;
+
+  const failures: string[] = [];
+  for (const field of spec.require_fields ?? []) {
+    const value = receipt[field];
+    if (value === undefined || value === null || value === "") {
+      failures.push(`回执缺少 ${field}（值为 ${JSON.stringify(value ?? null)}）`);
+    }
+  }
+
+  const lines = route.line_field ? receipt[route.line_field] : undefined;
+  if (Array.isArray(lines)) {
+    lines.forEach((line, index) => {
+      if (typeof line !== "object" || line === null) return;
+      const row = line as Record<string, unknown>;
+      const status = spec.line_status_field
+        ? String(row[spec.line_status_field] ?? "")
+        : "";
+      if (status && (spec.line_failed_values ?? []).includes(status)) {
+        failures.push(`第 ${index + 1} 行状态 ${status}`);
+      }
+      for (const field of spec.line_error_fields ?? []) {
+        const message = row[field];
+        if (typeof message === "string" && message.trim() !== "") {
+          failures.push(`第 ${index + 1} 行 ${field}: ${message}`);
+        }
+      }
+    });
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 未在 ERP 落库——${failures.join("；")}。` +
+        `ERP 以 HTTP 200 返回但把失败写在了回执里，因此这里判失败而不是成功。`,
+    );
+  }
+}
+
 export function _markAppliedForTests(
   kind: "query" | "write",
   data: unknown,
@@ -464,6 +535,19 @@ export const metaerpInvoke = defineTool({
       correlationId: ctx.correlationId,
     };
 
+    if (route.transport === "stub") {
+      return {
+        data: markApplied(entry.kind, { ...route.stub_response }),
+        meta: {
+          ...routeMeta,
+          // Say it plainly: nothing was called. A stub that reads like a
+          // successful ERP call is worse than no call at all.
+          simulated: true,
+          simulatedBecause: route.stub_reason ?? "routing table declares this operation as a stub",
+        },
+      };
+    }
+
     if (route.transport !== "mock") {
       const credentials = resolveMetaerpCredentials(route.env);
       // 幂等键：ERP 自己要求 uniqueSequenceNumber，而编译出的外部动作每次运行只发
@@ -490,6 +574,7 @@ export const metaerpInvoke = defineTool({
         ...(routeDefaults ? { defaults: routeDefaults } : {}),
         ...(route.overrides ? { overrides: route.overrides } : {}),
       });
+      assertWriteReceipt(entry.operation, route, result.data);
       return {
         data: markApplied(entry.kind, result.data),
         meta: {

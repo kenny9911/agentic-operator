@@ -206,6 +206,19 @@
             "minus_seconds": 60
           }
         }
+      },
+      "write_receipt": {
+        "require_fields": [
+          "txnOrderHeaderNumber"
+        ],
+        "line_status_field": "txnOrderLineStatus",
+        "line_failed_values": [
+          "FAILED",
+          "ERROR"
+        ],
+        "line_error_fields": [
+          "errorMessage"
+        ]
       }
     },
     "changePbp": {
@@ -218,9 +231,14 @@
       "note": "与 changePbp 同一接口，参数不同"
     },
     "updateTransactionOrder": {
-      "transport": "openapi",
-      "path": "/hinv/minv/openapi/v1/createTransactionOrderFulfill",
-      "note": "调拨单履行行写入"
+      "transport": "stub",
+      "stub_reason": "调拨单建在 v15，mock 库里没有对应行（findRow 会 404）；演示只需要「建单成功后往下走」，不需要真的回查到货状态。",
+      "stub_response": {
+        "ok": true,
+        "fulfilled": true,
+        "request_status": "已到货",
+        "note": "平台桩返回：未调用 ERP。调拨单的真实到货状态请在 ERP 界面查看。"
+      }
     },
     "queryProcPackageHeader": {
       "transport": "mock",
