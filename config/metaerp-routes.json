@@ -110,26 +110,29 @@
         "sourceSystemCode": {
           "$env": "METAERP_SOURCE_SYSTEM_CODE"
         },
+        "sourceCode": {
+          "$env": "METAERP_TRANSFER_SOURCE_CODE"
+        },
         "txnOrderTypeCode": {
           "$env": "METAERP_TRANSFER_TXN_ORDER_TYPE_CODE"
         },
         "transactionTypeCode": {
           "$env": "METAERP_TRANSFER_TRANSACTION_TYPE_CODE"
         },
+        "transactionActionCode": {
+          "$env": "METAERP_TRANSFER_ACTION_CODE"
+        },
         "transferOrganizationCode": {
           "$env": "METAERP_TRANSFER_TO_ORGANIZATION_CODE"
-        },
-        "autoSubmit": {
-          "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
         },
         "submittedBy": {
           "$env": "METAERP_TRANSFER_SUBMITTED_BY"
         },
-        "transactionActionCode": {
-          "$env": "METAERP_TRANSFER_ACTION_CODE"
+        "autoSubmit": {
+          "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
         }
       },
-      "note": "跨组织转库单，已在 v15 实跑建出（INOT20260908YF100006，申请人与申请时间均正确）。uniqueSequenceNumber 由运行时用 runId 填充；其余为 ERP 实例配置，取自环境变量。注意不要传 costMethodCode / inventoryStatusControl —— 那是 UI 审批流接口专有，openapi 端点带上会报 'querying account period'"
+      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。"
     },
     "changePbp": {
       "transport": "openapi",
