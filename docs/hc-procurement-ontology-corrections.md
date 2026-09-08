@@ -494,12 +494,29 @@ lineList[]: itemCode, organizationCode, storehouseCode,
 **已确认可用的配置值**：`sourceSystemCode=LYY2`、`txnOrderTypeCode=在途交易出货`、
 `autoSubmit=Y`、`submittedBy=1`。
 
-`transactionTypeCode` 已确认为 **`INTRANSIT_ISSUE`**：报错随即从 430008 前进到
-430009，这就是它对了的证据。中文名一律被拒（在途 / 在途出货 / 在途调拨 / 调拨出库…），
-**这两个字段要的是编码不是显示名**。
+`transactionTypeCode` = **`INTRANSIT_ISSUE`**，`txnOrderTypeCode` = **`INOT`**。
+两个字段要的都是**编码不是显示名**——中文名一律被拒（在途 / 在途交易出货 / 在途出货…）。
 
-**唯一仍缺**：`txnOrderTypeCode` 的编码。`在途交易出货` 是显示名，被拒
-（430009 The transaction order type code in the order is invalid）；按同一命名风格
-试过 INTRANSIT_ISSUE / INTRANSIT_ISSUE_ORDER / IN_TRANSIT_ISSUE / TRANSIT_ISSUE /
-INTRANSIT / ISSUE / INTRANSIT_TRANSACTION_ISSUE，全部被同一错误拒绝。
-**需向接口方索取**——它是这张调拨单落地前的最后一个未知量。
+**调拨单已在 v15 真实创建成功**（`txnOrderHeaderId: 1992656320092771594` 等），
+完整可用的请求结构：
+
+```
+头: unitCode=1000, organizationCode=YF1, sourceSystemCode=LYY2,
+    txnOrderTypeCode=INOT, transactionTypeCode=INTRANSIT_ISSUE,
+    autoSubmit=Y, submittedBy=1, sourceCode=<采购需求编号>,
+    requiredDate='YYYY-MM-DD HH:mm:ss', uniqueSequenceNumber=<runId>
+行: itemCode, organizationCode, storehouseCode（调出库）,
+    transactionQuantity, transactionUomCode, requiredDate（与头同值）,
+    sourceObjectNumber, sourceObjectLineId
+```
+
+**仍缺**：行的**调出/调入库位**。头建成后行返回
+`txnOrderLineStatus=FAILED, errorMessage="The transfer storehouse code is invalid."`。
+试过 transferStorehouseCode / toStorehouseCode / destStorehouseCode /
+transferToStorehouseCode 四个字段名，全部同一错误——说明不是字段名的问题，而是
+**演示数据里只有一个库位（300000 成品库），调拨到自己不成立**。
+需要业务侧在 v15 建第二个库位（或给出一个合法的调入库位编码）。
+
+**探测残留**：过程中创建了 3 张只有头、行为 FAILED 的调拨单
+（1992656320092771594 / 1992657793393300749 / 1992656606487975180），
+演示前建议清理。
