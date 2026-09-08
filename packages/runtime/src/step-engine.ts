@@ -29,6 +29,8 @@ import type {
   ToolDescriptor,
 } from "@agentic/agent-kit";
 import type { MemoryHandle } from "@agentic/agent-sdk";
+import type { RunInputContext } from "@agentic/contracts";
+import { readRunInputContext, renderRunInputMessage, type RunInputMemoryTurn } from "./run-input";
 import type { ActionSpec } from "./manifest";
 import { getRuntimeGateway } from "./llm-host";
 import { makeGeneratedAgentPrompt } from "./generated-agent";
@@ -418,6 +420,10 @@ async function emitTraceBestEffort(
 export interface StepInput {
   ctx: ToolContext;
   action: ActionSpec;
+  /** Validated operator input, kept separate from authored action mappings. */
+  runInput?: RunInputContext;
+  /** Durable snapshot of successful runs for the same explicit context key. */
+  runInputHistory?: RunInputMemoryTurn[];
   /** Caller-sanitized prior user/assistant turns for a continued Test Lab run. */
   conversationHistory?: AgentConversationTurn[];
   /**
@@ -654,6 +660,7 @@ async function callLLM(
   execution?: {
     /** Prepared v2 message pair — replaces the legacy system/user assembly. */
     messages?: ChatMessage[];
+    runInputMessage?: string;
     trace?: RuntimeTraceSink;
     runId?: string;
     stepId?: string;
@@ -740,6 +747,9 @@ async function callLLM(
         { role: "system", content: systemContent },
         { role: "user", content: rendered },
       ];
+  if (execution?.runInputMessage) {
+    messages.push({ role: "user", content: execution.runInputMessage });
+  }
 
   // Tool-use loop. When no tools are advertised this is a single pass and
   // exits immediately — same shape as the old single-call path.
@@ -2063,6 +2073,7 @@ async function runTenantPrompt(
     /** Only the terminal action validates against agent-level outputs (v2). */
     validateOutput?: boolean;
     conversationHistory?: AgentConversationTurn[];
+    runInputMessage?: string;
     usageAttribution?: UsageAttribution;
   },
 ): Promise<StepOutput> {
@@ -2205,6 +2216,7 @@ async function runTenantPrompt(
     usesV2Execution ? true : !!prompt.output,
     {
       messages,
+      runInputMessage: execution?.runInputMessage,
       trace,
       runId,
       stepId,
@@ -3552,6 +3564,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
             (ctx.event?.data ?? {}) as Record<string, unknown>,
             {
               systemPrompt: agent.ontology_instructions,
+              runInputMessage: renderRunInputMessage(input.runInput, input.runInputHistory),
               tenantSlug: ctx.tenantSlug,
               tenantId: ctx.tenantId,
               agentName: agent.name ?? ctx.agentName,
@@ -3779,6 +3792,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
                   validateOutput:
                     (input.finalOutput ?? true) && !hasOutputMapping,
                   conversationHistory: input.conversationHistory,
+                  runInputMessage: renderRunInputMessage(input.runInput, input.runInputHistory),
                   usageAttribution: input.usageAttribution,
                 },
               );
@@ -4633,6 +4647,18 @@ function withWorkflowReferences(input: StepInput): StepInput {
  * the exact millisecond budget and are hard-terminated by their worker host.
  */
 export async function runAction(input: StepInput): Promise<StepOutput> {
+  const runInput = readRunInputContext(input.runInput ?? input.ctx.event?.data.__runInput);
+  input = {
+    ...input,
+    runInput,
+    ...(runInput ? { ctx: {
+      ...input.ctx,
+      event: {
+        name: input.ctx.event?.name ?? "operator.run",
+        data: { ...input.ctx.event?.data, __runInput: runInput },
+      },
+    } } : {}),
+  };
   input = withWorkflowReferences(input);
   const authoredMapping = applyActionInputMapping(input.ctx, input.action);
   if (authoredMapping !== input.ctx) {

@@ -23,7 +23,7 @@ import {
   workflows,
   workflowVersions,
 } from "@agentic/db";
-import { canonicalJson, inngest } from "@agentic/runtime";
+import { canonicalJson, getRuntimeGateway, inngest } from "@agentic/runtime";
 import { makeId } from "@agentic/shared";
 import {
   buildStudioExecutionEvent,
@@ -31,6 +31,7 @@ import {
   replayStudioRun,
   reserveStudioRun,
   STUDIO_CONVERSATION_HISTORY_METADATA_KEY,
+  STUDIO_RUN_INPUT_METADATA_KEY,
 } from "../src/services/studio-runner";
 import { buildTestEnv, type TestEnv } from "./harness";
 
@@ -284,6 +285,183 @@ describe("Agent Studio conversation context", () => {
       prompt: "Start an isolated run.",
     });
     expect(body.contextMode).toBe("isolated");
+  });
+
+  it("delivers uploaded text to the model, preserves replay, and merges keyed memory with session history once", async () => {
+    const llmDefinition = AgentDefinitionV2Schema.parse({
+      ...definition,
+      actions: [
+        {
+          order: "1",
+          name: "readFiles",
+          description: "Read the attached source",
+          type: "logic",
+        },
+      ],
+    });
+    getDb()
+      .update(agentVersions)
+      .set({ manifestJson: llmDefinition })
+      .where(eq(agentVersions.id, agentVersionId))
+      .run();
+    const send = vi
+      .spyOn(inngest, "send")
+      .mockResolvedValue({ ids: ["studio-file-event"] } as never);
+    const chat = vi.spyOn(getRuntimeGateway()!, "chat").mockResolvedValue({
+      text: '{"summary":"Source reviewed"}',
+      provider: "mock",
+      model: "mock-model-v1",
+      tokensIn: 20,
+      tokensOut: 8,
+      latencyMs: 1,
+      finishReason: "stop",
+    });
+    const input = {
+      context: "Use the customer's operating constraints.",
+      contextKey: `attachment-context-${SUFFIX}`,
+      attachments: [
+        {
+          id: "attachment-source",
+          name: "source.pdf",
+          mimeType: "application/pdf",
+          size: 100,
+          text: "FILE SENTINEL: annual demand is 73 units.",
+        },
+      ],
+    };
+    const ctx = { tenantId, tenantSlug: TENANT, via: "dev" as const };
+    try {
+      const response = await env.fetch(`/v1/agents/${agentId}/runs`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-agentic-tenant": TENANT,
+        },
+        body: JSON.stringify({
+          target: { kind: "live", agentVersionId },
+          prompt: "Analyze the upload.",
+          contextMode: "session",
+          runInput: input,
+        }),
+      });
+      expect(response.status).toBe(202);
+      const firstEvent = dispatchedEvent(send.mock.calls[0]).data;
+      expect(firstEvent.runInput).toEqual(input);
+      expect(firstEvent.payload).not.toHaveProperty("runInput");
+      const ledgerRef = getDb()
+        .select({ ref: events.payloadRef })
+        .from(events)
+        .where(eq(events.id, firstEvent.eventId))
+        .get()!.ref!;
+      const [ledgerPath, ledgerOffset = "0"] = ledgerRef.split("#");
+      const ledgerLine = (await readFile(ledgerPath!, "utf8"))
+        .slice(Number(ledgerOffset))
+        .split("\n")[0]!;
+      expect(JSON.parse(ledgerLine).data.__runInput).toEqual(input);
+      expect(await executeReservedStudioRun(firstEvent)).toMatchObject({
+        ok: true,
+      });
+      const messages = chat.mock.calls[0]![0].messages;
+      expect(
+        messages
+          .filter((message) => message.role === "system")
+          .map((message) => message.content)
+          .join("\n"),
+      ).not.toContain("FILE SENTINEL");
+      expect(
+        messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.content)
+          .join("\n"),
+      ).toContain("FILE SENTINEL");
+      const inputArtifact = getDb()
+        .select({ path: artifacts.path })
+        .from(artifacts)
+        .where(
+          and(
+            eq(artifacts.runId, firstEvent.runId),
+            eq(artifacts.role, "input"),
+          ),
+        )
+        .get()!;
+      expect(
+        JSON.parse(await readFile(inputArtifact.path, "utf8"))[
+          STUDIO_RUN_INPUT_METADATA_KEY
+        ],
+      ).toEqual(input);
+
+      await reserveStudioRun(ctx, agentId, {
+        sessionId: firstEvent.sessionId,
+        contextMode: "session",
+        target: { kind: "live", agentVersionId },
+        prompt: "Continue this analysis.",
+        inputs: {},
+        toolPolicy: "safe",
+        runInput: { contextKey: input.contextKey },
+      });
+      const secondEvent = dispatchedEvent(send.mock.calls[1]).data;
+      expect(
+        secondEvent.conversationHistory.filter((turn) =>
+          turn.content.includes("FILE SENTINEL"),
+        ),
+      ).toHaveLength(1);
+      expect(await executeReservedStudioRun(secondEvent)).toMatchObject({
+        ok: true,
+      });
+
+      await reserveStudioRun(ctx, agentId, {
+        contextMode: "isolated",
+        target: { kind: "live", agentVersionId },
+        prompt: "Use the shared memory in another session.",
+        inputs: {},
+        toolPolicy: "safe",
+        runInput: { contextKey: input.contextKey },
+      });
+      const thirdEvent = dispatchedEvent(send.mock.calls[2]).data;
+      expect(
+        thirdEvent.conversationHistory.some((turn) =>
+          turn.content.includes("FILE SENTINEL"),
+        ),
+      ).toBe(true);
+      expect(await executeReservedStudioRun(thirdEvent)).toMatchObject({
+        ok: true,
+      });
+
+      await reserveStudioRun(ctx, agentId, {
+        contextMode: "isolated",
+        target: { kind: "live", agentVersionId },
+        prompt: "Start a separate context.",
+        inputs: {},
+        toolPolicy: "safe",
+        runInput: { contextKey: `different-${input.contextKey}` },
+      });
+      const isolatedEvent = dispatchedEvent(send.mock.calls[3]).data;
+      expect(isolatedEvent.conversationHistory).toEqual([]);
+      expect(await executeReservedStudioRun(isolatedEvent)).toMatchObject({
+        ok: true,
+      });
+
+      await replayStudioRun(ctx, firstEvent.runId, {
+        version: "same",
+        inputsPatch: { [STUDIO_RUN_INPUT_METADATA_KEY]: { context: "forged" } },
+      });
+      const replayEvent = dispatchedEvent(send.mock.calls[4]).data;
+      expect(replayEvent.runInput).toEqual(input);
+      expect(replayEvent.conversationHistory).toEqual(
+        firstEvent.conversationHistory,
+      );
+      expect(await executeReservedStudioRun(replayEvent)).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      chat.mockRestore();
+      send.mockRestore();
+      getDb()
+        .update(agentVersions)
+        .set({ manifestJson: definition })
+        .where(eq(agentVersions.id, agentVersionId))
+        .run();
+    }
   });
 
   it("snapshots bounded deterministic history, rejects overlapping turns, and replays the snapshot", async () => {

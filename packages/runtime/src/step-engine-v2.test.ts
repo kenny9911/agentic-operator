@@ -150,6 +150,34 @@ function v2Agent(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runAction v2 integration", () => {
+  it("preserves the authored system and prompt while delivering file context and recalled runs as user material", async () => {
+    responses.push(response(JSON.stringify({ result: { decision: "advance" } })));
+    const result = await runAction({
+      runInputHistory: [{ runId: "prior-run", input: "Review earlier evidence", output: "Previously verified reference" }],
+      ctx: {
+        agentName: "studioAgent", actionName: "execute", correlationId: "cor-files", tenantSlug: "test",
+        event: { name: "RUN", data: {
+          prompt: "Assess this candidate.",
+          inputs: { candidate: { id: "cand-file" } },
+          __runInput: { context: "Use the attached references", contextKey: "candidate-1", attachments: [{ id: "att-1", name: "reference.png", mimeType: "image/png", size: 1, text: "Reference signed by previous manager" }] },
+        } },
+      },
+      action: { order: "1", name: "execute", description: "Produce the declared result.", type: "logic", input_mapping: { candidate: "$.inputs.candidate" } },
+      agent: v2Agent(),
+      tenantRegistry: {},
+    });
+    assert.equal(result.ok, true);
+    const messages = requests[0]!.messages;
+    assert.equal(messages[0]?.role, "system");
+    assert.ok(String(messages[0]?.content).includes("Never invent candidate evidence."));
+    assert.ok(!String(messages[0]?.content).includes("Reference signed"));
+    assert.ok(String(messages[1]?.content).startsWith("Assess this candidate."));
+    assert.equal(messages.at(-1)?.role, "user");
+    assert.ok(String(messages.at(-1)?.content).includes("Reference signed by previous manager"));
+    assert.ok(String(messages.at(-1)?.content).includes("Previously verified reference"));
+    assert.ok(String(messages.at(-1)?.content).includes("Use the attached references"));
+  });
+
   it("uses the exact terminal logic output after a tool supplies intermediate receipt fields", async () => {
     const agent = v2Agent({
       tool_use: [{ name: "collectEvidence" }],

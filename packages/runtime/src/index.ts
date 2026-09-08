@@ -450,6 +450,15 @@ export {
   getMemoryDriver,
 } from "./memory";
 export {
+  createRunInputMemory,
+  readRunInputContext,
+  readRunInputHistory,
+  rememberRunInput,
+  renderRunInputMessage,
+  type RunInputMemory,
+  type RunInputMemoryTurn,
+} from "./run-input";
+export {
   createLocalVectorDriver,
   openaiEmbedder,
   localEmbed,

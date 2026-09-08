@@ -18,6 +18,7 @@ import {
   type ToolDef,
 } from "../types";
 import { LLMError, classifyHttpError } from "../errors";
+import { assertMediaMessages } from "../media";
 
 export interface AzureAdapterConfig {
   apiKey: string | undefined;
@@ -145,6 +146,7 @@ export function createAzureAdapter(config: AzureAdapterConfig): ProviderAdapter 
     defaultModel: config.defaultDeployment ?? null,
 
     async chat(req: ChatRequest): Promise<ChatResponse> {
+      assertMediaMessages(req.messages, "azure", false);
       const start = Date.now();
       const c = getClient();
       const deployment = req.model ?? config.defaultDeployment ?? null;

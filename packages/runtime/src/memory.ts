@@ -54,7 +54,7 @@ export function getMemoryDriver(): MemoryDriverRef {
  * The handle is intentionally not cached anywhere — each run gets a fresh
  * one to avoid leaks of `runId`/`subject` between concurrent invocations.
  */
-export function createMemoryHandle(b: MemoryBinding): MemoryHandle {
+export function createMemoryHandle(b: MemoryBinding & { subjectExact?: boolean }): MemoryHandle {
   return {
     async get<T = unknown>(key: string, scope: MemoryScope = "subject"): Promise<T | null> {
       const db = getDb();
@@ -207,6 +207,7 @@ export function createMemoryHandle(b: MemoryBinding): MemoryHandle {
         tenantId: b.tenantId,
         agentName: b.agentName,
         subject: b.subject,
+        ...(b.subjectExact ? { subjectExact: true } : {}),
       });
     },
   };

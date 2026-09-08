@@ -40,3 +40,4 @@ export * from "./ontocode-analyst";
 export * from "./business-ontology-domains";
 export * from "./runtime-profiles";
 export * from "./agent-execution-live";
+export * from "./run-input";

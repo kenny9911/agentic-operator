@@ -23,6 +23,8 @@ import { Button } from "@/app/portal/components";
 import { ModalOverlay } from "@/app/portal/components/Modal";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { useInvokeAgent } from "@/lib/hooks/useAgents";
+import { useRunInput } from "@/lib/hooks/useRunInput";
+import { RunInputPanel } from "@/app/portal/components/RunInputPanel";
 
 const CodeInvokeSuccess = z.object({
   kind: z.literal("code").optional(),
@@ -67,6 +69,7 @@ export function RunWithInputModal({
   const { language, t } = useI18n();
   const dateTimeLocale = language === "zh" ? "zh-CN" : "en-US";
   const invoke = useInvokeAgent();
+  const runInput = useRunInput();
 
   // Seed the textarea once on open. Re-opening with a different agent
   // recreates the component (the parent toggles `open` to remount), so a
@@ -109,6 +112,7 @@ export function RunWithInputModal({
   }, [bodyText]);
 
   async function handleRun() {
+    if (invoke.isPending || runInput.blocked) return;
     let parsed: unknown;
     try {
       parsed = bodyText.trim() === "" ? {} : JSON.parse(bodyText);
@@ -126,6 +130,7 @@ export function RunWithInputModal({
         name: agentName,
         testRun: true,
         input: parsed,
+        runInput: runInput.value,
       });
       const result = InvokeSuccess.safeParse(res);
       if (!result.success) {
@@ -162,7 +167,7 @@ export function RunWithInputModal({
 
   return (
     <ModalOverlay
-      onClose={onClose}
+      onClose={() => { if (!invoke.isPending) onClose(); }}
       ariaLabel={t("runWithInputModal.ariaLabel", { agentTitle })}
     >
       <div
@@ -175,6 +180,8 @@ export function RunWithInputModal({
           display: "flex",
           flexDirection: "column",
           gap: 14,
+          maxHeight: "90vh",
+          overflowY: "auto",
         }}
       >
         <header style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -197,14 +204,10 @@ export function RunWithInputModal({
         </header>
 
         <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-2)" }}>
-          {t("runWithInputModal.descBeforeBodyInput")}{" "}
-          <code className="mono">body.input</code>{" "}
-          {t("runWithInputModal.descBeforeEndpoint")}{" "}
-          <code className="mono">
-            POST /v1/agents/{agentName}/invoke?testRun=1
-          </code>
-          {t("runWithInputModal.descAfterEndpoint")}
+          {t("runInput.agentDescription")}
         </p>
+
+        <RunInputPanel editor={runInput} disabled={invoke.isPending} />
 
         {requiredFieldsHint && (
           <div
@@ -222,6 +225,10 @@ export function RunWithInputModal({
           </div>
         )}
 
+        <details open={Boolean(requiredFieldsHint || parseError)}>
+          <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--text-2)", marginBottom: 8 }}>
+            {t("runInput.structuredInput")}
+          </summary>
         <label
           htmlFor="run-input-textarea"
           style={{
@@ -238,7 +245,7 @@ export function RunWithInputModal({
           value={bodyText}
           onChange={(e) => setBodyText(e.target.value)}
           spellCheck={false}
-          autoFocus
+          disabled={invoke.isPending}
           style={{
             width: "100%",
             minHeight: 220,
@@ -255,6 +262,7 @@ export function RunWithInputModal({
             outline: "none",
           }}
         />
+        </details>
 
         {parseError && (
           <p style={{ margin: 0, fontSize: 12, color: "var(--red)" }}>
@@ -353,7 +361,7 @@ export function RunWithInputModal({
             icon="run"
             tone="primary"
             onClick={handleRun}
-            disabled={invoke.isPending}
+            disabled={invoke.isPending || runInput.blocked}
           >
             {invoke.isPending
               ? t("runWithInputModal.running")

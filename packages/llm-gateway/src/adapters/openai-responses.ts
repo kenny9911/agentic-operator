@@ -10,6 +10,7 @@ import type {
   FunctionTool,
   ResponseCreateParamsNonStreaming,
   ResponseInputItem,
+  ResponseInputContent,
 } from "openai/resources/responses/responses";
 import type { ProviderId } from "@agentic/contracts";
 import {
@@ -20,6 +21,7 @@ import {
   type ToolCall,
 } from "../types";
 import { LLMError, classifyHttpError } from "../errors";
+import { assertMediaMessages } from "../media";
 
 export interface OpenAIResponsesAdapterConfig {
   id: ProviderId;
@@ -75,6 +77,7 @@ function replayReasoningItems(
 }
 
 function mapInput(req: ChatRequest, provider: ProviderId): ResponseInputItem[] {
+  assertMediaMessages(req.messages, provider);
   const input: ResponseInputItem[] = [];
 
   for (const message of req.messages) {
@@ -124,7 +127,27 @@ function mapInput(req: ChatRequest, provider: ProviderId): ResponseInputItem[] {
 
     input.push({
       role: message.role,
-      content: flattenContentToText(message.content),
+      content: message.content.some(
+        (block) => block.type === "image" || block.type === "document",
+      )
+        ? message.content.map((block): ResponseInputContent => {
+            if (block.type === "image") {
+              return {
+                type: "input_image",
+                image_url: `data:${block.mimeType};base64,${block.data}`,
+                detail: "auto",
+              };
+            }
+            if (block.type === "document") {
+              return {
+                type: "input_file",
+                filename: block.name,
+                file_data: `data:${block.mimeType};base64,${block.data}`,
+              };
+            }
+            return { type: "input_text", text: flattenContentToText([block]) };
+          })
+        : flattenContentToText(message.content),
     });
   }
 

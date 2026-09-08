@@ -19,6 +19,7 @@ import { tasksRoutes } from "./routes/v1/tasks";
 import { agentsRoutes } from "./routes/v1/agents";
 import { agentAuthoringRoutes } from "./routes/v1/agent-authoring";
 import { agentInvokeRoutes } from "./routes/v1/agent-invoke";
+import { runInputRoutes } from "./routes/v1/run-inputs";
 import { agentFactoryRoutes } from "./routes/v1/agent-factory";
 import { agentStudioRoutes } from "./routes/v1/agent-studio";
 import { deploymentsRoutes } from "./routes/v1/deployments";
@@ -311,6 +312,7 @@ export async function build() {
         // authoring endpoints and the studio run/observability surface.
         await v1.register(agentAuthoringRoutes);
         await v1.register(agentInvokeRoutes);
+        await v1.register(runInputRoutes);
         await v1.register(agentStudioRoutes);
         // Operator checks — enterprise operational health-check surface.
         await v1.register(operatorChecksRoutes);

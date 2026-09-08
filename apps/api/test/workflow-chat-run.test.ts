@@ -98,6 +98,35 @@ afterAll(() => {
 });
 
 describe("workflow draft chat continuity", () => {
+  it("sends reviewed file text and context to the model and recalls only matching draft context", async () => {
+    const slug = `files-${suffix}`;
+    const created = createWorkflowDraft(CreateWorkflowBodySchema.parse({
+      slug, name: "File input starter", source: { type: "blank" },
+      model: { provider: "custom", model: "workflow-chat-test-model" },
+    }), ctx);
+    const trigger = created.manifest.agents[0]!.trigger[0]!;
+    const makeBody = (prompt: string, contextKey: string) => WorkflowTestRunBodySchema.parse({
+      ...bodyFor(created.manifest, trigger, prompt, []),
+      runInput: { contextKey, context: "Use SGD", attachments: [{
+        id: "attachment-invoice", name: "invoice.pdf", mimeType: "application/pdf", size: 8,
+        text: "Invoice reference INV-42. Total 812.50.",
+      }] },
+    });
+    captured = [];
+    _setLLMGatewayForTests(captureGateway("The invoice total is 812.50 SGD."));
+    const initial = await runWorkflowDraftTest(slug, makeBody("Read the invoice.", "invoice-session"), ctx);
+    expect(initial.status, JSON.stringify(initial.agentRuns.map((run) => run.error))).toBe("ok");
+    expect(JSON.stringify(captured[0])).toContain("Invoice reference INV-42");
+    expect(JSON.stringify(captured[0])).toContain("Use SGD");
+    captured = [];
+    expect((await runWorkflowDraftTest(slug, makeBody("What did we find?", "invoice-session"), ctx)).status).toBe("ok");
+    expect(JSON.stringify(captured[0])).toContain("The invoice total is 812.50 SGD.");
+    expect(JSON.stringify(captured[0])).toContain("Read the invoice.");
+    captured = [];
+    await runWorkflowDraftTest(slug, makeBody("Start over.", "different-session"), ctx);
+    expect(JSON.stringify(captured[0])).not.toContain("The invoice total is 812.50 SGD.");
+  });
+
   it("defaults conversationHistory to an empty array for existing callers", () => {
     const parsed = WorkflowTestRunBodySchema.parse({
       manifest: { $schemaVersion: 2, agents: [] },

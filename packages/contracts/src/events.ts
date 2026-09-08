@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RunInputContextSchema } from "./run-input";
 
 /**
  * POST /v1/events ingest body. Additive shape:
@@ -23,6 +24,7 @@ const PublicEventPayload = z
 
 export const IngestEventBody = z.object({
   name: z.string().trim().min(1),
+  runInput: RunInputContextSchema.optional(),
   subject: z.string().optional(),
   payload: PublicEventPayload.optional(),
   test: z.boolean().optional(),

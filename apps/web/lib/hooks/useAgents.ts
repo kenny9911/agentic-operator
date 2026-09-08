@@ -308,6 +308,7 @@ export function useInvokeAgent() {
       input?: unknown;
       async?: boolean;
       testRun?: boolean;
+      runInput?: import("@agentic/contracts").RunInputContext;
     }) => {
       const sp = new URLSearchParams();
       if (vars.async) sp.set("async", "1");
@@ -337,7 +338,7 @@ export function useInvokeAgent() {
       }>(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: vars.input ?? {} }),
+        body: JSON.stringify({ input: vars.input ?? {}, runInput: vars.runInput }),
       });
     },
     onSettled: () => {

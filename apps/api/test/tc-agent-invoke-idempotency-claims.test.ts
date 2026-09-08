@@ -185,7 +185,7 @@ describe("agent invoke idempotency transport", () => {
     const init = {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": key },
-      body: JSON.stringify({ async: true, input: { subject: `SUB-${suffix}` } }),
+      body: JSON.stringify({ async: true, input: { subject: `SUB-${suffix}` }, runInput: { prompt: "Use this source", contextKey: "context-42" } }),
     } satisfies RequestInit;
     const first = await env.fetch("/v1/agents/testAgent/invoke", init);
     expect(first.status).toBe(202);
@@ -195,13 +195,17 @@ describe("agent invoke idempotency transport", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0]?.[0]).toMatchObject({
       id: firstBody.data.eventId,
-      data: { runId: firstBody.data.runId },
+      data: { runId: firstBody.data.runId, runInput: { prompt: "Use this source", contextKey: "context-42" } },
     });
 
     const replay = await env.fetch("/v1/agents/testAgent/invoke", init);
     expect(replay.status).toBe(202);
     expect(await replay.json()).toEqual(firstBody);
     expect(send).toHaveBeenCalledTimes(1);
+    const changedContext = await env.fetch("/v1/agents/testAgent/invoke", {
+      ...init, body: JSON.stringify({ async: true, input: { subject: `SUB-${suffix}` }, runInput: { contextKey: "changed" } }),
+    });
+    expect(changedContext.status).toBe(409);
     send.mockRestore();
   });
 

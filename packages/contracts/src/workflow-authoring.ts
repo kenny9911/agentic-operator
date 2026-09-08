@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RunInputContextSchema } from "./run-input";
 import {
   AgentDefinitionV2Schema,
   AgentFilePolicySchema,
@@ -521,6 +522,7 @@ export type WorkflowTestRunLimits = z.infer<typeof WorkflowTestRunLimitsSchema>;
 export const WorkflowTestRunBodySchema = z
   .object({
     manifest: z.unknown(),
+    runInput: RunInputContextSchema.optional(),
     triggerEvent: z.string().trim().min(1).max(160),
     subject: z.string().trim().min(1).max(500).optional(),
     inputs: z.record(z.string(), z.unknown()).default({}),
@@ -533,8 +535,9 @@ export const WorkflowTestRunBodySchema = z
     limits: WorkflowTestRunLimitsSchema,
     /**
      * Prior turns of a chat-style draft run, supplied by the caller. The draft
-     * test runner is deliberately stateless (it writes no run, step or message
-     * rows), so continuity lives in the request rather than the database.
+     * test runner writes no run, step or message rows, so the chat transcript
+     * travels in the request. An explicit runInput.contextKey separately
+     * enables bounded durable memory of successful draft runs.
      * Bounded server-side as well — never trust the client's length.
      */
     conversationHistory: z

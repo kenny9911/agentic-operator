@@ -1,7 +1,7 @@
 /** Durable Inngest functions for code-defined agents. */
 
 import { inngest, type InngestFunction } from "@agentic/runtime";
-import type { ProviderId } from "@agentic/contracts";
+import type { ProviderId, RunInputContext } from "@agentic/contracts";
 
 import type { BaseAgent } from "./base-agent";
 import { RunCancelledError } from "./run-engine";
@@ -10,7 +10,9 @@ export interface CodeAgentEventData {
   /** Pre-allocated runs.id, persisted as status=queued by the API. */
   runId: string;
   tenantSlug: string;
+  callerTenantSlug?: string;
   input: unknown;
+  runInput?: RunInputContext;
   provider?: ProviderId;
   providers?: ProviderId[];
   model?: string;
@@ -80,7 +82,9 @@ export function registerCodeAgentFn(
         return await step.run("agent.run", async () => {
           const result = await agent.run(data.input as never, {
             runId,
+            runInput: data.runInput,
             tenantSlug,
+            callerTenantSlug: data.callerTenantSlug,
             correlationId,
             invocationId,
             provider: data.provider,

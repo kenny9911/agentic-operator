@@ -19,6 +19,9 @@ import type { WorkflowRunEntrypoint } from "@agentic/contracts";
 import { Button, Icon } from "@/app/portal/components";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import type { WorkflowChatBubble } from "./workflow-chat";
+import { RunInputPanel } from "@/app/portal/components/RunInputPanel";
+import type { RunInputEditor } from "@/lib/hooks/useRunInput";
+import { hasRunInputAttachmentText } from "@/lib/run-input";
 
 export interface WorkflowChatPanelProps {
   entrypoint: WorkflowRunEntrypoint;
@@ -30,6 +33,7 @@ export interface WorkflowChatPanelProps {
   draft: string;
   onDraftChange: (value: string) => void;
   onSend: () => void;
+  inputEditor?: RunInputEditor;
 }
 
 const transcriptStyle: CSSProperties = {
@@ -96,6 +100,7 @@ export function WorkflowChatPanel({
   draft,
   onDraftChange,
   onSend,
+  inputEditor,
 }: WorkflowChatPanelProps) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -117,6 +122,7 @@ export function WorkflowChatPanel({
   }, [pending]);
 
   const empty = bubbles.length === 0 && !pending;
+  const hasInput = Boolean(draft.trim() || hasRunInputAttachmentText(inputEditor?.value?.attachments));
 
   return (
     <div
@@ -216,7 +222,7 @@ export function WorkflowChatPanel({
         <div ref={endRef} />
       </div>
 
-      <div style={composerWrapStyle}>
+      <div style={{ ...composerWrapStyle, maxHeight: "60%", overflowY: "auto" }}>
         {error ? (
           <div role="alert" style={{ color: "var(--red)", fontSize: 12 }}>
             {error}
@@ -229,7 +235,7 @@ export function WorkflowChatPanel({
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                if (!pending && draft.trim()) onSend();
+                if (!pending && !inputEditor?.blocked && hasInput) onSend();
               }
             }}
             placeholder={t("workflowRunConsole.chatPlaceholder")}
@@ -242,13 +248,16 @@ export function WorkflowChatPanel({
             icon="run"
             tone="primary"
             onClick={onSend}
-            disabled={pending || !draft.trim()}
+            disabled={pending || inputEditor?.blocked || !hasInput}
           >
             {t("workflowRunConsole.chatSend")}
           </Button>
         </div>
+        {inputEditor ? (
+          <RunInputPanel editor={inputEditor} disabled={pending} hidePrompt />
+        ) : null}
         <div style={{ color: "var(--text-3)", fontSize: 11 }}>
-          {t("workflowRunConsole.chatMeta")} · {t("workflowRunConsole.chatNotSaved")}
+          {t("workflowRunConsole.chatMeta")} · {t(inputEditor?.contextKey.trim() ? "runInput.memoryEnabled" : "workflowRunConsole.chatNotSaved")}
         </div>
       </div>
     </div>

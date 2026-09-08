@@ -566,6 +566,7 @@ export async function agentStudioRoutes(app: FastifyInstance): Promise<void> {
             target: body.target.kind,
             context_mode: body.contextMode,
             tool_policy: body.toolPolicy,
+            attachment_count: body.runInput?.attachments?.length ?? 0,
             definition_hash: reserved.definitionHash,
           },
         });

@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { buildStudioChatRunRequest } from "./chat-request";
 
 describe("Test Lab chat request", () => {
+  it("keeps reviewed attachments and memory beside the exact prompt", () => {
+    const runInput = {
+      context: "Use the approved terminology", contextKey: "client-review",
+      attachments: [{ id: "input-1", name: "notes.txt", mimeType: "text/plain", size: 5, text: "Reviewed notes" }],
+    };
+    const request = buildStudioChatRunRequest({
+      target: { kind: "live", agentVersionId: "av-1" }, prompt: "  Read these notes\n",
+      inputs: {}, toolPolicy: "safe", runInput,
+    });
+    expect(request.runInput).toEqual(runInput);
+    expect(request.prompt).toBe("  Read these notes\n");
+    expect(request.contextMode).toBe("session");
+  });
   it("publishes the exact textarea value as the agent prompt", () => {
     const textareaValue = "  Keep my leading spaces\n\nand trailing spaces.  ";
 

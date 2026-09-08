@@ -29,10 +29,11 @@ export type {
 
 // ─── P1-CON-01 — Typed content blocks for multi-modal / tool-use ──────────
 //
-// Adapter wire formats converge on three block kinds:
+// Adapter wire formats share text, tool calls/results, and user-uploaded media:
 //   - text       : plain assistant-side text segment
 //   - tool_use   : assistant emits a tool-call request
 //   - tool_result: tool side reports the call's outcome
+//   - image / document: base64 user input, preserved as native media on the wire
 //
 // All adapters that don't yet support tool blocks treat `string` content as
 // before; the agent-runtime emits typed arrays only when it actually needs
@@ -57,7 +58,27 @@ export interface ToolResultBlock {
   is_error?: boolean;
 }
 
-export type ChatContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+export interface ImageBlock {
+  type: "image";
+  mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  /** Raw base64 bytes, without a data-URL prefix. User messages only. */
+  data: string;
+}
+
+export interface DocumentBlock {
+  type: "document";
+  mimeType: "application/pdf";
+  /** Raw base64 bytes, without a data-URL prefix. User messages only. */
+  data: string;
+  name: string;
+}
+
+export type ChatContentBlock =
+  | TextBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | ImageBlock
+  | DocumentBlock;
 
 export interface ChatMessage {
   /** `tool` is the SDK's role for tool-result messages (a/k/a the "user-side" of a tool call). */
@@ -75,7 +96,8 @@ export interface ChatMessage {
  * Adapter helper — flatten typed content blocks into plain text for adapters
  * that don't yet speak the structured block protocol. Tool-use blocks are
  * rendered as a JSON sentinel and tool-result blocks as their content body.
- * Legacy string contents pass through untouched.
+ * Legacy string contents pass through untouched. Media cannot be flattened:
+ * callers must use a native multimodal adapter or parse the file first.
  */
 export function flattenContentToText(
   content: string | ChatContentBlock[],
@@ -87,6 +109,7 @@ export function flattenContentToText(
     else if (block.type === "tool_use")
       parts.push(`[tool_use ${block.name} ${JSON.stringify(block.input)}]`);
     else if (block.type === "tool_result") parts.push(block.content);
+    else throw new Error("Image and document content cannot be flattened to text");
   }
   return parts.join("\n");
 }
