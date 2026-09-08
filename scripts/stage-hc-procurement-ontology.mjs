@@ -115,7 +115,15 @@ const ACTION_MAP = {
     kind: "prompt",
     queries: [
       { operation: "queryStageCycleConfig", description: "后续节点标准周期，方案①的可压缩空间。" },
-      { operation: "queryTransferableStock", description: "定位可调库点与可调数量，方案③的调拨来源。" },
+      {
+        operation: "queryTransferableStock",
+        description:
+          "定位可调库点与可调数量，方案③的调拨来源。入参传 itemCodeList（需求物料编码列表）；" +
+          "返回的是真实库存现有量，字段为 itemCode / organizationCode / storehouseCode / " +
+          "quantity（现有量）/ availableTransQty（**可处理量，即可调数量**）。" +
+          "调拨数量取 min(availableTransQty, 需求数量)，调出库点取 storehouseCode。" +
+          "该接口不返回调拨提前期，不要编造。",
+      },
     ],
   },
   // ④断 —— 领导拍板 + 高危确认 + 计划员确认（三个人工步骤）

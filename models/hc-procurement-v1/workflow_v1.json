@@ -1198,7 +1198,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/hc-procurement-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（后续节点标准周期，方案①的可压缩空间。）\n- queryTransferableStock（定位可调库点与可调数量，方案③的调拨来源。）",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（后续节点标准周期，方案①的可压缩空间。）\n- queryTransferableStock（定位可调库点与可调数量，方案③的调拨来源。入参传 itemCodeList（需求物料编码列表）；返回的是真实库存现有量，字段为 itemCode / organizationCode / storehouseCode / quantity（现有量）/ availableTransQty（**可处理量，即可调数量**）。调拨数量取 min(availableTransQty, 需求数量)，调出库点取 storehouseCode。该接口不返回调拨提前期，不要编造。）｜入参(MultiOnhandAvailablePagingQueryDTO): unitCode、organizationCode、itemCodeList、itemVersionList、lotNumberList、storehouseCodeList、locatorCodeList、propertyTypeList、propertyCodeList、propertyTxnCodeList、inventoryStatusCodeList、showLocatorControl、showPropertyControl、showCalculateControl、minPrimaryTransactionQuantity、maxPrimaryTransactionQuantity",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",

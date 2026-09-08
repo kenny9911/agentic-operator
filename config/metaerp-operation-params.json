@@ -498,6 +498,27 @@
         "txnOrderTypeCode",
         "orderFullfillPubDTOList"
       ]
+    },
+    "queryTransferableStock": {
+      "schema": "MultiOnhandAvailablePagingQueryDTO",
+      "fields": [
+        "unitCode",
+        "organizationCode",
+        "itemCodeList",
+        "itemVersionList",
+        "lotNumberList",
+        "storehouseCodeList",
+        "locatorCodeList",
+        "propertyTypeList",
+        "propertyCodeList",
+        "propertyTxnCodeList",
+        "inventoryStatusCodeList",
+        "showLocatorControl",
+        "showPropertyControl",
+        "showCalculateControl",
+        "minPrimaryTransactionQuantity",
+        "maxPrimaryTransactionQuantity"
+      ]
     }
   }
 }

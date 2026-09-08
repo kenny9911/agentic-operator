@@ -136,6 +136,11 @@
     "queryPurchaseCategory": {
       "transport": "mock",
       "note": "ERP 无采购品类用途查询接口，平台模拟"
+    },
+    "queryTransferableStock": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/multiOnhandQuantityQuery",
+      "note": "可调库存取真实现有量接口：availableTransQty 即可处理量。此前未路由，查的是 mock 的 inv_transferable_stock_t（M-BRK-126 等三行种子），而需求来自真实 ERP（10000007/8/9），两边编码体系对不上，调拨量恒为 0"
     }
   }
 }

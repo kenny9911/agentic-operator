@@ -263,6 +263,15 @@ describe("metaerp real transports", () => {
       expect(resolveRoute("queryPbpHeader", "query").defaults).toBeUndefined();
     });
 
+    // 需求来自真实 ERP（物料 10000007/8/9），可调库存却查的是 mock 的三行种子
+    // （M-BRK-126…）——两套编码体系，调拨量因此恒为 0。
+    it("takes transferable stock from the real on-hand endpoint", () => {
+      process.env.METAERP_TRANSPORT_MODE = "real";
+      const route = resolveRoute("queryTransferableStock", "query");
+      expect(route.transport).toBe("openapi");
+      expect(route.path).toContain("multiOnhandQuantityQuery");
+    });
+
     it("routes the two inventory reads through the portal, not APIGW", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
       expect(resolveRoute("queryReservation", "query").transport).toBe("uiapi");
