@@ -494,7 +494,12 @@ lineList[]: itemCode, organizationCode, storehouseCode,
 **已确认可用的配置值**：`sourceSystemCode=LYY2`、`txnOrderTypeCode=在途交易出货`、
 `autoSubmit=Y`、`submittedBy=1`。
 
-**唯一仍缺**：`transactionTypeCode` 的合法取值。`在途` 被拒（430008 The transaction
-type code in the order is invalid），另试 在途交易出货 / 在途出货 / 在途调拨 /
-调拨出库 / TRANSIT / TRANSFER_OUT 均被同一错误拒绝。这是 ERP 里配置的值，**需向接口方
-索取**——它是这张调拨单落地前的最后一个未知量。
+`transactionTypeCode` 已确认为 **`INTRANSIT_ISSUE`**：报错随即从 430008 前进到
+430009，这就是它对了的证据。中文名一律被拒（在途 / 在途出货 / 在途调拨 / 调拨出库…），
+**这两个字段要的是编码不是显示名**。
+
+**唯一仍缺**：`txnOrderTypeCode` 的编码。`在途交易出货` 是显示名，被拒
+（430009 The transaction order type code in the order is invalid）；按同一命名风格
+试过 INTRANSIT_ISSUE / INTRANSIT_ISSUE_ORDER / IN_TRANSIT_ISSUE / TRANSIT_ISSUE /
+INTRANSIT / ISSUE / INTRANSIT_TRANSACTION_ISSUE，全部被同一错误拒绝。
+**需向接口方索取**——它是这张调拨单落地前的最后一个未知量。
