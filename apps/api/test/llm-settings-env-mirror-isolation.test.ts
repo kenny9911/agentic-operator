@@ -87,26 +87,27 @@ describe("AI settings env-mirror isolation", () => {
       delete process.env.AGENTIC_LLM_ENV_MIRROR_PATH;
       _resetLlmSettingsCache();
 
-      // Without the redirect the mirror would target the real file — the
-      // exact contamination scenario this suite guards against.
-      expect(llmSettingsEnvMirrorPath()).toBe(realEnvLocal);
+      // A test process never mirrors into the operator's real file: without
+      // an explicit mirror path the store mirrors into a sibling of the
+      // test-owned JSON file instead — the exact contamination scenario this
+      // suite guards against.
+      const siblingMirror = join(scratch, "llm-settings.env.local");
+      expect(llmSettingsEnvMirrorPath()).toBe(siblingMirror);
+      expect(llmSettingsEnvMirrorPath()).not.toBe(realEnvLocal);
 
       const created = getLlmSettings("__system");
       expect(created.sync.status).toBe("synced");
-      expect(created.sync.message).toMatch(/mirror skipped/i);
 
       const saved = saveLlmSettings("__system", created.settings, 0);
       expect(saved.settings.revision).toBe(1);
       expect(saved.sync.status).toBe("synced");
-      expect(saved.sync.message).toMatch(/mirror skipped/i);
       expect(existsSync(join(scratch, "llm-settings.json"))).toBe(true);
+      expect(readFileSync(siblingMirror, "utf8")).toContain("AGENTIC_LLM_SETTINGS_B64=");
 
-      // Re-reading an existing workspace must not report the intentionally
-      // absent mirror as drift.
+      // Re-reading an existing workspace must not report drift.
       _resetLlmSettingsCache();
       const reread = getLlmSettings("__system");
       expect(reread.sync.status).toBe("synced");
-      expect(reread.sync.message).toMatch(/mirror skipped/i);
 
       expectRealEnvLocalUntouched();
     } finally {
@@ -135,25 +136,27 @@ describe("AI settings env-mirror isolation", () => {
     }
   });
 
-  it("ignores a persisted test-run settings path outside test processes, warning once", () => {
+  it("refuses a persisted test-run settings path outside test processes instead of silently redirecting", () => {
     const scratch = mkdtempSync(join(testRunsRoot, "stale-block-"));
     const outside = mkdtempSync(join(tmpdir(), "agentic-llm-settings-live-"));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      // Simulate a dev boot that inherited a stale managed block.
+      // Simulate a dev boot that inherited a stale managed block. A non-test
+      // API must never persist operator routing state under the disposable
+      // test-run tree (a leaked block once made a real revision vanish when
+      // the tree was cleaned), so the store fails closed: the boot stops
+      // with the offending path named, rather than quietly using another.
       process.env.NODE_ENV = "production";
       delete process.env.VITEST;
       process.env.AGENTIC_LLM_SETTINGS_PATH = join(scratch, "llm-settings.json");
       process.env.DATABASE_URL = `file:${join(outside, "agentic.db")}`;
 
-      expect(llmSettingsPath()).toBe(resolve(outside, "llm-settings.json"));
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0]?.[0]).toMatch(/test-run scratch/i);
+      expect(() => llmSettingsPath()).toThrow(/must not use the disposable test-run tree outside NODE_ENV=test/);
+      expect(() => llmSettingsPath()).toThrow(join(scratch, "llm-settings.json"));
 
-      llmSettingsPath();
-      expect(warn).toHaveBeenCalledTimes(1);
+      // Pointing the path outside the test-run tree is honoured as-is.
+      process.env.AGENTIC_LLM_SETTINGS_PATH = join(outside, "llm-settings.json");
+      expect(llmSettingsPath()).toBe(resolve(outside, "llm-settings.json"));
     } finally {
-      warn.mockRestore();
       rmSync(scratch, { recursive: true, force: true });
       rmSync(outside, { recursive: true, force: true });
     }

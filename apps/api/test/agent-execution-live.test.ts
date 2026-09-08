@@ -500,10 +500,12 @@ describe.sequential("agent-execution live window (§G2)", () => {
     expect(gate).toBeDefined();
     expect(gate!.status).toBe("evaluated_violated");
     expect(gate!.reason).toBe("deterministic condition");
-    // The gated ERP write never ran.
-    expect(
-      envelope.trace?.steps.map((s) => s.name),
-    ).not.toContain("metaerp.invoke");
+    // The gated ERP write never ran. The runtime persists a `skipped` row
+    // for a gated-off step (so the timeline can show WHY nothing was
+    // written), so the step is present in the trace but must not have run.
+    const erpSteps = (envelope.trace?.steps ?? []).filter((s) => s.name === "metaerp.invoke");
+    expect(erpSteps.length).toBeGreaterThan(0);
+    for (const step of erpSteps) expect(step.status).toBe("skipped");
     expect(envelope.trace?.emittedEvents).not.toContain("PSCM_INVENTORY_LOCKED");
   });
 });

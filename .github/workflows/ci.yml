@@ -47,6 +47,11 @@ env:
   # Set NODE_ENV=test to opt into the test-time logging level. (apps/api
   # picks this up in src/server.ts.)
   NODE_ENV: test
+  # node:26.5.0-slim (the repository's pinned Node), as a digest. Refresh by
+  # resolving the tag with `docker buildx imagetools inspect
+  # docker.io/library/node:<tag>` when the Node pin moves (26.5.1 fixes
+  # CVE-2026-56848 in the node binary; bump .nvmrc/engines/NODE_VERSION and
+  # apps/api/Dockerfile together with this digest).
   SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:715e55e4b84e4bb0ff48e49b398a848f08e55daed8eb6a0ea1839ae53bc57583
   # Explicit, test-only bootstrap identity. Production seed has no built-in
   # email/name/password; CI supplies all three like any other deployment.
@@ -231,6 +236,16 @@ jobs:
       AGENTIC_SKIP_PREDEV_STOP: "1"
       AUTH_MODE: dev
       AGENTIC_DEV_TENANT: raas
+      # No .env files exist on the runner, so without these the Inngest
+      # client boots in cloud mode: the api's own registration PUT to
+      # /inngest returns 500, the initial app sync fails, the api treats that
+      # as fatal and exits, and Playwright waits 180s for a server that is
+      # gone. Same values as apps/api/.env.example — the `pnpm dev` webServer
+      # starts inngest-cli on :8488.
+      INNGEST_DEV: "1"
+      INNGEST_BASE_URL: http://localhost:8488
+      INNGEST_EVENT_KEY: local-dev-event-key
+      INNGEST_SIGNING_KEY: local-dev-signing-key
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -448,10 +463,25 @@ jobs:
           sbom: ${{ runner.temp }}/executor.spdx.json
           fail-build: true
           severity-cutoff: critical
-          only-fixed: false
+          # Block on criticals a rebuild can actually remove. The Debian
+          # base behind node:*-slim ships criticals its maintainers mark
+          # "won't fix" (perl-base CVE-2026-8376/13221/42496/12087/57433,
+          # libc6 CVE-2026-5450); with only-fixed=false those held CI red
+          # for weeks with nothing anyone could change. They stay visible in
+          # the uploaded scan report below.
+          only-fixed: true
           output-format: json
           output-file: ${{ runner.temp }}/executor.vulnerabilities.json
           cache-db: true
+
+      - name: Upload production-executor vulnerability report
+        if: always() && steps.detect.outputs.api == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: executor-vulnerabilities
+          path: ${{ runner.temp }}/executor.vulnerabilities.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Generate gateway image SPDX SBOM smoke artifact
         if: steps.detect.outputs.api == 'yes'

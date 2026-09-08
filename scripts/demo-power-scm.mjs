@@ -30,9 +30,14 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUN_DIR = path.join(ROOT, ".demo");
-const ONTOLOGY_DIST =
-  process.env.POWER_SCM_DIST
-  ?? "/Users/kenny/CSI-AICOE/allmetaOntology/demo-packages/power-scm/dist";
+const ONTOLOGY_DIST = process.env.POWER_SCM_DIST;
+if (!ONTOLOGY_DIST) {
+  console.error(
+    "demo-power-scm: set POWER_SCM_DIST to the allmetaOntology power-scm dist directory " +
+      "(…/demo-packages/power-scm/dist); it is not part of this repository.",
+  );
+  process.exit(2);
+}
 
 const API = "http://localhost:3540";
 const ERP = "http://localhost:3620";

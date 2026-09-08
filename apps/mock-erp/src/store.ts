@@ -58,10 +58,20 @@ export interface StoreOptions {
   stateDir: string;
 }
 
-export const DEFAULT_DATA_DIR =
-  "/Users/kenny/CSI-AICOE/allmetaOntology/demo-packages/power-scm/dist/mock-erp";
-export const DEFAULT_TRANSFORM_MAPS =
-  "/Users/kenny/CSI-AICOE/allmetaOntology/demo-packages/power-scm/dist/transform-maps/transform-maps.json";
+/**
+ * The power-scm demo data plane lives in the allmetaOntology repo, not here.
+ * Point `POWER_SCM_DIST` at its `demo-packages/power-scm/dist` to use it as
+ * the default; without it (CI, a fresh clone) the defaults are undefined and
+ * `buildApp` demands explicit paths instead of reaching for a path that only
+ * exists on one developer's machine.
+ */
+const POWER_SCM_DIST = process.env.POWER_SCM_DIST?.trim() || undefined;
+export const DEFAULT_DATA_DIR: string | undefined = POWER_SCM_DIST
+  ? path.join(POWER_SCM_DIST, "mock-erp")
+  : undefined;
+export const DEFAULT_TRANSFORM_MAPS: string | undefined = POWER_SCM_DIST
+  ? path.join(POWER_SCM_DIST, "transform-maps", "transform-maps.json")
+  : undefined;
 
 /**
  * In-memory Meta ERP state: tables keyed by ERP entity name, a query-op

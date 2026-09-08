@@ -18,7 +18,7 @@
     "@types/node": "^26.1.1",
     "tsx": "^4.22.0",
     "typescript": "^6.0.3",
-    "vitest": "^3.0.5"
+    "vitest": "^3.2.6"
   },
   "main": "./src/app.ts",
   "exports": {

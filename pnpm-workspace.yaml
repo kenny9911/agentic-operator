@@ -23,3 +23,11 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - openai@6.47.0
+
+# Dependency overrides (pnpm 11 reads them from here, not package.json).
+overrides:
+  # GHSA-w7jw-789q-3m8p — concurrently@9.2.1 pins shell-quote 1.8.3; every
+  # sandbox image ships root node_modules, so the production-executor
+  # vulnerability gate (fixable criticals) blocked on it. Drop once
+  # concurrently depends on >=1.8.4 itself.
+  shell-quote: '>=1.8.4'

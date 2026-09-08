@@ -67,8 +67,12 @@ export default defineConfig({
             // api (3540), and inngest dev (8488). It accepts a SIGTERM
             // cleanly via the wrapper.
             command: "pnpm dev",
-            // Wait on the api /health endpoint — it's the slowest dep.
-            url: `${API_BASE}/health`,
+            // Wait on core readiness (process + SQLite + Inngest registration).
+            // NOT /health: that is full production readiness and answers 503
+            // whenever the optional execution planes (CodeAct executor,
+            // Factory sandbox, image trust) are unconfigured — always, on a
+            // CI runner — so the suite could never start.
+            url: `${API_BASE}/ready`,
             reuseExistingServer: true,
             timeout: 180_000,
             cwd: "../..",

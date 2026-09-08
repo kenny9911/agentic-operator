@@ -86,6 +86,57 @@ function enabledTenantScope(): Set<string> | null {
  * and an `llmGateway` subsystem block so support can confirm a hot-deploy
  * picked up the env override.
  */
+/**
+ * Tenant slugs whose Inngest apps this process actually serves — the scope of
+ * the Inngest readiness check. DB-only tenants (an interrupted test fixture,
+ * a new tenant with no manifest) have no app and must not inflate
+ * degradedTenants; intersecting with the live registry keeps a real zombie
+ * app visible until teardown unregisters it. Falls back to the system app
+ * alone when the schema is unreadable: checkSqlite reports that, and the
+ * probes must still answer with structure instead of crashing.
+ */
+function inngestHealthTenantSlugs(): string[] {
+  let tenantSlugs = [SYSTEM_SLUG];
+  try {
+    const enabled = enabledTenantScope();
+    // Inngest readiness describes the apps this process actually serves, not
+    // every control-plane tenant row. DB-only tenants (for example an
+    // interrupted test fixture or a newly-created tenant with no manifest)
+    // have no Inngest app and must not inflate degradedTenants. Conversely,
+    // intersecting with the live registry keeps a real zombie app visible
+    // until the sandbox/tenant teardown unregisters it.
+    const registeredSlugs = new Set(
+      listRegisteredApps().map((registered) => registered.slug),
+    );
+    const tenantRows = getDb()
+      .select({
+        id: tenants.id,
+        slug: tenants.slug,
+        archivedAt: tenants.archivedAt,
+      })
+      .from(tenants)
+      .all();
+    const inngestEnabledByTenant = getTenantInngestDeploymentEnabledMap(
+      tenantRows.map((tenant) => tenant.id),
+    );
+    tenantSlugs = [
+      SYSTEM_SLUG,
+      ...tenantRows
+        .filter(
+          (tenant) =>
+            tenant.archivedAt === null &&
+            inngestEnabledByTenant.get(tenant.id) !== false &&
+            registeredSlugs.has(tenant.slug) &&
+            (!enabled || enabled.has(tenant.slug)),
+        )
+        .map((tenant) => tenant.slug),
+    ];
+  } catch {
+    // Reported by checkSqlite; see above.
+  }
+  return tenantSlugs;
+}
+
 export async function healthRoute(app: FastifyInstance) {
   // Process liveness deliberately has no database/network/image-attestation
   // dependency. Docker uses it to break the first-attestation bootstrap cycle;
@@ -97,46 +148,29 @@ export async function healthRoute(app: FastifyInstance) {
     uptime: Math.round(process.uptime()),
   }));
 
+  // Core readiness: process + SQLite + Inngest registration — what a caller
+  // needs before it can submit work (the Playwright E2E gate waits on it).
+  // /health below is FULL production readiness: it also demands the optional
+  // execution planes and image trust, so a CI runner or a laptop answers 503
+  // there forever, which is not "not ready", just "not production".
+  app.get("/ready", async (_req, reply) => {
+    const [inngest, sqlite] = await Promise.all([
+      checkInngest(fetch, [...new Set(inngestHealthTenantSlugs())]),
+      checkSqlite(),
+    ]);
+    const ready = inngest.ok && sqlite.ok;
+    return reply.status(ready ? 200 : 503).send({
+      schema: "agentic-api-readiness/v1",
+      ready,
+      ts: Date.now(),
+      uptime: Math.round(process.uptime()),
+      inngest,
+      sqlite,
+    });
+  });
+
   app.get("/health", async (_req, reply) => {
-    let tenantSlugs = [SYSTEM_SLUG];
-    try {
-      const enabled = enabledTenantScope();
-      // Inngest readiness describes the apps this process actually serves, not
-      // every control-plane tenant row. DB-only tenants (for example an
-      // interrupted test fixture or a newly-created tenant with no manifest)
-      // have no Inngest app and must not inflate degradedTenants. Conversely,
-      // intersecting with the live registry keeps a real zombie app visible
-      // until the sandbox/tenant teardown unregisters it.
-      const registeredSlugs = new Set(
-        listRegisteredApps().map((registered) => registered.slug),
-      );
-      const tenantRows = getDb()
-        .select({
-          id: tenants.id,
-          slug: tenants.slug,
-          archivedAt: tenants.archivedAt,
-        })
-        .from(tenants)
-        .all();
-      const inngestEnabledByTenant = getTenantInngestDeploymentEnabledMap(
-        tenantRows.map((tenant) => tenant.id),
-      );
-      tenantSlugs = [
-        SYSTEM_SLUG,
-        ...tenantRows
-          .filter(
-            (tenant) =>
-              tenant.archivedAt === null &&
-              inngestEnabledByTenant.get(tenant.id) !== false &&
-              registeredSlugs.has(tenant.slug) &&
-              (!enabled || enabled.has(tenant.slug)),
-          )
-          .map((tenant) => tenant.slug),
-      ];
-    } catch {
-      // checkSqlite below reports the schema failure. Health itself must still
-      // return a structured 503 instead of crashing before subsystem checks.
-    }
+    const tenantSlugs = inngestHealthTenantSlugs();
     const [
       inngest,
       sqlite,

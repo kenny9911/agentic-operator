@@ -8,18 +8,29 @@ import { buildApp, type MockErpApp } from "../src/app.js";
 let ctx: MockErpApp;
 let stateDir: string;
 
+// This suite drives the power-scm demo data plane, which lives in the
+// allmetaOntology repo (POWER_SCM_DIST → …/demo-packages/power-scm/dist).
+// Without it the suite is skipped — visibly — rather than failing on a path
+// that only exists on one developer's machine.
+const POWER_SCM_DIST = process.env.POWER_SCM_DIST?.trim() ?? "";
+const available =
+  POWER_SCM_DIST !== "" && fs.existsSync(path.join(POWER_SCM_DIST, "mock-erp", "_index.json"));
+const suite = available ? describe : describe.skip;
+
 beforeAll(async () => {
+  if (!available) return;
   stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-erp-test-"));
   ctx = buildApp({ stateDir });
   await ctx.app.ready();
 });
 
 afterAll(async () => {
+  if (!available) return;
   await ctx.app.close();
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
-describe("boot + health", () => {
+suite("boot + health", () => {
   it("loads all stub entities and both op catalogs", async () => {
     const res = await ctx.app.inject({ method: "GET", url: "/health" });
     expect(res.statusCode).toBe(200);
@@ -31,7 +42,7 @@ describe("boot + health", () => {
   });
 });
 
-describe("query ops", () => {
+suite("query ops", () => {
   it("returns all stub rows without filters", async () => {
     const res = await ctx.app.inject({
       method: "POST",
@@ -69,7 +80,7 @@ describe("query ops", () => {
   });
 });
 
-describe("write ops", () => {
+suite("write ops", () => {
   it("createTransferOrder appends a proposed row and journals it", async () => {
     const before = await ctx.app
       .inject({ method: "POST", url: "/metaerp/openapi/v1/queryTransferOrders", payload: {} })
@@ -140,7 +151,7 @@ describe("write ops", () => {
   });
 });
 
-describe("reset", () => {
+suite("reset", () => {
   it("restores pristine stub rows and truncates the journal", async () => {
     const res = await ctx.app.inject({ method: "POST", url: "/__reset" });
     expect(res.statusCode).toBe(200);
@@ -166,7 +177,7 @@ describe("reset", () => {
   });
 });
 
-describe("ui", () => {
+suite("ui", () => {
   it("serves the transfers page with table + create form", async () => {
     const res = await ctx.app.inject({ method: "GET", url: "/ui/transfers" });
     expect(res.statusCode).toBe(200);

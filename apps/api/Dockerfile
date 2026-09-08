@@ -201,9 +201,17 @@ FROM ${NODE_BASE_IMAGE} AS sandbox-common
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 
+# `apt-get upgrade` pulls the Debian security fixes the slim tag lags behind
+# (OpenSSL, zlib …). The bundled npm/npx/corepack are removed: none of the
+# control / executor / gateway entrypoints spawn them (they run node + tsx
+# from the copied node_modules), and npm's vendored `tar` was the only
+# fixable Critical the production-executor vulnerability gate reported.
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update \
+ && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 upgrade -y --no-install-recommends \
  && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y --fix-missing --no-install-recommends tini ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
  && groupadd --system --gid 1001 agentic \
  && useradd --system --uid 1001 --gid agentic --home /app --shell /usr/sbin/nologin agentic
 
@@ -218,7 +226,17 @@ COPY --from=build --chown=agentic:agentic /app/packages /app/packages
 COPY --from=build --chown=agentic:agentic /app/apps/api/package.json /app/apps/api/tsconfig.json /app/apps/api/
 COPY --from=build --chown=agentic:agentic /app/apps/api/node_modules /app/apps/api/node_modules
 
-RUN mkdir -p /sandbox/control/logs /sandbox/control/artifacts \
+# drizzle-kit is a migration CLI used at build/dev time only (no runtime module
+# imports it), yet its dependency tree pins two old esbuild builds whose
+# embedded Go runtimes carry fixable Critical CVEs (esbuild 0.18 via
+# @esbuild-kit, esbuild 0.25 directly). The sandbox images never run
+# migrations, so drop that tree instead of shipping the binaries.
+RUN rm -rf /app/node_modules/.pnpm/drizzle-kit@* \
+           /app/node_modules/.pnpm/@esbuild-kit+* \
+           /app/node_modules/.pnpm/esbuild@0.18.* /app/node_modules/.pnpm/@esbuild+*@0.18.* \
+           /app/node_modules/.pnpm/esbuild@0.25.* /app/node_modules/.pnpm/@esbuild+*@0.25.* \
+           /app/node_modules/drizzle-kit /app/node_modules/.bin/drizzle-kit \
+ && mkdir -p /sandbox/control/logs /sandbox/control/artifacts \
              /sandbox/db /sandbox/models /sandbox/data/logs /sandbox/data/artifacts \
              /sandbox/data/tenants /sandbox/gateway \
  && chown -R agentic:agentic /sandbox
