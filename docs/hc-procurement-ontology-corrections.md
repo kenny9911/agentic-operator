@@ -510,15 +510,27 @@ lineList[]: itemCode, organizationCode, storehouseCode,
     sourceObjectNumber, sourceObjectLineId
 ```
 
-**行的调入库位已定位**：字段名是 `transferStorehouseCode`，`LYY1` / `LYY2` 都是合法
-库位编码——填入后报错从 `The transfer storehouse code is invalid.` 变成
-`An error occurred when querying limit between item and storehouse limit`，
-**错误前进即字段与取值都对了**。
+**行的调入库位仍缺**。字段名确认是 `transferStorehouseCode`（头与其余行字段都已跑通），
+但取值没有可用的：
 
-**仍缺**：目标库位上的物料限额配置。物料 10000008 在 LYY1/LYY2 下没有配置
-最小/最大库存水平（数据信息.xlsx Sheet3 里只有 300000 成品库这一行），ERP 在建行时
-查不到限额就失败。这是 ERP 主数据配置，需业务侧在目标库位上为演示物料补一条限额记录。
+- `transferStorehouseCode` = `300000`（与调出库相同）→ `The transfer storehouse code is invalid.`
+- `transferStorehouseCode` = `LYY1` / `LYY2` → 同一错误
+- `storehouseCode`（调出库）= `LYY1` / `LYY2` → `storehouse code is invalid`
 
-**探测残留**：过程中在 v15 创建了 4 张只有头、行为 FAILED 的调拨单
+即 **LYY1 / LYY2 不是库位编码**（`LYY2` 是 sourceSystemCode，两者不是一回事）。
+
+直接查库存确认：管理单元 1000 / 库存组织 YF1 下，7 个演示物料**全部只存放在
+`300000 成品库` 一个库位**，没有第二个库位。调拨需要一出一入两个库位，所以这不是
+字段名或编码问题，而是 **v15 演示数据里缺一个可调入的库位**。
+
+> 一次判读教训：早前一轮把 5 个假设塞进同一张单的 5 行，其中一行的
+> `organizationCode` 非法，ERP 把整批报成了同一个错误（"querying limit between item
+> and storehouse limit"），导致误判「LYY1 是合法库位、只差限额配置」。**每行只改一个
+> 变量**之后才看清真实原因。批量探测要保证每行只有一个自变量。
+
+**需业务侧在 v15 补的数据**：库存组织 YF1 下新增一个库位，并为演示物料
+（10000007/8/9）在该库位上配置库存限额；或给出一个已存在的、可作为调入方的库位编码。
+
+**探测残留**：v15 中留下 5 张只有头、行为 FAILED 的调拨单
 （1992656320092771594 / 1992657793393300749 / 1992656606487975180 /
-1992656320092837130），演示前建议清理。
+1992656320092837130 / 1992657793393366285），演示前建议清理。
