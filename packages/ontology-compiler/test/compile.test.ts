@@ -504,6 +504,79 @@ describe("compiled input ports", () => {
     }
   });
 
+  /**
+   * 加载示例 derives a payload from the schema, which is well-formed but
+   * fictional — and against a real ERP a fictional document number simply finds
+   * nothing, so the run dies on an empty result instead of a clear error.
+   */
+  describe("authored input examples", () => {
+    function compileWithExamples(examples: Record<string, Record<string, unknown>>) {
+      const probed = {
+        ...model,
+        events: [
+          {
+            name: "__PROBE__",
+            payload: {
+              event_data: [
+                { name: "plan_no", type: "String", required: true },
+                { name: "unit_code", type: "String", required: false },
+              ],
+            },
+          },
+          ...model.events,
+        ],
+        actions: model.actions.map((action, index) =>
+          index === 0 ? { ...action, trigger: ["__PROBE__"] } : action,
+        ),
+      };
+      return compile(probed, { ...loadOverlayFixture(), input_examples: examples }, {
+        tenant: "power-scm",
+      });
+    }
+
+    it("puts the authored value on the port the console reads", () => {
+      const compiled = compileWithExamples({
+        __PROBE__: { plan_no: "100020260903000006", unit_code: "1000" },
+      });
+      const ports = compiled.workflow[0]!.inputs;
+      expect(ports.find((port) => port.id === "plan_no")?.example).toBe(
+        "100020260903000006",
+      );
+      expect(ports.find((port) => port.id === "unit_code")?.example).toBe("1000");
+    });
+
+    it("leaves an un-authored field to the schema generator", () => {
+      const compiled = compileWithExamples({ __PROBE__: { plan_no: "X" } });
+      const ports = compiled.workflow[0]!.inputs;
+      expect(ports.find((port) => port.id === "unit_code")?.example).toBeUndefined();
+    });
+
+    // A silently ignored typo is worse than none: the overlay looks right while
+    // 加载示例 keeps offering the generated placeholder.
+    it("rejects an example for an event or field the ontology does not have", () => {
+      expect(() => compileWithExamples({ NO_SUCH_EVENT: { plan_no: "X" } })).toThrow(
+        /unknown event 'NO_SUCH_EVENT'/,
+      );
+      expect(() => compileWithExamples({ __PROBE__: { no_such_field: "X" } })).toThrow(
+        /has no field 'no_such_field'/,
+      );
+    });
+  });
+
+  // 清单 schema 把 tool_use[].description 限死在 2000 字符。越界的后果很隐蔽：
+  // 运行照常（运行时不查这条长度），但工作流页面打不开——
+  // internal_error: stored workflow manifest is invalid。
+  it("keeps every tool description within the manifest's 2000-char cap", () => {
+    for (const agent of agents) {
+      for (const tool of agent.tool_use ?? []) {
+        expect(
+          (tool.description ?? "").length,
+          `${agent.name} / ${tool.name}`,
+        ).toBeLessThanOrEqual(2000);
+      }
+    }
+  });
+
   /** Compile one probe field and hand back the port it produced. */
   function probePort(field: StudioEventDataField) {
     const probed = {
@@ -637,5 +710,41 @@ describe("submission gates", () => {
     expect(() => compile(model, unknown, { tenant: "power-scm" })).toThrow(
       /unknown action/,
     );
+  });
+});
+
+describe("metaERP base URL env", () => {
+  const model = loadStudioDomain(FIXTURE_SOURCE);
+
+  const envNames = (tenantOptions: Parameters<typeof compile>[2]) => {
+    const names = new Set<string>();
+    for (const agent of compile(model, loadOverlayFixture(), tenantOptions).workflow) {
+      for (const entry of agent.tool_use ?? []) {
+        const env = entry.config?.base_url_env;
+        if (typeof env === "string") names.add(env);
+      }
+    }
+    return names;
+  };
+
+  it("defaults every tool binding to METAERP_BASE_URL", () => {
+    expect([...envNames({ tenant: "power-scm" })]).toEqual(["METAERP_BASE_URL"]);
+  });
+
+  // One mock ERP instance serves ONE package's data plane, and two scenarios
+  // that define different rows for the SAME config table cannot share it —
+  // each scenario's reads would see the other's rows.
+  it("lets a tenant point at its own instance", () => {
+    expect([
+      ...envNames({ tenant: "power-scm", baseUrlEnv: "METAERP_OTHER_BASE_URL" }),
+    ]).toEqual(["METAERP_OTHER_BASE_URL"]);
+  });
+
+  it("refuses anything that is not an env var name", () => {
+    for (const bad of ["http://localhost:3621", "lower_case", "WITH-DASH"]) {
+      expect(() =>
+        compile(model, loadOverlayFixture(), { tenant: "power-scm", baseUrlEnv: bad }),
+      ).toThrow(/UPPER_SNAKE/);
+    }
   });
 });

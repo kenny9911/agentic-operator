@@ -5,6 +5,7 @@ import {
   contextInsights,
   contextSummary,
   decisionOptions,
+  pickContext,
   formatContextValue,
   prefillFromContext,
 } from "./task-context";
@@ -300,6 +301,68 @@ describe("the three things an approver needs", () => {
     expect(keys).toContain("option_id");
   });
 
+  // 场景二 split gate: the payload carries two approved demand plans and two
+  // merge suggestions. Shape alone made all four look like options, so the
+  // planner was offered radios reading 「检修一部」 and 「01,01,03」 — neither of
+  // which the form could record, so picking one changed nothing on submit.
+  it("ignores sibling records the form has no field for", () => {
+    const splitGate = {
+      demand_plan: [
+        { demand_organization: "检修一部", plan_id: "PBP-2027-0101", planner: "张计划" },
+        { demand_organization: "检修二部", plan_id: "PBP-2027-0102", planner: "赵计划" },
+      ],
+      merge_suggestion: [
+        {
+          split_option_label: "M-BRK-126 三行合并",
+          plan_line_id: "PBPL-2027-0101-01",
+          material_code: "M-BRK-126",
+          merge_reason: "同物料、同标准采购类型，需求日期跨度12天在30天合并窗口内。",
+        },
+        {
+          split_option_label: "M-CAB-240 跨期拆分",
+          plan_line_id: "PBPL-2027-0102-01",
+          material_code: "M-CAB-240",
+          merge_reason: "需求日期跨度超出合并窗口，建议拆分为两条计划行。",
+        },
+      ],
+    };
+    const options = decisionOptions(splitGate, ["plan_line_id", "split_reason"]);
+    // Only the group whose pick the form can record survives.
+    expect(options).toHaveLength(2);
+    expect(options.map((option) => option.title)).toEqual([
+      "M-BRK-126 三行合并",
+      "M-CAB-240 跨期拆分",
+    ]);
+    // And choosing one answers the required field, so nobody types a line id.
+    expect(options[0]!.values).toEqual({ plan_line_id: "PBPL-2027-0101-01" });
+  });
+
+  it("prefers a key that says it is the display name over whatever sorts first", () => {
+    const payloadWithLabel = {
+      options: [
+        { detail: "跨期拆分", option_label: "M-CAB-240 跨期拆分", option_id: "OPT-A" },
+        { detail: "三行合并", option_label: "M-BRK-126 三行合并", option_id: "OPT-B" },
+      ],
+    };
+    // `detail` also varies and is short enough to name a card; the key that
+    // declares itself a label wins so the choice is not left to key order.
+    expect(decisionOptions(payloadWithLabel, ["option_id"]).map((o) => o.title)).toEqual([
+      "M-CAB-240 跨期拆分",
+      "M-BRK-126 三行合并",
+    ]);
+  });
+
+  // API 对运行载荷有 24KB 上限，真实链路一超限就整个塌成 {_truncated} 标记，
+  // 「采购概况」「判断依据」两栏因此空着——审批人没有任何依据可看。
+  it("falls back to the task's own brief when the run payload was truncated", () => {
+    const truncated = { _truncated: true, _bytes: 49443, _preview: "{...}" };
+    const brief = { alert_level: "红色", chain_id: "C-1", cause_explanation: "定标节点停滞 46 天，后续周期已赶不上到货日。" };
+    expect(pickContext(truncated, brief)).toBe(brief);
+    expect(contextSummary(pickContext(truncated, brief)).length).toBeGreaterThan(0);
+    // 载荷完整时仍优先用它——信息更全。
+    expect(pickContext(brief, truncated)).toBe(brief);
+  });
+
   it("keeps the facts when the options differ in nothing", () => {
     const identical = {
       options: [
@@ -308,7 +371,7 @@ describe("the three things an approver needs", () => {
       ],
     };
     // Showing something the reader can compare beats showing an empty card.
-    expect(decisionOptions(identical)[0]!.facts.length).toBeGreaterThan(0);
+    expect(decisionOptions(identical, ["stage"])[0]!.facts.length).toBeGreaterThan(0);
   });
 
   it("offers nothing to pick when the payload holds no alternatives", () => {

@@ -179,7 +179,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryOpenPbpHeader（查询在途采购计划头（状态=已批准）。）、queryOpenPbpLine（查询采购计划行——需求到货日期来源。）、queryAllPbpLinePage（分页查询计划头行关系，防止行重复归集（本体 tool_use 名 getAllPbpLinePageByQuery；编译器只识别 query* 前缀的只读 op）。）、queryPr（采集立项节点状态与审批通过时间。）、queryProcPackageLineExecuteMode（采集组包节点状态与组包完成时间。）、queryRfxList（采集询价节点状态、询价生效/发标/截标时间。）、queryAwardList（采集定标节点中标日期与中标供应商。）、querySpaList（采集价格协议——合同的前置凭据（本体 tool_use 名 getSpaByQuery）。）、queryContract（采集合同节点签署/生效状态与日期（本体 tool_use 名 getContractByQuery）。）、queryPoHeader（采集订单节点审批时间与生效日期。）、queryPoLineShipment（采集到货进度：订单数量与已接收数量。）、queryAcceptHeader（采集验收单与验收行接收数量。）、queryAcceptTransaction（采集验收交易记录与交易时间。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryOpenPbpHeader（查询在途采购计划头（状态=已批准）。）｜入参(PbpHeaderOpenQueryDTO): pbpHeaderIdList、pbpNumberList、pbpLineId\n- queryOpenPbpLine（查询采购计划行——需求到货日期来源。）｜入参(PbpLineOpenQueryDTO): pbpNumber、pbpHeaderId、pbpLineIdList\n- queryAllPbpLinePage（分页查询计划头行关系，防止行重复归集（本体 tool_use 名 getAllPbpLinePageByQuery；编译器只识别 query* 前缀的只读 op）。）｜入参(PbpLineQueryDTO): queryMode、pbpNumber、pbpName、pbpHeaderId、pbpLineNumberList、headerUnitCode 等\n- queryPr（采集立项节点状态与审批通过时间。）｜入参(PrOpenPagingQueryDTO): unitCode、interfaceSourceCode、itemCode、prCreationDateFrom、prCreationDateTo、needByDateFrom 等\n- queryProcPackageLineExecuteMode（采集组包节点状态与组包完成时间。）｜入参(ProcPackageLineExecuteOpenReqDTO): sourceObjectType、sourceLineIdList\n- queryRfxList（采集询价节点状态、询价生效/发标/截标时间。）｜入参(RfxOpenRequestQueryDTO): projectId、rfxHeaderId、rfxName、unitCode、supplierCode、rfxNumber 等\n- queryAwardList（采集定标节点中标日期与中标供应商。）｜入参(AwardOpenRequestQueryDTO): rfxHeaderId、bidHeaderId、bidNumber、bidLineId、rfxLineId、lineNumber 等\n- querySpaList（采集价格协议——合同的前置凭据（本体 tool_use 名 getSpaByQuery）。）｜入参(SpaQueryDTO): agreementType、type、isEffective、spaNumber、spaBatchParams、supplierCode 等\n- queryContract（采集合同节点签署/生效状态与日期（本体 tool_use 名 getContractByQuery）。）｜入参(ContractQueryOpenReqDTO): mainContractId、contractName、contractCode、contractTypes、businessTypes、contractStatuses 等\n- queryPoHeader（采集订单节点审批时间与生效日期。）｜入参(PoHeaderQueryReqDTO): groupNumber、buyerUserId、poGroups、approvalStatuses、purchasingOrderTypes、interfaceSourceCodes 等\n- queryPoLineShipment（采集到货进度：订单数量与已接收数量。）｜入参(PoShipmentQueryReqDTO): poLineIds、poGroups、poLineShipmentIds、shipmentClosedFlags、shipmentCancelFlags、inspectionMatchFlags 等\n- queryAcceptHeader（采集验收单与验收行接收数量。）｜入参(AcHeaderQueryOpenReqDTO): unitCode、organizationCode、acHeaderIdList、asnNumberList、acNumberList、supplierCode 等\n- queryAcceptTransaction（采集验收交易记录与交易时间。）｜入参(AcTransactionOpenQueryDTO): unitCode、organizationCode、sourceDocHeaderNumberList、acNumberList、supplierCode、itemCode 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -208,7 +208,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -462,7 +462,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryStageCycleConfig（按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。）、queryAlertThresholdConfig（取时间/进度偏差判定阈值（BR-DEV-02：阈值必须来自配置，不得写死）。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。）\n- queryAlertThresholdConfig（取时间/进度偏差判定阈值（BR-DEV-02：阈值必须来自配置，不得写死）。）",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -480,7 +480,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -714,7 +714,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryStageCycleConfig（汇总当前节点之后各节点标准周期，得到剩余天数。）、queryHistoricalOnTimeRate（统计同业务类型历史已完结单的按期达成率与样本量。）、queryAlertThresholdConfig（取红/黄概率分界阈值。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（汇总当前节点之后各节点标准周期，得到剩余天数。）\n- queryHistoricalOnTimeRate（统计同业务类型历史已完结单的按期达成率与样本量。）\n- queryAlertThresholdConfig（取红/黄概率分界阈值。）",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -733,7 +733,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -1387,7 +1387,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryStageCycleConfig（后续节点标准周期，方案①的可压缩空间。）、queryTransferableStock（定位可调库点与可调数量，方案③的调拨来源。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryStageCycleConfig（后续节点标准周期，方案①的可压缩空间。）\n- queryTransferableStock（定位可调库点与可调数量，方案③的调拨来源。）｜入参(MultiOnhandAvailablePagingQueryDTO): unitCode、organizationCode、itemCodeList、itemVersionList、lotNumberList、storehouseCodeList、locatorCodeList、propertyTypeList 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -1405,7 +1405,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -2082,7 +2082,7 @@
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json",
           "operation": "changePbp"
         },
-        "description": "回写各节点计划完成时间——压缩周期方案(changePbp)。入参：PBP_HEADER_ID、压缩后的各节点计划完成时间、调整原因、操作人(计划员)；出参：回写结果状态、失败原因。",
+        "description": "回写各节点计划完成时间——压缩周期方案(changePbp)。入参：PBP_HEADER_ID、压缩后的各节点计划完成时间、调整原因、操作人(计划员)；出参：回写结果状态、失败原因。｜入参(PbpChangeHeaderReqOpenDTO，请求体是数组): pbpNumber、pbpChangeLineReqDTOList",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -2297,7 +2297,7 @@
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json",
           "operation": "changePbpLine"
         },
-        "description": "调整需求到货日期(changePbpLine)。入参：PBP_LINE_ID、新 NEED_BY_DATE、调整原因、需求部门确认标识、操作人(计划员)；出参：回写结果状态、生效后的计划行。",
+        "description": "调整需求到货日期(changePbpLine)。入参：PBP_LINE_ID、新 NEED_BY_DATE、调整原因、需求部门确认标识、操作人(计划员)；出参：回写结果状态、生效后的计划行。｜入参(PbpChangeHeaderReqOpenDTO，请求体是数组): pbpNumber、pbpChangeLineReqDTOList",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -2512,7 +2512,7 @@
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json",
           "operation": "createTransactionOrder"
         },
-        "description": "生成调拨单(createTransactionOrder，写 inv_txn_order_header_t)。入参：物料编码、调拨数量、调出库存组织/库点、调入库存组织/库点、需求日期、来源方案编号、经办人(采购员)；出参：调拨单号、单据状态。",
+        "description": "生成调拨单(createTransactionOrder，写 inv_txn_order_header_t)。入参：物料编码、调拨数量、调出库存组织/库点、调入库存组织/库点、需求日期、来源方案编号、经办人(采购员)；出参：调拨单号、单据状态。｜入参(OrderCreatePubDTO): lineList、unitCode、organizationCode、txnOrderTypeCode、transactionTypeCode、uniqueSequenceNumber、sourceSystemCode、sourceCode 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -2703,7 +2703,7 @@
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json",
           "operation": "updateTransactionOrder"
         },
-        "description": "调拨单状态回传(轮询/回调)。入参：调拨单号；出参：单据状态(审批中/已发出/已到货/已归还)、实际到货日期、到货数量。",
+        "description": "调拨单状态回传(轮询/回调)。入参：调拨单号；出参：单据状态(审批中/已发出/已到货/已归还)、实际到货日期、到货数量。｜入参(OrderFulfillCreatePubDTO): unitCode、organizationCode、txnOrderTypeCode、orderFullfillPubDTOList",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -3330,7 +3330,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryPbpHeader（查询采购业务计划头（本体 tool_use 名 queryPbpHeader）。过滤列（精确匹配）：STATUS / PLAN_CATEGORY / BUSINESS_TYPE / PBP_HEADER_ID / IS_DELETED；已批准需求计划用 {\"STATUS\":\"已批准\",\"PLAN_CATEGORY\":\"需求计划\",\"IS_DELETED\":\"N\"}。）、queryPbpLine（按计划头拉取采购业务计划行，取需求合并所需字段。过滤列：PBP_HEADER_ID / PBP_LINE_ID / ITEM_CODE / IS_CANCELLED / IS_DELETED；取消/删除行按 BR2-SCAN-01 在推理里剔除。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryPbpHeader（查询采购业务计划头（本体 tool_use 名 queryPbpHeader）。过滤列（精确匹配）：STATUS / PLAN_CATEGORY / BUSINESS_TYPE / PBP_HEADER_ID / IS_DELETED；已批准需求计划用 {\"STATUS\":\"已批准\",\"PLAN_CATEGORY\":\"需求计划\",\"IS_DELETED\":\"N\"}。）｜入参(PbpHeaderOpenQueryDTO): pbpHeaderIdList、pbpNumberList、pbpLineId\n- queryPbpLine（按计划头拉取采购业务计划行，取需求合并所需字段。过滤列：PBP_HEADER_ID / PBP_LINE_ID / ITEM_CODE / IS_CANCELLED / IS_DELETED；取消/删除行按 BR2-SCAN-01 在推理里剔除。）｜入参(PbpLineOpenQueryDTO): pbpNumber、pbpHeaderId、pbpLineIdList",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -3348,7 +3348,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -4043,7 +4043,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryOnhandQuantity（库存现有量（本体 tool_use 名 multiOnhandQuantityQuery）。过滤列：MATERIAL_CODE（可传数组=IN）/ INVENTORY_ORGANIZATION / INVENTORY_STATUS；建议 {\"INVENTORY_STATUS\":\"合格\"} 取全部合格库存后按物料+组织汇总。）、queryReservation（库存预留量，可用量 = 现有量合计 − 已预留量合计。过滤列：MATERIAL_CODE（可传数组）/ INVENTORY_ORGANIZATION；可不带过滤取全表。）、queryItemMinMaxLevel（物料最大/最小库存水位（安全库存）。过滤列：MATERIAL_CODE（可传数组）/ INVENTORY_ORGANIZATION / IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"}。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryOnhandQuantity（库存现有量（本体 tool_use 名 multiOnhandQuantityQuery）。过滤列：MATERIAL_CODE（可传数组=IN）/ INVENTORY_ORGANIZATION / INVENTORY_STATUS；建议 {\"INVENTORY_STATUS\":\"合格\"} 取全部合格库存后按物料+组织汇总。）｜入参(MultiOnhandAvailablePagingQueryDTO): unitCode、organizationCode、itemCodeList、itemVersionList、lotNumberList、storehouseCodeList、locatorCodeList、propertyTypeList 等\n- queryReservation（库存预留量，可用量 = 现有量合计 − 已预留量合计。过滤列：MATERIAL_CODE（可传数组）/ INVENTORY_ORGANIZATION；可不带过滤取全表。）｜入参(ReservationQueryDTO): unitCode、organizationCode、requirementDateFrom、requirementDateTo、itemCode、itemCodeList、storehouseCode、locatorCode 等\n- queryItemMinMaxLevel（物料最大/最小库存水位（安全库存）。过滤列：MATERIAL_CODE（可传数组）/ INVENTORY_ORGANIZATION / IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"}。）｜入参(PlanItemLevelQueryDTO): storehouseCode、organizationCode、locatorCode、enableFlag、itemCode",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -4062,7 +4062,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -4260,7 +4260,7 @@
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json",
           "operation": "createTransactionOrder"
         },
-        "description": "生成调拨申请单(createTransactionOrder)。入参：物料编码、调拨数量、调出库存组织与库点、调入库存组织与库点、需求日期、来源库存校验结论编号、经办人；出参：调拨单号、单据状态、预计到货日期。",
+        "description": "生成调拨申请单(createTransactionOrder)。入参：物料编码、调拨数量、调出库存组织与库点、调入库存组织与库点、需求日期、来源库存校验结论编号、经办人；出参：调拨单号、单据状态、预计到货日期。｜入参(OrderCreatePubDTO): lineList、unitCode、organizationCode、txnOrderTypeCode、transactionTypeCode、uniqueSequenceNumber、sourceSystemCode、sourceCode 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -4671,7 +4671,7 @@
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json",
           "operation": "createPbp"
         },
-        "description": "创建执行计划头行并写来源映射(createPbp)。入参：计划头（业务类型、计划类型、管理单元、计划期）、计划行数组（物料编码、数量、单位、加权单价、需求日期、库存组织、品类、寻源方式）、来源行映射数组（来源计划头ID、来源计划行ID、来源单据号、来源行号）；出参：PBP_HEADER_ID、PBP_NUMBER、计划行ID数组、PBP_REL_ID 数组。",
+        "description": "创建执行计划头行并写来源映射(createPbp)。入参：计划头（业务类型、计划类型、管理单元、计划期）、计划行数组（物料编码、数量、单位、加权单价、需求日期、库存组织、品类、寻源方式）、来源行映射数组（来源计划头ID、来源计划行ID、来源单据号、来源行号）；出参：PBP_HEADER_ID、PBP_NUMBER、计划行ID数组、PBP_REL_ID 数组。｜入参(PbpCreateHeaderDTO，请求体是数组): unitCode、pbpHeaderId、pbpHeaderSequence、pbpName、documentType、documentSubType、periodType、startDate 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -4951,7 +4951,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryAuditThresholdConfig（校验阈值配置（本体 tool_use 名 getAuditThresholdConfig）。过滤列：RULE_KEY / IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"} 取全部有效阈值（价格软预警/升级、查重窗口、组包跨度/重叠度），BR2-THRESH-01 不得写死。）、queryCentralCatalogConfig（集采目录（本体 tool_use 名 getCentralCatalogConfig）。过滤列：MATERIAL_CODE（可传数组）/ IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"} 取有效目录，判「应集采未集采」（BR2-CENTRAL-01）。）、queryPoLine（采购订单行（本体 tool_use 名 queryPoLine）。过滤列：ITEM_CODE（可传数组）/ MANAGEMENT_UNIT / IS_CANCELLED；用 {\"IS_CANCELLED\":\"N\"} 取全部后按 CREATION_DATE 倒序每管理单元取最近 3 条算历史均价。）、queryContract（历史采购合同做供应商与价格参考（本体 tool_use 名 getContractByQuery）。过滤列：CONTRACT_ID / ITEM_CODE / CONTRACT_STATUS；可不带过滤取全表。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryAuditThresholdConfig（校验阈值配置（本体 tool_use 名 getAuditThresholdConfig）。过滤列：RULE_KEY / IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"} 取全部有效阈值（价格软预警/升级、查重窗口、组包跨度/重叠度），BR2-THRESH-01 不得写死。）\n- queryCentralCatalogConfig（集采目录（本体 tool_use 名 getCentralCatalogConfig）。过滤列：MATERIAL_CODE（可传数组）/ IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"} 取有效目录，判「应集采未集采」（BR2-CENTRAL-01）。）\n- queryPoLine（采购订单行（本体 tool_use 名 queryPoLine）。过滤列：ITEM_CODE（可传数组）/ MANAGEMENT_UNIT / IS_CANCELLED；用 {\"IS_CANCELLED\":\"N\"} 取全部后按 CREATION_DATE 倒序每管理单元取最近 3 条算历史均价。）\n- queryContract（历史采购合同做供应商与价格参考（本体 tool_use 名 getContractByQuery）。过滤列：CONTRACT_ID / ITEM_CODE / CONTRACT_STATUS；可不带过滤取全表。）｜入参(ContractQueryOpenReqDTO): mainContractId、contractName、contractCode、contractTypes、businessTypes、contractStatuses、companyCode、companyCodes 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -4971,7 +4971,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -5515,7 +5515,7 @@
           "base_url_env": "METAERP_BASE_URL",
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。可用操作：queryAuditThresholdConfig（组包跨度阈值与交付重叠度阈值（BR2-PKG-02/03）。过滤列：RULE_KEY / IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"}。）、queryPurchaseCategory（品类主数据（本体 inputs 声明 Purchase_Category）。过滤列：CATEGORY_ID（可传数组）/ BUSINESS_TYPE；按品类业务类型判包内是否混有工程/物资/服务（BR2-PKG-01）。）。",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryAuditThresholdConfig（组包跨度阈值与交付重叠度阈值（BR2-PKG-02/03）。过滤列：RULE_KEY / IS_ENABLED；用 {\"IS_ENABLED\":\"Y\"}。）\n- queryPurchaseCategory（品类主数据（本体 inputs 声明 Purchase_Category）。过滤列：CATEGORY_ID（可传数组）/ BUSINESS_TYPE；按品类业务类型判包内是否混有工程/物资/服务（BR2-PKG-01）。）",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -5533,7 +5533,7 @@
               "type": "string"
             },
             "payload": {
-              "description": "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+              "description": "该操作的请求体。字段取自工具描述里对应操作的入参清单；管理单元与库存组织由平台自动补上，不要传。",
               "type": "object"
             }
           },
@@ -5730,7 +5730,7 @@
           "catalog_path": "models/procurement-hc-formal-v1/erp-operations.json",
           "operation": "createProcPackageLines"
         },
-        "description": "按选定方案生成采购包行(createProcPackageLines)。入参：采购包头（采购包名称、采购组编号、场景编码、集采层级、集采形式、审批流程编码）、包行数组（物料编码、管理单元、库存组织、品类、数量、需求截止日期、寻源方式、来源计划行ID、命中的SPA头ID与行ID）；出参：PROC_PACKAGE_HEADER_ID、PROC_PACKAGE_NUMBER、包行ID数组。",
+        "description": "按选定方案生成采购包行(createProcPackageLines)。入参：采购包头（采购包名称、采购组编号、场景编码、集采层级、集采形式、审批流程编码）、包行数组（物料编码、管理单元、库存组织、品类、数量、需求截止日期、寻源方式、来源计划行ID、命中的SPA头ID与行ID）；出参：PROC_PACKAGE_HEADER_ID、PROC_PACKAGE_NUMBER、包行ID数组。｜入参(ProcPackageLineOpenDTO，请求体是数组): unitCode、unitName、itemCode、itemDesc、itemVersion、categoryId、categoryConcatSections、uomCode 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",

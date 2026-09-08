@@ -84,7 +84,15 @@ const ACTION_MAP = {
   calculateExecutionDeviation: {
     kind: "prompt",
     queries: [
-      { operation: "queryStageCycleConfig", description: "按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。" },
+      {
+        operation: "queryStageCycleConfig",
+        description:
+          "按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 " +
+          "getStageCycleConfig）。**BUSINESS_TYPE 只有 物资 / 工程 / 服务 三档**——" +
+          "链路上的 business_type 若是「采购需求」这类单据类型而不是这三档之一，" +
+          "按物资取配置，不要用它去过滤，否则查回空集、倒排不出计划完成时间、" +
+          "整条链路会被误判成无偏差。",
+      },
       { operation: "queryAlertThresholdConfig", description: "取时间/进度偏差判定阈值（BR-DEV-02：阈值必须来自配置，不得写死）。" },
     ],
   },
@@ -115,7 +123,15 @@ const ACTION_MAP = {
     kind: "prompt",
     queries: [
       { operation: "queryStageCycleConfig", description: "后续节点标准周期，方案①的可压缩空间。" },
-      { operation: "queryTransferableStock", description: "定位可调库点与可调数量，方案③的调拨来源。" },
+      {
+        operation: "queryTransferableStock",
+        description:
+          "定位可调库点与可调数量，方案③的调拨来源。入参传 itemCodeList（需求物料编码列表）；" +
+          "返回的是真实库存现有量，字段为 itemCode / organizationCode / storehouseCode / " +
+          "quantity（现有量）/ availableTransQty（**可处理量，即可调数量**）。" +
+          "调拨数量取 min(availableTransQty, 需求数量)，调出库点取 storehouseCode。" +
+          "该接口不返回调拨提前期，不要编造。",
+      },
     ],
   },
   // ④断 —— 领导拍板 + 高危确认 + 计划员确认（三个人工步骤）
@@ -436,6 +452,9 @@ const STUB_TABLES = {
     },
   ],
   // 七节点标准周期：物资合计 155 天，从需求到货日期倒排。
+  // 「物品采购」是真实 ERP 采购需求上的业务类型原值，与本表的「物资」是同一档；
+  // 少了这一档，链路上的 business_type 在配置里就查不到，倒排会整体算不出来。
+  // 平台不做近似匹配（planning.backwardSchedule 查不到会直接报错），所以按原值补一份。
   cfg_stage_cycle_standard_t: [
     { CYCLE_STANDARD_ID: "CYC-WZ-1", BUSINESS_TYPE: "物资", STAGE_NODE: "立项", STAGE_SEQUENCE: 1, STANDARD_CYCLE_DAYS: 10, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
     { CYCLE_STANDARD_ID: "CYC-WZ-2", BUSINESS_TYPE: "物资", STAGE_NODE: "组包", STAGE_SEQUENCE: 2, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
@@ -444,6 +463,23 @@ const STUB_TABLES = {
     { CYCLE_STANDARD_ID: "CYC-WZ-5", BUSINESS_TYPE: "物资", STAGE_NODE: "合同", STAGE_SEQUENCE: 5, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
     { CYCLE_STANDARD_ID: "CYC-WZ-6", BUSINESS_TYPE: "物资", STAGE_NODE: "订单", STAGE_SEQUENCE: 6, STANDARD_CYCLE_DAYS: 10, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
     { CYCLE_STANDARD_ID: "CYC-WZ-7", BUSINESS_TYPE: "物资", STAGE_NODE: "到货", STAGE_SEQUENCE: 7, STANDARD_CYCLE_DAYS: 70, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    // GOODS 是采购需求行上 purchasingBasis 的原值——链路的 business_type 现在直接投影自它，
+    // 不再由模型翻译。ERP 那张需求的 businessType 是 null，此前模型每轮编一个不同的中文名
+    // （物品采购、物资……），倒排工具按名字查配置就会时灵时不灵。
+    { CYCLE_STANDARD_ID: "CYC-GOODS-1", BUSINESS_TYPE: "GOODS", STAGE_NODE: "立项", STAGE_SEQUENCE: 1, STANDARD_CYCLE_DAYS: 10, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-GOODS-2", BUSINESS_TYPE: "GOODS", STAGE_NODE: "组包", STAGE_SEQUENCE: 2, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-GOODS-3", BUSINESS_TYPE: "GOODS", STAGE_NODE: "询价", STAGE_SEQUENCE: 3, STANDARD_CYCLE_DAYS: 20, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-GOODS-4", BUSINESS_TYPE: "GOODS", STAGE_NODE: "定标", STAGE_SEQUENCE: 4, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-GOODS-5", BUSINESS_TYPE: "GOODS", STAGE_NODE: "合同", STAGE_SEQUENCE: 5, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-GOODS-6", BUSINESS_TYPE: "GOODS", STAGE_NODE: "订单", STAGE_SEQUENCE: 6, STANDARD_CYCLE_DAYS: 10, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-GOODS-7", BUSINESS_TYPE: "GOODS", STAGE_NODE: "到货", STAGE_SEQUENCE: 7, STANDARD_CYCLE_DAYS: 70, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-WPCG-1", BUSINESS_TYPE: "物品采购", STAGE_NODE: "立项", STAGE_SEQUENCE: 1, STANDARD_CYCLE_DAYS: 10, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-WPCG-2", BUSINESS_TYPE: "物品采购", STAGE_NODE: "组包", STAGE_SEQUENCE: 2, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-WPCG-3", BUSINESS_TYPE: "物品采购", STAGE_NODE: "询价", STAGE_SEQUENCE: 3, STANDARD_CYCLE_DAYS: 20, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-WPCG-4", BUSINESS_TYPE: "物品采购", STAGE_NODE: "定标", STAGE_SEQUENCE: 4, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-WPCG-5", BUSINESS_TYPE: "物品采购", STAGE_NODE: "合同", STAGE_SEQUENCE: 5, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-WPCG-6", BUSINESS_TYPE: "物品采购", STAGE_NODE: "订单", STAGE_SEQUENCE: 6, STANDARD_CYCLE_DAYS: 10, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
+    { CYCLE_STANDARD_ID: "CYC-WPCG-7", BUSINESS_TYPE: "物品采购", STAGE_NODE: "到货", STAGE_SEQUENCE: 7, STANDARD_CYCLE_DAYS: 70, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
     { CYCLE_STANDARD_ID: "CYC-GC-1", BUSINESS_TYPE: "工程", STAGE_NODE: "立项", STAGE_SEQUENCE: 1, STANDARD_CYCLE_DAYS: 15, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
     { CYCLE_STANDARD_ID: "CYC-GC-2", BUSINESS_TYPE: "工程", STAGE_NODE: "组包", STAGE_SEQUENCE: 2, STANDARD_CYCLE_DAYS: 20, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
     { CYCLE_STANDARD_ID: "CYC-GC-3", BUSINESS_TYPE: "工程", STAGE_NODE: "询价", STAGE_SEQUENCE: 3, STANDARD_CYCLE_DAYS: 25, MAINTAINER: "系统管理员", EFFECTIVE_DATE: "2026-01-01" },
@@ -514,26 +550,48 @@ const PROMPT_PREAMBLE = {
     "",
     "【取数步骤（在产出 JSON 之前必须先按此执行）】",
     "",
-    "第 0 步 · 定范围：看触发事件负载有没有 plan_id 或 plan_no。有就**只处理这一个计划**——",
-    "调用 queryOpenPbpHeader 时必须带过滤条件 {\"PBP_HEADER_ID\": \"<该值>\"}，不得拉全量再自己筛。",
-    "没有才按 BR-COV-01 处理全部状态=已批准且在途的计划。",
+    "第 0 步 · 规则与预算（**先读完再动手**）：",
+    "1）管理单元与库存组织由平台自动补进每个查询（unitCode / organizationCode），你不要传。",
+    "2）入参一律用 metaERP 的小驼峰命名（prNumberList、sourceLineIdList、rfxHeaderId），",
+    "   字段名照抄工具描述里该操作的入参清单，不要用本体里的下划线写法。",
+    "3）**本轮只处理平台锁定的那一条采购需求**：queryPr 不带过滤条件直接调用，平台会把",
+    "   单号强制补上，你传什么过滤条件都会被覆盖。",
+    "   **绝对不要自己编任何编码**——单号、物料编码、链路 ID 一律取 ERP 返回值里的原值。",
+    "   自查特征：真实采购需求号是 18 位纯数字（如 100020260902000001），真实物料编码是",
+    "   8 位纯数字（如 10000007）。凡是形如 PR-2026-xxxxx、PBP-2026-xxxx、ITEM-2026-xxx",
+    "   的都是你编的。编出来的编码会让下游按它去查库存、查订单，查回空集，整条流程建立在",
+    "   虚构数据上却看不出错——这比直接报错危险得多。",
+    "4）**同一段的多条 ID 必须在同一轮内并发发出**：例如 7 张询价单的定标查询是 7 次调用、",
+    "   但只应占 1 轮，不要一轮发一条。整条链路是串行的（立项→组包→询价→定标→…），",
+    "   轮次预算很紧；一轮发一条会在走完链路前把轮次耗光，整步判失败。",
+    "5）整个运行的 ERP 调用另有次数上限，超了会直接失败——扇出失控比查得不全更糟。",
     "",
-    "第 1 步 · 寻源段（7 个调用，必发，**同一轮一次性并发全部发出**，不要一个一个串行）：",
-    "queryOpenPbpHeader、queryOpenPbpLine、queryAllPbpLinePage、queryPr、",
-    "queryProcPackageLineExecuteMode、queryRfxList、queryAwardList",
-    "拿到结果后判定每条链路的 立项 / 组包 / 询价 / 定标 四个节点是否完成。",
+    "第 1 步 · 链路根 = 采购需求（queryPr）：",
+    "**本场景的链路从采购需求开始，不是从采购业务计划开始**——不要调 queryOpenPbpHeader /",
+    "queryOpenPbpLine / queryAllPbpLinePage，本演示环境里没有对应的采购业务计划数据，",
+    "调了只会拿到空集然后把整条链路判成不存在。",
+    "queryPr 返回的每一条 prLineList 行就是一条采购执行链路：",
+    "- chain_id 用 `<prNumber>-<prLineId>`，物料取行的 itemCode、数量取 quantity；",
+    "- **需求到货日期取该行的 needByDate**，它是全链路倒排的基准；",
+    "- 立项节点：prHeaderStatus=APPROVED 时视为已完成，actual_finish_date 取头的 submitDate。",
     "",
-    "第 2 步 · 早停判据：链路是严格串行的——价格协议、合同、订单、验收全部是定标的下游，",
-    "没有定标就一定没有它们。**只有当范围内至少一条链路的定标节点已完成**",
-    "（queryAwardList 查到其询价单对应的定标行且有 AWARD_DATE）时，才允许进入第 3 步。",
-    "若范围内所有链路都停在定标或更早：**立即停止取数，禁止发出执行段那 6 个调用中的任何一个**，",
-    "把停滞节点及其之后的所有节点写成 stage_status='未开始'、actual_finish_date=null，",
-    "该链路的 stalled_at 填停滞节点名，query_rounds_used 填 1，然后直接产出 JSON。",
+    "第 2 步 · 顺着 ID 往下串（拿到上一段的 ID 才能发下一段，因此分轮）：",
+    "- 组包：queryProcPackageLineExecuteMode，按第 1 步的 PR 行 ID；",
+    "- 询价：queryRfxList，按上一步拿到的采购包 ID；",
+    "- 定标：queryAwardList，按上一步拿到的询价单 ID（该接口一次只收一个 rfxHeaderId，",
+    "  询价单多于 3 条时只取最近的 3 条，不要全部展开）。",
     "",
-    "第 3 步 · 执行段（6 个调用，仅在第 2 步放行时发，同样一轮并发全发）：",
-    "querySpaList、queryContract、queryPoHeader、queryPoLineShipment、",
-    "queryAcceptHeader、queryAcceptTransaction",
-    "此时 query_rounds_used 填 2。",
+    "第 3 步 · **链路不完整不等于没有偏差——这是本步最重要的一条**：",
+    "某一段查不到数据，只说明该节点尚未开始，不说明链路不存在。**任何情况下都不要返回空的",
+    "procurement_chain**：只要第 1 步拿到了需求行，就必须为每一行输出一条链路，把查不到的",
+    "节点写成 stage_status='未开始'、actual_finish_date=null，并在 stalled_at 填第一个",
+    "未开始的节点名。偏差判定只需要「需求到货日期 + 已完成节点的实际时间」，缺下游节点照样算得出来。",
+    "",
+    "第 4 步 · 早停：链路是严格串行的——价格协议、合同、订单、验收都是定标的下游。",
+    "只有当至少一条链路的定标节点已完成（queryAwardList 查到对应定标行且有 AWARD_DATE）时，",
+    "才发执行段的 6 个调用：querySpaList、queryContract、queryPoHeader、",
+    "queryPoLineShipment、queryAcceptHeader、queryAcceptTransaction。",
+    "都停在定标或更早就跳过这一段，按第 3 步产出 JSON。",
   ].join("\n"),
 };
 
@@ -810,6 +868,51 @@ const sourceDir = path.resolve(ROOT, values.source);
 const outDir = path.resolve(ROOT, values.out);
 const domainDir = path.join(outDir, "studio-models", NAMESPACE, DOMAIN);
 
+/**
+ * Fields the scan event needs before it can address a real ERP.
+ *
+ * `chain_scope` already says「全集团或指定单位」—— but nothing carries WHICH
+ * unit, and every real metaERP query rejects a request without one
+ * (`字段:管理单元编码不能为空`). The mock never surfaced this because it filters
+ * on whatever it is handed. See docs/hc-procurement-ontology-corrections.md C-10.
+ */
+const SCAN_SCOPE_FIELDS = {
+  DAILY_DEVIATION_SCAN_SCHEDULED: [
+    {
+      name: "unit_code",
+      type: "String",
+      required: false,
+      description: "管理单元编码；chain_scope=指定单位时必填，metaERP 每个查询都要它。",
+    },
+    {
+      name: "organization_code",
+      type: "String",
+      required: false,
+      description: "库存组织编码；库存现有量/可调度库存查询要它。",
+    },
+  ],
+};
+
+/** Append the missing scope fields, leaving every authored field untouched. */
+function withScanScopeFields(events) {
+  return events.map((event) => {
+    const extra = SCAN_SCOPE_FIELDS[event.name];
+    if (!extra) return event;
+    const existing = new Set(
+      (event.payload?.event_data ?? []).map((field) => field.name),
+    );
+    const added = extra.filter((field) => !existing.has(field.name));
+    if (!added.length) return event;
+    return {
+      ...event,
+      payload: {
+        ...event.payload,
+        event_data: [...(event.payload?.event_data ?? []), ...added],
+      },
+    };
+  });
+}
+
 const rawActionsFile = readFamily(sourceDir, "actions");
 const rawEvents = readFamily(sourceDir, "events");
 const rawObjects = readFamily(sourceDir, "objects");
@@ -829,7 +932,7 @@ rmSync(outDir, { recursive: true, force: true });
 writeJson(path.join(domainDir, "actions_v0_1_004.json"), actions);
 writeJson(path.join(domainDir, "events_v0_1_004.json"), {
   metadata: rawEvents.metadata,
-  events: rawEvents.events,
+  events: withScanScopeFields(rawEvents.events),
 });
 writeJson(path.join(domainDir, "objects_v0_1_004.json"), {
   metadata: rawObjects.metadata,

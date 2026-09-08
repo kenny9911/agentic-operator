@@ -237,7 +237,7 @@ function createDemandTransfer(store: MockErpStore, payload: Row): EffectResult &
  * shaped like the stub table's columns; MODIFY ops flip STATUS on the matched
  * row. Every op's result is journaled by the route handler.
  */
-export const WRITE_EFFECTS: Record<string, Effect> = {
+const BASE_WRITE_EFFECTS: Record<string, Effect> = {
   // ---- inventory -----------------------------------------------------------
   lockInventoryLot: (store, payload) => {
     const lotId = required(payload, "LOT_ID", "lot_id");
@@ -1582,4 +1582,253 @@ export const WRITE_EFFECTS: Record<string, Effect> = {
       },
     };
   },
+};
+
+/**
+ * 场景二「数字化员工」对这六个操作的实现。
+ *
+ * 与 BASE_WRITE_EFFECTS 里的同名条目语义不同：两个演示域各自把同一批操作名写进了
+ * 自己的 transform-maps，而写效果表是全域共用的一张。谁被覆盖，谁的租户就整条链路
+ * 失效，所以两套实现都原样保留，由 WRITE_EFFECTS 按包分派。
+ */
+const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
+  /** 场景二的调拨建单：上游版本在 option_type 缺失时改走 createDemandTransfer，
+   *  那条路要 MATERIAL_CODE，而数字化员工发的是另一套字段。 */
+  createTransactionOrder: (store, payload) => {
+    const optionType = String(pick(payload, "option_type") ?? "");
+    if (optionType !== "执行调拨") {
+      return { ok: true, id: "SKIPPED", applied: false, skipped_reason: optionType };
+    }
+    const source = (pick(payload, "transfer_source") ?? payload) as Row;
+    const id = makeId("TRO");
+    const leadDays = num(pick(source, "TRANSFER_LEAD_DAYS", "transfer_lead_days")) ?? 7;
+    const expected = new Date(Date.now() + leadDays * 86_400_000).toISOString().slice(0, 10);
+    const row: Row = {
+      TRANSFER_REQUEST_ID: id,
+      TRANSFER_NO: id,
+      OPTION_ID: pick(payload, "option_id") ?? "",
+      CHAIN_ID: pick(payload, "chain_id") ?? "",
+      MATERIAL_CODE: required(source, "ITEM_CODE", "item_code", "material_code"),
+      TRANSFER_QUANTITY: num(required(source, "TRANSFER_QUANTITY", "transfer_quantity")) ?? 0,
+      SOURCE_WAREHOUSE: required(source, "WAREHOUSE_ID", "warehouse_id", "source_warehouse"),
+      TARGET_WAREHOUSE: pick(payload, "target_warehouse") ?? "需求单位库",
+      REQUEST_STATUS: "已提交",
+      EXPECTED_ARRIVAL_DATE: expected,
+      CREATED_AT: new Date().toISOString(),
+    };
+    store.rows("inv_transaction_order_t").push(row);
+    return {
+      ok: true,
+      id,
+      row,
+      applied: true,
+      transfer_request_id: id,
+      transfer_no: id,
+      option_id: row["OPTION_ID"],
+      chain_id: row["CHAIN_ID"],
+      transfer_quantity: row["TRANSFER_QUANTITY"],
+      expected_arrival_date: expected,
+    };
+  },
+
+  /** R2-01 拆分 — 计划员确认后把一条需求拆成独立计划行并置拆分标识。 */
+  splitDemandLine: (store, payload) => {
+    const lineId = String(required(payload, "PLAN_LINE_ID", "plan_line_id"));
+    const source = findRow(store, "ss_pbp_line_t", "PBP_LINE_ID", lineId);
+    const id = makeId("PBPL");
+    // The original keeps its identity and is flagged; the split half is a new
+    // line, so the plan still reconciles to the same demand.
+    source["SPLIT_FLAG"] = true;
+    source["SPLIT_AT"] = new Date().toISOString();
+    const row: Row = {
+      ...source,
+      PBP_LINE_ID: id,
+      SPLIT_FROM_LINE_ID: lineId,
+      SPLIT_FLAG: true,
+      SPLIT_REASON: String(pick(payload, "split_reason") ?? "需求日期差超限"),
+      STATUS: "已批准",
+    };
+    store.rows("ss_pbp_line_t").push(row);
+    return {
+      ok: true,
+      id,
+      row,
+      applied: true,
+      plan_line_id: id,
+      split_from_line_id: lineId,
+      split_flag: true,
+    };
+  },
+
+  /** R2-03 生成 — 倒排通过后建采购执行计划草稿。 */
+  createPbp: (store, payload) => {
+    const id = makeId("PBP");
+    const row: Row = {
+      PBP_HEADER_ID: id,
+      PLAN_NO: id,
+      BUSINESS_TYPE: String(pick(payload, "business_type") ?? "物资"),
+      PLAN_TYPE: "执行计划",
+      STATUS: "草稿",
+      SOURCE_PLAN_ID: String(pick(payload, "plan_id", "source_plan_id") ?? ""),
+      DEMAND_ORGANIZATION: String(pick(payload, "demand_organization") ?? ""),
+      PLANNER: String(pick(payload, "planner") ?? ""),
+      ANNUAL_PLAN_FLAG: true,
+      CREATED_AT: new Date().toISOString(),
+    };
+    store.rows("ss_pbp_header_t").push(row);
+    return {
+      ok: true,
+      id,
+      row,
+      applied: true,
+      plan_id: id,
+      plan_no: id,
+      status: row["STATUS"],
+    };
+  },
+
+  /** R2-05 标注 — 把组包方案落成采购包行，带框架协议/集采标识。 */
+  createProcPackageLines: (store, payload) => {
+    const schemeId = String(
+      required(payload, "PACKAGE_SCHEME_ID", "package_scheme_id"),
+    );
+    const headerId = makeId("PKG");
+    const header: Row = {
+      PACKAGE_ID: headerId,
+      PACKAGE_NO: headerId,
+      PACKAGE_SCHEME_ID: schemeId,
+      PACKAGE_NAME: String(pick(payload, "package_name") ?? headerId),
+      CATEGORY_CODE: String(pick(payload, "category_code") ?? ""),
+      STATUS: "已组包",
+      CREATED_AT: new Date().toISOString(),
+    };
+    store.rows("ss_proc_package_header_t").push(header);
+
+    // The scheme names its member plan lines; one package line per member.
+    const members = pick(payload, "member_plan_line_ids", "plan_line_ids");
+    const memberIds = Array.isArray(members)
+      ? members.map((value) => String(value))
+      : String(members ?? "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+    const rows: Row[] = memberIds.map((planLineId, index) => {
+      const line: Row = {
+        PACKAGE_LINE_ID: `${headerId}-${String(index + 1).padStart(2, "0")}`,
+        PACKAGE_ID: headerId,
+        PBP_LINE_ID: planLineId,
+        FRAME_AGREEMENT_NO: String(pick(payload, "frame_agreement_no") ?? ""),
+        CENTRAL_PURCHASE_FLAG: pick(payload, "central_purchase_flag") === true,
+        EXECUTE_MODE: String(pick(payload, "execute_mode") ?? "公开询价"),
+      };
+      store.rows("ss_proc_package_line_t").push(line);
+      return line;
+    });
+
+    return {
+      ok: true,
+      id: headerId,
+      row: header,
+      rows,
+      applied: true,
+      package_id: headerId,
+      package_scheme_id: schemeId,
+      package_line_count: rows.length,
+    };
+  },
+
+  /** R2-04 / R2-05 — 派一条数字员工待办给指定角色。 */
+  pushTask: (store, payload) => {
+    const id = makeId("DWT");
+    const row: Row = {
+      TASK_ID: id,
+      TASK_TYPE: String(required(payload, "TASK_TYPE", "task_type")),
+      TITLE: String(pick(payload, "title") ?? ""),
+      ASSIGNEE_ROLE: String(pick(payload, "assignee_role", "awaiting_role") ?? "计划员"),
+      RELATED_OBJECT_ID: String(pick(payload, "related_object_id", "plan_id") ?? ""),
+      TASK_STATUS: "待处理",
+      CREATED_AT: new Date().toISOString(),
+    };
+    store.rows("dw_employee_task_t").push(row);
+    return {
+      ok: true,
+      id,
+      row,
+      applied: true,
+      task_id: id,
+      task_status: row["TASK_STATUS"],
+    };
+  },
+
+  /** R2-06 — 数字员工作业留痕；无留痕不予提交审批。 */
+  writeOperationLog: (store, payload) => {
+    const id = makeId("DWL");
+    const row: Row = {
+      OPERATION_LOG_ID: id,
+      PLAN_ID: String(required(payload, "PLAN_ID", "plan_id")),
+      OPERATION_TYPE: String(pick(payload, "operation_type") ?? "计划与组包确认"),
+      OPERATOR: String(pick(payload, "confirmed_by", "operator") ?? ""),
+      DECISION: String(pick(payload, "decision") ?? ""),
+      REMARK: String(pick(payload, "remark") ?? ""),
+      OCCURRED_AT: new Date().toISOString(),
+    };
+    store.rows("dw_operation_log_t").push(row);
+    return {
+      ok: true,
+      id,
+      row,
+      applied: true,
+      operation_log_id: id,
+      plan_id: row["PLAN_ID"],
+    };
+  },
+
+  /** R2-06 — 把确认后的计划交回 metaERP 审批流。 */
+  submitApproval: (store, payload) => {
+    const planId = String(required(payload, "PLAN_ID", "plan_id"));
+    const row = findRow(store, "ss_pbp_header_t", "PBP_HEADER_ID", planId);
+    const submittedAt = new Date().toISOString();
+    row["STATUS"] = "审批中";
+    row["SUBMITTED_AT"] = submittedAt;
+    row["SUBMITTED_BY"] = String(pick(payload, "confirmed_by", "operator") ?? "");
+    return {
+      ok: true,
+      id: planId,
+      row,
+      applied: true,
+      submitted: true,
+      plan_id: planId,
+      status: row["STATUS"],
+      submitted_at: submittedAt,
+    };
+  },
+};
+
+/**
+ * 判定这个 mock 进程正在服务哪个包。
+ *
+ * `de_demand_merge_suggestion_t` 只出现在 procurement-hc-formal 的数据目录里，
+ * 而一个 mock 进程只加载一个包（MOCK_ERP_DATA_DIR），所以这张表在不在，就等于
+ * 「我是不是 Formal 域」。用表存在性而不是 payload 形状判别：形状是调用方给的，
+ * 写错会静默跑到另一套语义上去，而少一张表是启动即确定的事实。
+ */
+function isFormalPackage(store: MockErpStore): boolean {
+  return store.tables.has("de_demand_merge_suggestion_t");
+}
+
+export const WRITE_EFFECTS: Record<string, Effect> = {
+  ...BASE_WRITE_EFFECTS,
+  ...Object.fromEntries(
+    Object.entries(DIGITAL_WORKER_EFFECTS).map(([name, digitalWorker]) => {
+      const formal = BASE_WRITE_EFFECTS[name];
+      if (!formal) {
+        throw new Error(`effects: ${name} 只有数字化员工一套实现，分派表与基表不同步`);
+      }
+      return [
+        name,
+        ((store, payload) =>
+          (isFormalPackage(store) ? formal : digitalWorker)(store, payload)) as Effect,
+      ];
+    }),
+  ),
 };

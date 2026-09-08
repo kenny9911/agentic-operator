@@ -1,0 +1,60 @@
+{
+  "rows": [
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-01",
+      "STAGE_NODE": "立项",
+      "STAGE_SEQUENCE": 1,
+      "STANDARD_CYCLE_DAYS": 10
+    },
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-02",
+      "STAGE_NODE": "组包",
+      "STAGE_SEQUENCE": 2,
+      "STANDARD_CYCLE_DAYS": 15
+    },
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-03",
+      "STAGE_NODE": "分配",
+      "STAGE_SEQUENCE": 3,
+      "STANDARD_CYCLE_DAYS": 5
+    },
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-04",
+      "STAGE_NODE": "询价",
+      "STAGE_SEQUENCE": 4,
+      "STANDARD_CYCLE_DAYS": 20
+    },
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-05",
+      "STAGE_NODE": "应答",
+      "STAGE_SEQUENCE": 5,
+      "STANDARD_CYCLE_DAYS": 10
+    },
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-06",
+      "STAGE_NODE": "评标",
+      "STAGE_SEQUENCE": 6,
+      "STANDARD_CYCLE_DAYS": 7
+    },
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-07",
+      "STAGE_NODE": "定标",
+      "STAGE_SEQUENCE": 7,
+      "STANDARD_CYCLE_DAYS": 15
+    },
+    {
+      "BUSINESS_TYPE": "物资",
+      "CYCLE_STANDARD_ID": "CYC-MAT-08",
+      "STAGE_NODE": "合同签订",
+      "STAGE_SEQUENCE": 8,
+      "STANDARD_CYCLE_DAYS": 15
+    }
+  ]
+}

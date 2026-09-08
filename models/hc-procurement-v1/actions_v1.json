@@ -77,7 +77,7 @@
       "Agent"
     ],
     "category": "链路采集(查)",
-    "description": "【查】按日定时或单据状态变更触发，拉取全集团在途采购计划及其申请/组包/询价/定标/合同/订单/验收全链路单据，逐节点回写实际完成状态与时间，形成一单一档的全链路进度视图：在途单 100% 覆盖、进度零手工录入(R1-01)。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 0 步 · 定范围：看触发事件负载有没有 plan_id 或 plan_no。有就**只处理这一个计划**——\n调用 queryOpenPbpHeader 时必须带过滤条件 {\"PBP_HEADER_ID\": \"<该值>\"}，不得拉全量再自己筛。\n没有才按 BR-COV-01 处理全部状态=已批准且在途的计划。\n\n第 1 步 · 寻源段（7 个调用，必发，**同一轮一次性并发全部发出**，不要一个一个串行）：\nqueryOpenPbpHeader、queryOpenPbpLine、queryAllPbpLinePage、queryPr、\nqueryProcPackageLineExecuteMode、queryRfxList、queryAwardList\n拿到结果后判定每条链路的 立项 / 组包 / 询价 / 定标 四个节点是否完成。\n\n第 2 步 · 早停判据：链路是严格串行的——价格协议、合同、订单、验收全部是定标的下游，\n没有定标就一定没有它们。**只有当范围内至少一条链路的定标节点已完成**\n（queryAwardList 查到其询价单对应的定标行且有 AWARD_DATE）时，才允许进入第 3 步。\n若范围内所有链路都停在定标或更早：**立即停止取数，禁止发出执行段那 6 个调用中的任何一个**，\n把停滞节点及其之后的所有节点写成 stage_status='未开始'、actual_finish_date=null，\n该链路的 stalled_at 填停滞节点名，query_rounds_used 填 1，然后直接产出 JSON。\n\n第 3 步 · 执行段（6 个调用，仅在第 2 步放行时发，同样一轮并发全发）：\nquerySpaList、queryContract、queryPoHeader、queryPoLineShipment、\nqueryAcceptHeader、queryAcceptTransaction\n此时 query_rounds_used 填 2。",
+    "description": "【查】按日定时或单据状态变更触发，拉取全集团在途采购计划及其申请/组包/询价/定标/合同/订单/验收全链路单据，逐节点回写实际完成状态与时间，形成一单一档的全链路进度视图：在途单 100% 覆盖、进度零手工录入(R1-01)。\n\n【取数步骤（在产出 JSON 之前必须先按此执行）】\n\n第 0 步 · 规则与预算（**先读完再动手**）：\n1）管理单元与库存组织由平台自动补进每个查询（unitCode / organizationCode），你不要传。\n2）入参一律用 metaERP 的小驼峰命名（prNumberList、sourceLineIdList、rfxHeaderId），\n   字段名照抄工具描述里该操作的入参清单，不要用本体里的下划线写法。\n3）**本轮只处理平台锁定的那一条采购需求**：queryPr 不带过滤条件直接调用，平台会把\n   单号强制补上，你传什么过滤条件都会被覆盖。\n   **绝对不要自己编任何编码**——单号、物料编码、链路 ID 一律取 ERP 返回值里的原值。\n   自查特征：真实采购需求号是 18 位纯数字（如 100020260902000001），真实物料编码是\n   8 位纯数字（如 10000007）。凡是形如 PR-2026-xxxxx、PBP-2026-xxxx、ITEM-2026-xxx\n   的都是你编的。编出来的编码会让下游按它去查库存、查订单，查回空集，整条流程建立在\n   虚构数据上却看不出错——这比直接报错危险得多。\n4）**同一段的多条 ID 必须在同一轮内并发发出**：例如 7 张询价单的定标查询是 7 次调用、\n   但只应占 1 轮，不要一轮发一条。整条链路是串行的（立项→组包→询价→定标→…），\n   轮次预算很紧；一轮发一条会在走完链路前把轮次耗光，整步判失败。\n5）整个运行的 ERP 调用另有次数上限，超了会直接失败——扇出失控比查得不全更糟。\n\n第 1 步 · 链路根 = 采购需求（queryPr）：\n**本场景的链路从采购需求开始，不是从采购业务计划开始**——不要调 queryOpenPbpHeader /\nqueryOpenPbpLine / queryAllPbpLinePage，本演示环境里没有对应的采购业务计划数据，\n调了只会拿到空集然后把整条链路判成不存在。\nqueryPr 返回的每一条 prLineList 行就是一条采购执行链路：\n- chain_id 用 `<prNumber>-<prLineId>`，物料取行的 itemCode、数量取 quantity；\n- **需求到货日期取该行的 needByDate**，它是全链路倒排的基准；\n- 立项节点：prHeaderStatus=APPROVED 时视为已完成，actual_finish_date 取头的 submitDate。\n\n第 2 步 · 顺着 ID 往下串（拿到上一段的 ID 才能发下一段，因此分轮）：\n- 组包：queryProcPackageLineExecuteMode，按第 1 步的 PR 行 ID；\n- 询价：queryRfxList，按上一步拿到的采购包 ID；\n- 定标：queryAwardList，按上一步拿到的询价单 ID（该接口一次只收一个 rfxHeaderId，\n  询价单多于 3 条时只取最近的 3 条，不要全部展开）。\n\n第 3 步 · **链路不完整不等于没有偏差——这是本步最重要的一条**：\n某一段查不到数据，只说明该节点尚未开始，不说明链路不存在。**任何情况下都不要返回空的\nprocurement_chain**：只要第 1 步拿到了需求行，就必须为每一行输出一条链路，把查不到的\n节点写成 stage_status='未开始'、actual_finish_date=null，并在 stalled_at 填第一个\n未开始的节点名。偏差判定只需要「需求到货日期 + 已完成节点的实际时间」，缺下游节点照样算得出来。\n\n第 4 步 · 早停：链路是严格串行的——价格协议、合同、订单、验收都是定标的下游。\n只有当至少一条链路的定标节点已完成（queryAwardList 查到对应定标行且有 AWARD_DATE）时，\n才发执行段的 6 个调用：querySpaList、queryContract、queryPoHeader、\nqueryPoLineShipment、queryAcceptHeader、queryAcceptTransaction。\n都停在定标或更早就跳过这一段，按第 3 步产出 JSON。",
     "id": "collectChainExecutionData",
     "implementation": {
       "executable": true,
@@ -564,7 +564,7 @@
       ],
       "external_calls": [
         {
-          "description": "按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。",
+          "description": "按业务类型取七个节点的标准周期（BR-PLAN-01 的配置来源；本体 tool_use 名 getStageCycleConfig）。**BUSINESS_TYPE 只有 物资 / 工程 / 服务 三档**——链路上的 business_type 若是「采购需求」这类单据类型而不是这三档之一，按物资取配置，不要用它去过滤，否则查回空集、倒排不出计划完成时间、整条链路会被误判成无偏差。",
           "endpoint": "/metaerp/openapi/v1/queryStageCycleConfig",
           "method": "POST",
           "system": "metaERP"
@@ -1488,7 +1488,7 @@
           "system": "metaERP"
         },
         {
-          "description": "定位可调库点与可调数量，方案③的调拨来源。",
+          "description": "定位可调库点与可调数量，方案③的调拨来源。入参传 itemCodeList（需求物料编码列表）；返回的是真实库存现有量，字段为 itemCode / organizationCode / storehouseCode / quantity（现有量）/ availableTransQty（**可处理量，即可调数量**）。调拨数量取 min(availableTransQty, 需求数量)，调出库点取 storehouseCode。该接口不返回调拨提前期，不要编造。",
           "endpoint": "/metaerp/openapi/v1/queryTransferableStock",
           "method": "POST",
           "system": "metaERP"

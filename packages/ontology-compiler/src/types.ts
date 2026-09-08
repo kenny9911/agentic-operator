@@ -199,6 +199,22 @@ export interface OverlayRuleGate {
 export interface OverlayManualStep {
   awaiting_role?: string;
   form_schema?: Record<string, unknown>;
+  /**
+   * Precondition for surfacing this manual step at all. The runtime evaluates
+   * an action-level `condition` as that action's precondition *before* the
+   * manual task is created, so a false condition means no operator ever sees
+   * the task (see register.ts "A condition authored directly on an ordinary
+   * action is that action's precondition").
+   *
+   * A conditional manual step is OPTIONAL: it neither gates nor poisons the
+   * steps after it. Without this, `depends_on` would propagate its skip to the
+   * ERP write (any skipped dependency skips the dependent), so gating an
+   * optional follow-up question would silently kill the main path.
+   *
+   * Canonical case: a "rejection reason" step that must only be asked when the
+   * preceding approve/reject gate actually came back rejected.
+   */
+  condition?: string;
   /** Typed task class surfaced to the operator. Defaults to the ontology
    * manual-step name, which is exactly what register.ts already falls back to
    * (`action.task_type ?? action.name`), so the default changes no behaviour —
@@ -208,7 +224,10 @@ export interface OverlayManualStep {
 }
 
 export type OverlayToolArgumentSource =
-  | { from: string; required?: boolean }
+  /** `with` merges per-action constants over the resolved object — see the
+   * runtime's ToolArgumentSource for why the action, not the LLM or the
+   * operator, owns an operation's discriminator fields. */
+  | { from: string; required?: boolean; with?: Record<string, unknown> }
   | { const: unknown };
 
 /** One overlay-granted extra tool for a compiled agent. Only names with a
@@ -248,6 +267,19 @@ export interface CompilerOverlay {
   submission_gates?: Record<string, string>;
   /** actionId → ontology manual-step name → form schema / awaiting role. */
   manual_steps?: Record<string, Record<string, OverlayManualStep>>;
+  /**
+   * eventName → field → the value 「加载示例」 should offer for it.
+   *
+   * The run console derives a payload from the input schema, which can produce
+   * something well-formed but fictional — and against a real ERP a fictional
+   * document number finds nothing, so the run dies at the first query with an
+   * empty result rather than a clear error. Authoring the example lets the
+   * sample carry identifiers that actually exist in the target environment.
+   *
+   * Only the example is authored; the field, its type and whether it is
+   * required still come from the ontology.
+   */
+  input_examples?: Record<string, Record<string, unknown>>;
   /** actionId → tool_arguments template for the ERP write step. */
   tool_arguments?: Record<string, Record<string, OverlayToolArgumentSource>>;
   /** actionId → extra prompt output-contract fields (name → description). */
@@ -317,7 +349,8 @@ export type CompiledErrorPolicyRule =
 // ── compiled output ───────────────────────────────────────────────────────────
 
 /** Reviewed execution policy — must byte-match the global registry entry for
- * the named tool (metaerp.invoke and ontology.query respectively). */
+ * the named tool (metaerp.invoke, ontology.query, and the pure compute tools
+ * control.fail / planning.backwardSchedule / records.project). */
 export type CompiledExecutionPolicy =
   | {
       operation: "read_write";
@@ -330,7 +363,8 @@ export type CompiledExecutionPolicy =
       sandbox_policy: "live_external";
     }
   | {
-      /** control.fail — pure, no I/O, no effect. */
+      /** control.fail / planning.backwardSchedule / records.project
+       *  — pure, no I/O, no effect. */
       operation: "compute";
       effect_scope: "none";
       sandbox_policy: "pure";
@@ -393,6 +427,10 @@ export interface AgentInputPort {
   /** JSON Schema fragment — carries `format`/`examples` so the run console
    *  can generate a usable default rather than a placeholder. */
   schema: Record<string, unknown>;
+  /** Authored sample value. Beats both the schema generator and `default` in
+   *  the run console, which is how 「加载示例」 offers an identifier that
+   *  actually exists in the target environment. See `input_examples`. */
+  example?: unknown;
 }
 
 export interface CompiledAgent {

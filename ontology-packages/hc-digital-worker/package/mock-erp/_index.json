@@ -1,0 +1,173 @@
+{
+  "base_path": "/metaerp/openapi/v1",
+  "endpoints": [
+    {
+      "entity": "cfg_audit_threshold_t",
+      "file": "cfg_audit_threshold_t.json",
+      "object_id": "Audit_Threshold_Setting",
+      "operation": "queryAuditThresholdConfig"
+    },
+    {
+      "entity": "dw_backward_schedule_plan_t",
+      "file": "dw_backward_schedule_plan_t.json",
+      "object_id": "Backward_Schedule_Plan",
+      "operation": "queryBackwardSchedulePlans"
+    },
+    {
+      "entity": "dw_backward_schedule_stage_t",
+      "file": "dw_backward_schedule_stage_t.json",
+      "object_id": "Backward_Schedule_Stage",
+      "operation": "queryBackwardScheduleStages"
+    },
+    {
+      "entity": "cfg_central_catalog_t",
+      "file": "cfg_central_catalog_t.json",
+      "object_id": "Central_Purchase_Catalog",
+      "operation": "queryCentralCatalogConfig"
+    },
+    {
+      "entity": "clm_contract_t",
+      "file": "clm_contract_t.json",
+      "object_id": "Purchase_Contract",
+      "operation": "queryContract"
+    },
+    {
+      "entity": "dw_demand_merge_suggestion_t",
+      "file": "dw_demand_merge_suggestion_t.json",
+      "object_id": "Demand_Merge_Suggestion",
+      "operation": "queryDemandMergeSuggestions"
+    },
+    {
+      "entity": "dw_employee_task_t",
+      "file": "dw_employee_task_t.json",
+      "object_id": "Digital_Employee_Task",
+      "operation": "queryEmployeeTasks"
+    },
+    {
+      "entity": "inv_min_max_level_t",
+      "file": "inv_min_max_level_t.json",
+      "object_id": "Inventory_MinMax_Level",
+      "operation": "queryItemMinMaxLevel"
+    },
+    {
+      "entity": "inv_onhand_balance_t",
+      "file": "inv_onhand_balance_t.json",
+      "object_id": "Inventory_Onhand_Balance",
+      "operation": "queryOnhandQuantity"
+    },
+    {
+      "entity": "dw_operation_log_t",
+      "file": "dw_operation_log_t.json",
+      "object_id": "Digital_Employee_Operation_Log",
+      "operation": "queryOperationLogs"
+    },
+    {
+      "entity": "dw_package_scheme_t",
+      "file": "dw_package_scheme_t.json",
+      "object_id": "Package_Scheme",
+      "operation": "queryPackageSchemes"
+    },
+    {
+      "entity": "dw_packaging_finding_t",
+      "file": "dw_packaging_finding_t.json",
+      "object_id": "Packaging_Compliance_Finding",
+      "operation": "queryPackagingFindings"
+    },
+    {
+      "entity": "ss_pbp_header_t",
+      "file": "ss_pbp_header_t.json",
+      "object_id": "Procurement_Plan",
+      "operation": "queryPbpHeader"
+    },
+    {
+      "entity": "ss_pbp_line_t",
+      "file": "ss_pbp_line_t.json",
+      "object_id": "Procurement_Plan_Line",
+      "operation": "queryPbpLine"
+    },
+    {
+      "entity": "dw_plan_audit_finding_t",
+      "file": "dw_plan_audit_finding_t.json",
+      "object_id": "Plan_Audit_Finding",
+      "operation": "queryPlanAuditFindings"
+    },
+    {
+      "entity": "dw_plan_audit_opinion_t",
+      "file": "dw_plan_audit_opinion_t.json",
+      "object_id": "Plan_Audit_Opinion",
+      "operation": "queryPlanAuditOpinions"
+    },
+    {
+      "entity": "po_header_t",
+      "file": "po_header_t.json",
+      "object_id": "Purchase_Order",
+      "operation": "queryPoHeader"
+    },
+    {
+      "entity": "po_line_t",
+      "file": "po_line_t.json",
+      "object_id": "po_line_t",
+      "operation": "queryPoLine"
+    },
+    {
+      "entity": "pr_header_t",
+      "file": "pr_header_t.json",
+      "object_id": "Purchase_Requisition",
+      "operation": "queryPr"
+    },
+    {
+      "entity": "ss_proc_package_header_t",
+      "file": "ss_proc_package_header_t.json",
+      "object_id": "Sourcing_Package",
+      "operation": "queryProcPackageHeader"
+    },
+    {
+      "entity": "ss_proc_package_line_t",
+      "file": "ss_proc_package_line_t.json",
+      "object_id": "Sourcing_Package_Line",
+      "operation": "queryProcPackageLine"
+    },
+    {
+      "entity": "cfg_purchase_category_t",
+      "file": "cfg_purchase_category_t.json",
+      "object_id": "Purchase_Category",
+      "operation": "queryPurchaseCategory"
+    },
+    {
+      "entity": "inv_reservation_t",
+      "file": "inv_reservation_t.json",
+      "object_id": "Inventory_Reservation",
+      "operation": "queryReservation"
+    },
+    {
+      "entity": "ss_spa_line_t",
+      "file": "ss_spa_line_t.json",
+      "object_id": "Frame_Agreement_Item",
+      "operation": "querySpaLine"
+    },
+    {
+      "entity": "ss_spa_header_t",
+      "file": "ss_spa_header_t.json",
+      "object_id": "Frame_Agreement",
+      "operation": "querySpaList"
+    },
+    {
+      "entity": "cfg_stage_cycle_standard_t",
+      "file": "cfg_stage_cycle_standard_t.json",
+      "object_id": "Stage_Cycle_Standard",
+      "operation": "queryStageCycleConfig"
+    },
+    {
+      "entity": "dw_stock_check_result_t",
+      "file": "dw_stock_check_result_t.json",
+      "object_id": "Stock_Check_Result",
+      "operation": "queryStockCheckResults"
+    },
+    {
+      "entity": "inv_transaction_order_t",
+      "file": "inv_transaction_order_t.json",
+      "object_id": "Stock_Transfer_Request",
+      "operation": "queryTransactionOrders"
+    }
+  ]
+}

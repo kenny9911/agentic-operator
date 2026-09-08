@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ToolContext } from "@agentic/agent-kit";
-import { metaerpInvoke, _clearMetaerpCatalogCacheForTests } from "./invoke";
+import {
+  metaerpInvoke,
+  _clearMetaerpCatalogCacheForTests,
+  _clearMetaerpCallBudgetForTests,
+} from "./invoke";
 
 let server: http.Server;
 let base = "";
@@ -36,6 +40,7 @@ const CATALOG = {
 function ctx(
   args: Record<string, unknown>,
   config: Record<string, unknown>,
+  runId?: string,
 ): ToolContext {
   return {
     agentName: "agent-lock-inventory",
@@ -44,6 +49,7 @@ function ctx(
     tenantSlug: "power-scm",
     event: { name: "PSCM_TEST", data: args },
     config,
+    ...(runId ? { runId } : {}),
   } as ToolContext;
 }
 
@@ -99,9 +105,35 @@ afterEach(() => {
   delete process.env.METAERP_BASE_URL;
   delete process.env.METAERP_TEST_ALT_URL;
   _clearMetaerpCatalogCacheForTests();
+  _clearMetaerpCallBudgetForTests();
+  delete process.env.METAERP_MAX_CALLS_PER_RUN;
 });
 
 describe("metaerp.invoke", () => {
+  // 一次真跑打了 152 次调用、上下文涨到 11 万 token、四次重试全败：模型把查到的
+  // 每条询价单都再展开了一遍。没有上界时打转的代价是无限的。
+  it("caps ERP calls per run and says it was fan-out, not a broken endpoint", async () => {
+    process.env.METAERP_BASE_URL = base;
+    process.env.METAERP_MAX_CALLS_PER_RUN = "3";
+    const call = (runId: string) =>
+      metaerpInvoke.handler(
+        ctx({ operation: "queryInventoryLots" }, { catalog_path: catalogPath }, runId),
+      );
+    for (let i = 0; i < 3; i += 1) await call("run-budget");
+    await expect(call("run-budget")).rejects.toThrow(/调用已达上限 3 次[\s\S]*扇出失控/);
+    // 预算按运行计，另一次运行不受影响。
+    await expect(call("run-other")).resolves.toBeDefined();
+
+    // 没有 runId 时退化到 correlationId+agentName：correlationId 整条级联共用，
+    // 单用它会让下游 agent 继承上游花掉的预算。
+    const noRunId = () =>
+      metaerpInvoke.handler(
+        ctx({ operation: "queryInventoryLots" }, { catalog_path: catalogPath }),
+      );
+    for (let i = 0; i < 3; i += 1) await noRunId();
+    await expect(noRunId()).rejects.toThrow(/调用已达上限/);
+  });
+
   it("happy path: posts the payload to the catalog path and returns parsed JSON + kind meta", async () => {
     process.env.METAERP_BASE_URL = base;
     const result = await metaerpInvoke.handler(

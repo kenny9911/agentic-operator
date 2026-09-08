@@ -27,6 +27,14 @@ export type AgentLiveStatus =
   | "idle"
   | "running"
   | "ok"
+  /**
+   * 分支被闸口挡下：运行完成了，但一步实际工作都没做。
+   *
+   * 三个互斥方案由同一个事件触发，被否掉的两个在提交闸口处跳过全部实效步骤后
+   * 照样以 ok 收尾——画成绿色「已完成」时，看板上三个方案全部亮起，与「领导只选了
+   * 一个」直接矛盾。执行过和被跳过必须看得出区别。
+   */
+  | "skipped"
   | "failed"
   | "waiting_human";
 
@@ -49,6 +57,22 @@ export interface AgentLiveState {
   waitingTaskIds: string[];
 }
 
+/**
+ * 只有这些步骤类型算「做了事」。
+ *
+ * condition / decision 是闸口与记账：一条被否掉的分支照样会把它们跑成 ok，
+ * 拿它们判断执行与否，等于把「闸口正常工作」读成「分支执行了」。
+ */
+const EFFECT_STEP_TYPES = new Set([
+  "tool",
+  "logic",
+  "manual",
+  "emit",
+  "foreach",
+  "subflow",
+  "delay",
+]);
+
 export interface EdgePulse {
   eventName: string;
   at: number;
@@ -59,6 +83,16 @@ export interface WorkflowLiveState {
   agents: Record<string, AgentLiveState>;
   /** runId → agentName registry (bounded to MAX_TRACKED_RUNS). */
   runAgent: Record<string, string>;
+  /**
+   * runId → 该次运行的 subject。
+   *
+   * 画布按 subject 收敛到「当前这条链路」，但待人工徽标原本不收敛：一个 agent 的
+   * waitingTaskIds 跨运行累积，昨天另一条链路留下的未处理任务会挂在今天这次运行的
+   * 节点上——看板显示「待人工」，点开却是别的 subject 的旧任务。
+   */
+  runSubject: Record<string, string | null>;
+  /** taskId → 该任务所属运行的 subject，供画布按当前链路过滤待人工徽标。 */
+  taskSubject: Record<string, string | null>;
   /**
    * Subject of the newest run seen — the chain currently being watched.
    *
@@ -75,6 +109,8 @@ export interface WorkflowLiveState {
   taskAgent: Record<string, string>;
   /** runId → its human tasks, so a terminal run can take its badges down. */
   runTasks: Record<string, string[]>;
+  /** runId → 这次运行是否跑过至少一个实效步骤（见 EFFECT_STEP_TYPES）。 */
+  runDidWork: Record<string, boolean>;
   /**
    * runId → taskIds seen before that run was attributed to an agent.
    *
@@ -101,10 +137,13 @@ export function initialWorkflowLiveState(): WorkflowLiveState {
   return {
     agents: {},
     runAgent: {},
+    runSubject: {},
+    taskSubject: {},
     runOrder: [],
     latestSubject: null,
     taskAgent: {},
     runTasks: {},
+    runDidWork: {},
     pendingTasks: {},
     pulses: [],
   };
@@ -230,6 +269,7 @@ function attachTask(
   const next: WorkflowLiveState = {
     ...state,
     taskAgent: { ...state.taskAgent, [taskId]: agentName },
+    taskSubject: { ...state.taskSubject, [taskId]: state.runSubject[runId] ?? null },
     runTasks: owned.includes(taskId)
       ? state.runTasks
       : { ...state.runTasks, [runId]: [...owned, taskId] },
@@ -259,11 +299,15 @@ export function workflowLiveReducer(
     case "run.started": {
       const registered = registerRun(state, event.runId, event.agentName);
       const parked = registered.pendingTasks[event.runId] ?? [];
+      const scoped = {
+        ...registered,
+        runSubject: { ...registered.runSubject, [event.runId]: event.subject ?? null },
+      };
       // The newest run names the chain being watched. Frames replay oldest
       // first, so the last one to arrive is the current one.
       const withSubject = event.subject
-        ? { ...registered, latestSubject: event.subject }
-        : registered;
+        ? { ...scoped, latestSubject: event.subject }
+        : scoped;
       let next = withAgent(withSubject, event.agentName, (agent) => ({
         ...agent,
         runningCount: agent.runningCount + 1,
@@ -295,6 +339,9 @@ export function workflowLiveReducer(
     case "run.step.completed": {
       const agentName = state.runAgent[event.runId];
       if (!agentName) return state;
+      if (event.status === "ok" && EFFECT_STEP_TYPES.has(event.stepType)) {
+        state = { ...state, runDidWork: { ...state.runDidWork, [event.runId]: true } };
+      }
       return withAgent(state, agentName, (agent) => ({
         ...agent,
         tokensIn: agent.tokensIn + (event.tokensIn ?? 0),
@@ -304,7 +351,13 @@ export function workflowLiveReducer(
       }));
     }
     case "run.completed":
-      return resolveRun(state, event.runId, event.at, "ok", null);
+      return resolveRun(
+        state,
+        event.runId,
+        event.at,
+        state.runDidWork[event.runId] ? "ok" : "skipped",
+        null,
+      );
     case "run.failed":
       return resolveRun(
         state,
@@ -377,6 +430,8 @@ export interface UseWorkflowLiveStateResult {
   activeEventNames: Set<string>;
   /** Subject of the newest run — the chain the canvas defaults to showing. */
   latestSubject: string | null;
+  /** taskId → 该任务所属运行的 subject，供画布按当前链路过滤待人工徽标。 */
+  taskSubject: Record<string, string | null>;
 }
 
 export function useWorkflowLiveState(
@@ -442,5 +497,6 @@ export function useWorkflowLiveState(
     pulses: state.pulses,
     activeEventNames,
     latestSubject: state.latestSubject,
+    taskSubject: state.taskSubject,
   };
 }

@@ -51,7 +51,14 @@ const METAERP_REVIEWED_POLICY = {
   effect_scope: "external",
   sandbox_policy: "requires_attempt_grant",
 } as const;
-const BASE_URL_ENV = "METAERP_BASE_URL";
+/**
+ * Default env var naming the metaERP origin. A tenant can override it, because
+ * one mock ERP instance serves ONE package's data plane: `_index.json` decides
+ * which query ops exist and which table backs each. Two scenarios that declare
+ * different objects — and, worse, different rows for the SAME config table —
+ * cannot share an instance without one corrupting the other's reads.
+ */
+const DEFAULT_BASE_URL_ENV = "METAERP_BASE_URL";
 
 /**
  * Declarative failure ladder on every ERP write step. Facts come from the
@@ -94,6 +101,92 @@ const ONTOLOGY_QUERY_REVIEWED_POLICY = {
   effect_scope: "external",
   sandbox_policy: "live_external",
 } as const;
+
+/** planning.backwardSchedule — pure date arithmetic, no I/O. Same byte-equality
+ * contract as the two policies above: the runtime rejects any manifest whose
+ * declared policy differs from the reviewed global-registry entry. */
+const BACKWARD_SCHEDULE_TOOL = "planning.backwardSchedule";
+const BACKWARD_SCHEDULE_REVIEWED_POLICY = {
+  operation: "compute",
+  effect_scope: "none",
+  sandbox_policy: "pure",
+} as const;
+
+const RECORDS_PROJECT_TOOL = "records.project";
+
+function recordsProjectToolUseEntry(grant: OverlayExtraTool): CompiledToolUseEntry {
+  return {
+    name: RECORDS_PROJECT_TOOL,
+    description:
+      grant.description ??
+      "\u4ece\u4e0a\u4e00\u4e2a\u5de5\u5177\u7684\u8fd4\u56de\u503c\u91cc\u6309\u5b57\u6bb5\u6620\u5c04\u9010\u884c\u539f\u6837\u53d6\u503c\uff08\u7eaf\u8ba1\u7b97\uff09\u3002\u6807\u8bc6\u7b26\u3001\u7269\u6599\u53f7\u3001\u5355\u636e\u53f7\u8fd9\u7c7b\u503c\u4e00\u5f8b\u7528\u5b83\u53d6\uff0c\u4e0d\u8981\u81ea\u5df1\u62c4\u3002",
+    side_effect: "read",
+    execution_policy: BACKWARD_SCHEDULE_REVIEWED_POLICY,
+    input_schema: {
+      type: "object",
+      required: ["fields"],
+      properties: {
+        source: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u6307\u5411\u884c\u6570\u7ec4\u7684\u8def\u5f84\uff0c\u5982 records[0].prLineList\u3002\u7701\u7565\u5219\u4e0a\u4e00\u7ed3\u679c\u672c\u8eab\u5373\u6570\u7ec4\u3002",
+        },
+        fields: {
+          type: "object",
+          description:
+            "{\u8f93\u51fa\u5b57\u6bb5\u540d: \u6e90\u5b57\u6bb5\u540d}\uff1b\u503c\u4ee5 \"$root.\" \u5f00\u5934\u5219\u4ece\u7ed3\u679c\u6839\u90e8\u53d6\u4e00\u4e2a\u8868\u5934\u503c\u76d6\u5230\u6bcf\u4e00\u884c\u3002",
+        },
+      },
+    },
+    config: narrowOverlayToolConfig(grant.config),
+  };
+}
+
+function backwardScheduleToolUseEntry(grant: OverlayExtraTool): CompiledToolUseEntry {
+  return {
+    name: BACKWARD_SCHEDULE_TOOL,
+    description:
+      grant.description ??
+      "\u6309\u9700\u6c42\u5230\u8d27\u65e5\u671f\u4e0e\u5404\u8282\u70b9\u6807\u51c6\u5468\u671f\u5012\u6392\u51fa\u6bcf\u4e2a\u8282\u70b9\u7684\u8ba1\u5212\u5b8c\u6210\u65f6\u95f4\uff08\u7eaf\u8ba1\u7b97\uff0c\u4e0d\u8bbf\u95ee\u5916\u90e8\u7cfb\u7edf\uff09\u3002",
+    side_effect: "read",
+    execution_policy: BACKWARD_SCHEDULE_REVIEWED_POLICY,
+    input_schema: {
+      type: "object",
+      required: ["required_arrival_date", "stages"],
+      properties: {
+        required_arrival_date: {
+          type: "string",
+          description: "\u9700\u6c42\u5230\u8d27\u65e5\u671f\uff0cYYYY-MM-DD\u3002\u5012\u6392\u57fa\u51c6\u3002",
+        },
+        business_type: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u6309\u4e1a\u52a1\u7c7b\u578b\u7b5b\u9009 stages\uff1b\u7b5b\u4e0d\u5230\u4f1a\u62a5\u9519\u5e76\u5217\u51fa\u914d\u7f6e\u91cc\u5b9e\u9645\u5b58\u5728\u7684\u4e1a\u52a1\u7c7b\u578b\u3002",
+        },
+        stages: {
+          type: "array",
+          description:
+            "\u5468\u671f\u914d\u7f6e\u884c\u3002\u628a queryStageCycleConfig \u8fd4\u56de\u7684\u539f\u59cb\u884c\u6574\u6bb5\u4f20\u8fdb\u6765\uff08\u5e26 BUSINESS_TYPE\uff09\uff0c\u4e0d\u8981\u81ea\u5df1\u8a8a\u5199\u3002",
+          items: {
+            type: "object",
+            properties: {
+              stage_node: { type: "string", description: "\u8282\u70b9\u540d\uff08\u6216 STAGE_NODE\uff09" },
+              stage_sequence: {
+                type: "number",
+                description: "\u8282\u70b9\u5e8f\u53f7\uff0c\u4ece 1 \u5f00\u59cb\u8fde\u7eed\uff08\u6216 STAGE_SEQUENCE\uff09",
+              },
+              standard_cycle_days: {
+                type: "number",
+                description: "\u6807\u51c6\u5468\u671f\u5929\u6570\uff08\u6216 STANDARD_CYCLE_DAYS\uff09",
+              },
+            },
+          },
+        },
+      },
+    },
+    config: narrowOverlayToolConfig(grant.config),
+  };
+}
 /** Extra judge-prompt line appended when an overlay grants ontology.query to
  * rule-gate judges (grant_to_judges) — evidence-fetch instruction, keeping
  * the fail-closed floor intact. */
@@ -117,9 +210,13 @@ function inputPortsFor(ctx: CompileContext, trigger: string[]): AgentInputPort[]
   const ports = new Map<string, AgentInputPort>();
   for (const eventName of trigger) {
     const event = ctx.model.events.find((candidate) => candidate.name === eventName);
+    const examples = ctx.overlay.input_examples?.[eventName];
     for (const field of event?.payload?.event_data ?? []) {
       const id = field.name?.trim();
       if (!id || ports.has(id)) continue;
+      const hasExample =
+        examples !== undefined &&
+        Object.prototype.hasOwnProperty.call(examples, id);
       ports.set(id, {
         id,
         label: id,
@@ -127,10 +224,38 @@ function inputPortsFor(ctx: CompileContext, trigger: string[]): AgentInputPort[]
         kind: "value",
         required: field.required === true,
         schema: ontologyFieldSchema(field),
+        ...(hasExample ? { example: examples[id] } : {}),
       });
     }
   }
   return [...ports.values()];
+}
+
+/**
+ * An overlay example that names an event or a field the ontology does not have
+ * is a typo, and a silently ignored one is worse than none: 「加载示例」 keeps
+ * offering the generated placeholder while the overlay looks correct.
+ */
+function validateInputExamples(ctx: CompileContext): void {
+  for (const [eventName, fields] of Object.entries(ctx.overlay.input_examples ?? {})) {
+    const event = ctx.model.events.find((candidate) => candidate.name === eventName);
+    if (!event) {
+      fail(`overlay input_examples names unknown event '${eventName}'`);
+      continue;
+    }
+    const known = new Set(
+      (event.payload?.event_data ?? [])
+        .map((field) => field.name?.trim())
+        .filter((name): name is string => Boolean(name)),
+    );
+    for (const field of Object.keys(fields)) {
+      if (!known.has(field)) {
+        fail(
+          `overlay input_examples: event '${eventName}' has no field '${field}'`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -361,15 +486,72 @@ function suppressImplicitEmitStep(order: string): CompiledStep {
   };
 }
 
+/**
+ * 每个 ERP 操作的真实请求字段，由
+ * scripts/extract-metaerp-operation-params.mjs 从 swagger 生成、经 CompileOptions 传入。
+ *
+ * 模型知道操作叫什么，却不知道它收什么——第一次对 v15 真跑，13 次调用错了 12 次，
+ * 全在猜字段名。把契约写进工具描述，猜的环节就没有了。没传时静默降级为
+ * 「只列操作名」，也就是加这套之前的行为。
+ */
+export interface MetaerpOperationParams {
+  schema: string;
+  bodyIsArray?: boolean;
+  fields: string[];
+}
+
+/** 每个操作最多列几个入参。预算不够时会从这里逐级往下压。 */
+const FIELD_BUDGET_STEPS = [8, 6, 4, 3, 2] as const;
+
+/**
+ * 工具描述的硬上限。
+ *
+ * 清单 schema（`normalizeWorkflowManifest`）把 tool_use[].description 限死在 2000
+ * 字符。合并查询工具要把每个操作的名称、说明和入参串起来——场景一的取数 agent 有 13 个
+ * 查询操作，加上入参轻松越界，后果很隐蔽：**运行照常、工作流页面打不开**
+ * （internal_error: stored workflow manifest is invalid），因为运行时的 AgentSchema
+ * 不查这条长度，页面用的校验器查。
+ *
+ * 越界时优先**逐级减少每个操作列出的字段数**，而不是直接截断字符串：截断会把靠后的
+ * 操作的入参整段切掉，模型对那几个操作又退回到猜——而猜字段名正是这套入参清单要解决的
+ * 问题。字段数压到最低仍不够时才截断兜底。
+ */
+const MAX_TOOL_DESCRIPTION = 2_000;
+
+function clampToolDescription(text: string): string {
+  return text.length <= MAX_TOOL_DESCRIPTION
+    ? text
+    : `${text.slice(0, MAX_TOOL_DESCRIPTION - 1)}…`;
+}
+
+function paramHint(
+  params: Record<string, MetaerpOperationParams> | undefined,
+  operationId: string,
+  maxFields: number,
+): string {
+  const entry = params?.[operationId];
+  if (!entry?.fields.length || maxFields <= 0) return "";
+  const shown = entry.fields.slice(0, maxFields).join("、");
+  const more = entry.fields.length > maxFields ? " 等" : "";
+  const array = entry.bodyIsArray ? "，请求体是数组" : "";
+  return `｜入参(${entry.schema}${array}): ${shown}${more}`;
+}
+
 function toolUseEntry(
   operationId: string,
   kind: "query" | "write",
   catalogPath: string,
+  baseUrlEnv: string,
   description?: string,
+  params?: Record<string, MetaerpOperationParams>,
 ): CompiledToolUseEntry {
+  const hint = paramHint(params, operationId, FIELD_BUDGET_STEPS[0]!);
+  const described = clampToolDescription(
+    description ? `${description}${hint}` : hint.replace(/^｜/, ""),
+  );
   return {
     name: TOOL_NAME,
-    ...(description ? { description } : {}),
+    ...(described ? { description: described } : {}),
     side_effect: kind === "query" ? "read" : "write",
     // Must equal the reviewed global-registry policy for metaerp.invoke
     // byte-for-byte: generated agents are required to declare it, and the
@@ -377,7 +559,7 @@ function toolUseEntry(
     execution_policy: METAERP_REVIEWED_POLICY,
     config: {
       operation: operationId,
-      base_url_env: BASE_URL_ENV,
+      base_url_env: baseUrlEnv,
       catalog_path: catalogPath,
     },
   };
@@ -386,13 +568,30 @@ function toolUseEntry(
 function mergedQueryToolUseEntry(
   operations: Array<{ id: string; description?: string }>,
   catalogPath: string,
+  baseUrlEnv: string,
+  params?: Record<string, MetaerpOperationParams>,
 ): CompiledToolUseEntry {
-  const lines = operations
-    .map((op) => (op.description ? `${op.id}（${op.description}）` : op.id))
-    .join("、");
+  const compose = (maxFields: number): string => {
+    const lines = operations
+      .map((op) => {
+        const head = op.description ? `${op.id}（${op.description}）` : op.id;
+        return `${head}${paramHint(params, op.id, maxFields)}`;
+      })
+      .join("\n- ");
+    return (
+      `实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单` +
+      `（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- ${lines}`
+    );
+  };
+  // 先按最宽的预算写，超了就逐级压字段数——保证每个操作都还留着入参。
+  let text = compose(FIELD_BUDGET_STEPS[0]!);
+  for (const budget of FIELD_BUDGET_STEPS.slice(1)) {
+    if (text.length <= MAX_TOOL_DESCRIPTION) break;
+    text = compose(budget);
+  }
   return {
     name: TOOL_NAME,
-    description: `实时查询 Meta ERP。可用操作：${lines}。`,
+    description: clampToolDescription(text),
     side_effect: "read",
     execution_policy: METAERP_REVIEWED_POLICY,
     input_schema: {
@@ -407,11 +606,13 @@ function mergedQueryToolUseEntry(
         },
         payload: {
           type: "object",
-          description: "可选过滤条件：按返回行的列做精确匹配（如 {\"STATUS\":\"dormant\"}）",
+          description:
+            "该操作的请求体。字段取自工具描述里对应操作的入参清单；" +
+            "管理单元与库存组织由平台自动补上，不要传。",
         },
       },
     },
-    config: { base_url_env: BASE_URL_ENV, catalog_path: catalogPath },
+    config: { base_url_env: baseUrlEnv, catalog_path: catalogPath },
   };
 }
 
@@ -526,6 +727,19 @@ function narrowOverlayToolConfig(
   return narrowed;
 }
 
+/** Tools an overlay may grant, each mapped to the builder that emits its
+ * reviewed execution_policy. A name absent from this table is rejected: an
+ * overlay is tenant-authored config and must never be able to ship an
+ * unreviewed policy. */
+const EXTRA_TOOL_BUILDERS: Record<
+  string,
+  ((grant: OverlayExtraTool) => CompiledToolUseEntry) | undefined
+> = {
+  [ONTOLOGY_QUERY_TOOL]: ontologyQueryToolUseEntry,
+  [BACKWARD_SCHEDULE_TOOL]: backwardScheduleToolUseEntry,
+  [RECORDS_PROJECT_TOOL]: recordsProjectToolUseEntry,
+};
+
 /** Apply overlay `extra_tools` grants to a compiled agent in place: append
  * the tool_use entry (after metaerp.invoke if present), grant the analyze
  * logic step, and — with grant_to_judges — every `rule-gate:*` LLM judge,
@@ -539,9 +753,10 @@ function applyExtraTools(
 ): void {
   const grants = ctx.overlay.extra_tools?.[action.id] ?? [];
   for (const grant of grants) {
-    if (grant.name !== ONTOLOGY_QUERY_TOOL) {
+    const buildEntry = EXTRA_TOOL_BUILDERS[grant.name];
+    if (!buildEntry) {
       fail(
-        `overlay extra_tools for ${action.id} grants unsupported tool "${grant.name}" — only ${ONTOLOGY_QUERY_TOOL} has a compiler-known reviewed execution policy`,
+        `overlay extra_tools for ${action.id} grants unsupported tool "${grant.name}" — only ${Object.keys(EXTRA_TOOL_BUILDERS).join(", ")} have a compiler-known reviewed execution policy`,
       );
     }
     if (compiled.toolUse.some((entry) => entry.name === grant.name)) {
@@ -549,14 +764,14 @@ function applyExtraTools(
     }
     // One entry per tool NAME per agent: the runtime lifts config by name
     // (first match wins) and providers reject duplicate tool names.
-    compiled.toolUse.push(ontologyQueryToolUseEntry(grant));
+    compiled.toolUse.push(buildEntry(grant));
     for (const step of compiled.steps) {
       if (step.type !== "logic") continue;
       const isJudge = step.name.startsWith("rule-gate:");
       if (isJudge && grant.grant_to_judges !== true) continue;
       const allowed = step.allowed_tools ?? (step.allowed_tools = []);
       if (!allowed.includes(grant.name)) allowed.push(grant.name);
-      if (isJudge && step.action_prompt) {
+      if (isJudge && step.action_prompt && grant.name === ONTOLOGY_QUERY_TOOL) {
         step.action_prompt = `${step.action_prompt}\n\n${JUDGE_ONTOLOGY_QUERY_LINE}`;
       }
     }
@@ -571,6 +786,10 @@ interface CompileContext {
   eventsByName: Map<string, StudioEvent>;
   rulesById: Map<string, StudioRule>;
   catalogPath: string;
+  /** Env var naming this tenant's metaERP origin. */
+  baseUrlEnv: string;
+  /** 每个 ERP 操作的真实请求字段（可选）。 */
+  operationParams?: Record<string, MetaerpOperationParams>;
 }
 
 function overlayEmissionsFor(ctx: CompileContext, action: StudioAction): OverlayEmission[] {
@@ -669,8 +888,24 @@ function compilePromptAgent(ctx: CompileContext, action: StudioAction): {
     queryOps.length === 0
       ? []
       : queryOps.length === 1
-        ? [toolUseEntry(queryOps[0]!.id, "query", ctx.catalogPath, queryOps[0]!.description)]
-        : [mergedQueryToolUseEntry(queryOps, ctx.catalogPath)];
+        ? [
+            toolUseEntry(
+              queryOps[0]!.id,
+              "query",
+              ctx.catalogPath,
+              ctx.baseUrlEnv,
+              queryOps[0]!.description,
+              ctx.operationParams,
+            ),
+          ]
+        : [
+            mergedQueryToolUseEntry(
+              queryOps,
+              ctx.catalogPath,
+              ctx.baseUrlEnv,
+              ctx.operationParams,
+            ),
+          ];
 
   const steps: CompiledStep[] = [
     {
@@ -774,6 +1009,15 @@ function normalizeToolArguments(
     const hasConst = Object.prototype.hasOwnProperty.call(spec, "const");
     if (hasFrom === hasConst) {
       fail(`overlay tool argument ${actionId}.${argument} must choose exactly one of from/const`);
+    }
+    const withOverrides = (spec as { with?: unknown }).with;
+    if (withOverrides !== undefined) {
+      if (!hasFrom) {
+        fail(`overlay tool argument ${actionId}.${argument} may only use \`with\` alongside \`from\``);
+      }
+      if (!withOverrides || typeof withOverrides !== "object" || Array.isArray(withOverrides)) {
+        fail(`overlay tool argument ${actionId}.${argument}.with must be an object`);
+      }
     }
     out[argument] = spec;
   }
@@ -880,10 +1124,22 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
   }
 
   // (b) manual steps from ontology action_steps (object_type === "manual").
+  //
+  // `manualKeys` holds only the UNCONDITIONAL steps — those are the ones that
+  // must gate everything after them. A step carrying an overlay `condition` is
+  // optional (see OverlayManualStep.condition): it is deliberately kept out of
+  // downstream `depends_on`, because any skipped dependency skips its dependent
+  // and an un-asked optional question would otherwise cancel the ERP write.
   const manualKeys: string[] = [];
   for (const manualStep of (action.action_steps ?? []).filter((step) => step.object_type === "manual")) {
     const overlayManual = ctx.overlay.manual_steps?.[action.id]?.[manualStep.name];
     const manualKey = identifierKey(`manual-${manualStep.order}`);
+    const manualCondition = overlayManual?.condition?.trim();
+    if (manualCondition !== undefined && manualCondition.length === 0) {
+      fail(
+        `manual step ${action.id}.${manualStep.name} declares an empty overlay condition`,
+      );
+    }
     steps.push({
       order: nextOrder(),
       name: manualStep.name,
@@ -899,11 +1155,12 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
       awaiting_role:
         overlayManual?.awaiting_role ?? firstHumanRoleForAction(ctx.model, action.id) ?? "Human",
       result_key: manualKey,
+      ...(manualCondition ? { condition: manualCondition } : {}),
       ...(gateKeys.length || manualKeys.length
         ? { depends_on: [...gateKeys, ...manualKeys] }
         : {}),
     });
-    manualKeys.push(manualKey);
+    if (!manualCondition) manualKeys.push(manualKey);
   }
 
   // (c) the ERP write via metaerp.invoke; (d) result_key = action id slug.
@@ -962,7 +1219,16 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
   const writeDescription = (action.side_effects?.external_calls ?? []).find(
     (call) => opIdFromEndpoint(call.endpoint) === operationId,
   )?.description;
-  const toolUse = [toolUseEntry(operationId, "write", ctx.catalogPath, writeDescription)];
+  const toolUse = [
+    toolUseEntry(
+      operationId,
+      "write",
+      ctx.catalogPath,
+      ctx.baseUrlEnv,
+      writeDescription,
+      ctx.operationParams,
+    ),
+  ];
   return { steps, toolUse };
 }
 
@@ -1037,6 +1303,17 @@ function buildErpOperations(model: StudioDomainModel): ErpOperation[] {
 
 export interface CompileOptions {
   tenant: string;
+  /**
+   * Env var holding this tenant's metaERP origin. Defaults to
+   * `METAERP_BASE_URL`; set it when the tenant needs its own ERP instance.
+   */
+  baseUrlEnv?: string;
+  /**
+   * 每个 ERP 操作的真实请求字段，来自
+   * config/metaerp-operation-params.json（由 CLI 读入）。写进工具描述，
+   * 让模型拿到接口契约而不是只有一个操作名。
+   */
+  operationParams?: Record<string, MetaerpOperationParams>;
 }
 
 export function compile(
@@ -1049,7 +1326,13 @@ export function compile(
     fail(`tenant must be a lowercase slug, got "${tenant}"`);
   }
   const catalogPath = `models/${tenant}-v1/erp-operations.json`;
+  const baseUrlEnv = options.baseUrlEnv?.trim() || DEFAULT_BASE_URL_ENV;
+  if (!/^[A-Z][A-Z0-9_]*$/.test(baseUrlEnv)) {
+    fail(`baseUrlEnv must be an UPPER_SNAKE env var name, got "${baseUrlEnv}"`);
+  }
   const ctx: CompileContext = {
+    baseUrlEnv,
+    ...(options.operationParams ? { operationParams: options.operationParams } : {}),
     model,
     overlay,
     eventsByName: new Map(model.events.map((event) => [event.name, event])),
@@ -1158,6 +1441,8 @@ export function compile(
       );
     }
   }
+
+  validateInputExamples(ctx);
 
   const workflow: CompiledAgent[] = model.actions.map((action) => {
     const kind = action.implementation.kind;

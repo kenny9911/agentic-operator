@@ -35,6 +35,11 @@ import path from "node:path";
 import type { ToolContext } from "@agentic/agent-kit";
 import { defineTool } from "@agentic/agent-kit";
 import { findRepoRoot } from "../fs/_shared";
+import { resolveMetaerpCredentials } from "./config";
+import { normalizeMetaerpResponse } from "./envelope";
+import { callMetaerpOpenapi } from "./openapi-transport";
+import { resolveRoute, type MetaerpRoute } from "./routes";
+import { callMetaerpUiapi } from "./uiapi-transport";
 
 export type MetaerpOperationKind = "query" | "write";
 
@@ -55,7 +60,6 @@ interface MetaerpInvokeConfig {
 
 const DEFAULT_BASE_URL_ENV = "METAERP_BASE_URL";
 const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_DIAGNOSTIC_CHARS = 2_000;
 
 /** `code`/`kind` fact carried by a transport-level failure (no HTTP response
  * at all: refused connection, DNS failure, TLS handshake, timeout). Declarative
@@ -244,6 +248,229 @@ export function loadMetaerpCatalog(
   return map;
 }
 
+/**
+ * 每个运行允许的 ERP 调用次数上限。
+ *
+ * 对着 mock 从来不需要：种子数据只有几条，扇出天然有界。对着真实 ERP，
+ * 同一段提示词会把查到的每条询价单、每条定标结果再展开一遍——实测一次运行打了
+ * 152 次调用、上下文涨到 11 万 token、四次重试全部失败。没有上界时，模型打转的
+ * 代价是无限的，而且失败信息看起来像模型不行，不像扇出失控。
+ *
+ * 预算按 runId 计，**重试共用**：重试会把整个取数循环从头再跑一遍，给它一份新预算
+ * 只是把打转重来一次。宁可第二次就明确失败。
+ */
+const DEFAULT_MAX_CALLS_PER_RUN = 40;
+/** 计数表的条目上限，避免长期运行的进程无限增长。 */
+const MAX_TRACKED_RUNS = 500;
+
+const callsPerRun = new Map<string, number>();
+
+export function _clearMetaerpCallBudgetForTests(): void {
+  callsPerRun.clear();
+}
+
+function maxCallsPerRun(): number {
+  const raw = Number.parseInt(process.env.METAERP_MAX_CALLS_PER_RUN ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_CALLS_PER_RUN;
+}
+
+/**
+ * 预算的计量单位。
+ *
+ * `runId` 是想要的口径，但清单运行时的 LLM 工具循环不一定把它放进 ToolContext
+ * （类型上就是可选的）。退化到 correlationId 时必须再带上 agentName——
+ * correlationId 是**整条级联共用**的，单用它会让下游 agent 继承上游花掉的预算，
+ * 一个取数扇出失控会饿死后面每一步。
+ */
+/**
+ * Apply a route's line-level scope to a document payload.
+ *
+ * The header's `defaults`/`overrides` merge at the top level only, so nothing
+ * reached the entries of `lineList` — and the LLM that authors those entries
+ * left out the deployment-wide codes (transactionTypeCode, txnOrderTypeCode,
+ * submittedBy) while filling `sourceCode` with a business document number.
+ * Same lesson as the backward schedule: codes and constants are the platform's
+ * job, the model supplies the business values.
+ *
+ * Also fails closed on a missing/empty line array. ERP answers a line-less
+ * document with "Cannot submit because there is no detailed line information",
+ * which names neither the document nor the field; catching it here says which
+ * operation and which payload key were empty.
+ */
+/**
+ * Mark a successful write so `lastResult.applied == true` holds on the real ERP.
+ *
+ * `applied` is a MOCK invention (apps/mock-erp/src/effects.ts) that the compiled
+ * manifests adopted as their "did the write land" signal — three option branches
+ * gate their emit on it. The real ERP has no such field, so the moment the route
+ * flipped to the live transport those emits silently evaluated false: the ERP
+ * created INOT20260908YF100013 and the workflow still sat in
+ * createStockTransferRequest with nothing downstream. The write path only gets
+ * here after the envelope normalizer has rejected an ERROR status, so reaching
+ * this point IS the applied signal.
+ *
+ * Set only when absent: a mock write that reports `applied: false` (option type
+ * not applicable) must keep saying so.
+ */
+/**
+ * Reject a write whose envelope said fine but whose receipt says nothing landed.
+ *
+ * ERP answers a rejected transfer order with HTTP 200 and no top-level ERROR:
+ * the header comes back with `affectedRows: 0` and NO `txnOrderHeaderNumber`,
+ * and the reason sits per line — `txnOrderLineStatus: "FAILED"` with
+ * `errorMessage: "The outbound quantity is not enough."`. Nothing above this
+ * can see that, so the platform reported success, stamped `applied: true`, and
+ * the workflow marched on past a transfer order that does not exist.
+ *
+ * The route declares what a real receipt must contain; anything short of it
+ * throws with the ERP's own wording, per line.
+ */
+export function _assertWriteReceiptForTests(
+  operation: string,
+  route: MetaerpRoute,
+  data: unknown,
+): void {
+  assertWriteReceipt(operation, route, data);
+}
+
+function assertWriteReceipt(
+  operation: string,
+  route: MetaerpRoute,
+  data: unknown,
+): void {
+  const spec = route.write_receipt;
+  if (!spec) return;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 的回执不是对象，无法确认写入是否落库`,
+    );
+  }
+  const receipt = data as Record<string, unknown>;
+
+  const failures: string[] = [];
+  for (const field of spec.require_fields ?? []) {
+    const value = receipt[field];
+    if (value === undefined || value === null || value === "") {
+      failures.push(`回执缺少 ${field}（值为 ${JSON.stringify(value ?? null)}）`);
+    }
+  }
+
+  const lines = route.line_field ? receipt[route.line_field] : undefined;
+  if (Array.isArray(lines)) {
+    lines.forEach((line, index) => {
+      if (typeof line !== "object" || line === null) return;
+      const row = line as Record<string, unknown>;
+      const status = spec.line_status_field
+        ? String(row[spec.line_status_field] ?? "")
+        : "";
+      if (status && (spec.line_failed_values ?? []).includes(status)) {
+        failures.push(`第 ${index + 1} 行状态 ${status}`);
+      }
+      for (const field of spec.line_error_fields ?? []) {
+        const message = row[field];
+        if (typeof message === "string" && message.trim() !== "") {
+          failures.push(`第 ${index + 1} 行 ${field}: ${message}`);
+        }
+      }
+    });
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 未在 ERP 落库——${failures.join("；")}。` +
+        `ERP 以 HTTP 200 返回但把失败写在了回执里，因此这里判失败而不是成功。`,
+    );
+  }
+}
+
+export function _markAppliedForTests(
+  kind: "query" | "write",
+  data: unknown,
+): unknown {
+  return markApplied(kind, data);
+}
+
+function markApplied(kind: "query" | "write", data: unknown): unknown {
+  if (kind !== "write") return data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const record = data as Record<string, unknown>;
+  return "applied" in record ? record : { ...record, applied: true };
+}
+
+export function _applyLineScopeForTests(
+  operation: string,
+  route: MetaerpRoute,
+  payload: Record<string, unknown>,
+  idempotencyKey: string | null,
+): Record<string, unknown> {
+  return applyLineScope(operation, route, payload, idempotencyKey);
+}
+
+function applyLineScope(
+  operation: string,
+  route: MetaerpRoute,
+  payload: Record<string, unknown>,
+  idempotencyKey: string | null,
+): Record<string, unknown> {
+  const field = route.line_field;
+  if (!field) return payload;
+
+  const raw = payload[field];
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 的行数组 ${field} 为空——单据必须至少有一行。` +
+        `收到的 payload 顶层字段为 [${Object.keys(payload).join(", ")}]。` +
+        `请把带 ${field} 的完整单据头作为 payload 传入，而不是单独一行。`,
+    );
+  }
+
+  const lineDefaults = route.line_defaults ?? {};
+  const lineOverrides = route.line_overrides ?? {};
+  // The line carries the header's idempotency value, not one of its own.
+  const lineIdempotency =
+    route.idempotency_field && idempotencyKey
+      ? { [route.idempotency_field]: idempotencyKey }
+      : {};
+
+  return {
+    ...payload,
+    [field]: raw.map((line, index) => {
+      if (typeof line !== "object" || line === null || Array.isArray(line)) {
+        throw new Error(
+          `metaerp.invoke: '${operation}' 的 ${field}[${index}] 不是对象`,
+        );
+      }
+      return {
+        ...lineDefaults,
+        ...(line as Record<string, unknown>),
+        ...lineOverrides,
+        ...lineIdempotency,
+      };
+    }),
+  };
+}
+
+function budgetKey(ctx: ToolContext): string {
+  return ctx.runId ?? `${ctx.correlationId}:${ctx.agentName}`;
+}
+
+/** 记一次调用；超预算就失败关闭，并说清是扇出失控而不是接口坏了。 */
+function chargeCallBudget(key: string, operation: string): void {
+  const limit = maxCallsPerRun();
+  const used = (callsPerRun.get(key) ?? 0) + 1;
+  callsPerRun.set(key, used);
+  if (callsPerRun.size > MAX_TRACKED_RUNS) {
+    const oldest = callsPerRun.keys().next().value;
+    if (oldest !== undefined) callsPerRun.delete(oldest);
+  }
+  if (used > limit) {
+    throw new Error(
+      `metaerp.invoke: 本次运行的 ERP 调用已达上限 ${limit} 次（第 ${used} 次调用 '${operation}' 被拒）。` +
+        `这通常意味着取数扇出失控——先收窄查询范围，或调整 METAERP_MAX_CALLS_PER_RUN。`,
+    );
+  }
+}
+
 function readConfig(ctx: ToolContext): MetaerpInvokeConfig {
   return (ctx.config ?? {}) as MetaerpInvokeConfig;
 }
@@ -332,7 +559,6 @@ export const metaerpInvoke = defineTool({
             .join(", ")}${known.length > 20 ? ", …" : ""}`,
       );
     }
-    const baseUrl = resolveBaseUrl(config);
     const payload = resolvePayload(ctx);
     const timeoutMs =
       typeof config.timeout_ms === "number" &&
@@ -341,6 +567,83 @@ export const metaerpInvoke = defineTool({
         ? Math.min(config.timeout_ms, 120_000)
         : DEFAULT_TIMEOUT_MS;
 
+    // Where this operation actually lives. Unlisted operations, and anything
+    // held back by the two gates, keep going to the mock ERP exactly as before
+    // — a half-migrated estate is a normal state here, not a broken one.
+    chargeCallBudget(budgetKey(ctx), entry.operation);
+
+    const route = resolveRoute(entry.operation, entry.kind, ctx.tenantSlug);
+    const routeMeta = {
+      tool: "metaerp.invoke",
+      operation: entry.operation,
+      kind: entry.kind,
+      path: entry.path,
+      transport: route.transport,
+      ...(route.downgradedFrom
+        ? {
+            // Say it plainly in the trace: an operator reading a run needs to
+            // know the ERP was simulated, not merely that a call succeeded.
+            simulated: true,
+            declaredTransport: route.downgradedFrom,
+            simulatedBecause: route.downgradeReason,
+          }
+        : {}),
+      request: payload,
+      correlationId: ctx.correlationId,
+    };
+
+    if (route.transport === "stub") {
+      return {
+        data: markApplied(entry.kind, { ...route.stub_response }),
+        meta: {
+          ...routeMeta,
+          // Say it plainly: nothing was called. A stub that reads like a
+          // successful ERP call is worse than no call at all.
+          simulated: true,
+          simulatedBecause: route.stub_reason ?? "routing table declares this operation as a stub",
+        },
+      };
+    }
+
+    if (route.transport !== "mock") {
+      const credentials = resolveMetaerpCredentials(route.env);
+      // 幂等键：ERP 自己要求 uniqueSequenceNumber，而编译出的外部动作每次运行只发
+      // 一次这个写调用——所以 runId 就是稳定且唯一的键。Inngest 重放拿到同一个值，
+      // 由 ERP 拒掉重复建单，而不是造出第二张单。没有 runId 就不填：宁可让 ERP 报
+      // 缺字段，也不要用一个每次都不同的值把幂等性悄悄变成空话。
+      const idempotencyKey = route.idempotency_field && ctx.runId ? ctx.runId : null;
+      const routeDefaults =
+        route.defaults || idempotencyKey
+          ? {
+              ...(route.defaults ?? {}),
+              ...(idempotencyKey ? { [route.idempotency_field!]: idempotencyKey } : {}),
+            }
+          : undefined;
+      const scopedPayload = applyLineScope(entry.operation, route, payload, idempotencyKey);
+      const call =
+        route.transport === "openapi" ? callMetaerpOpenapi : callMetaerpUiapi;
+      const result = await call({
+        operation: entry.operation,
+        path: route.path ?? entry.path,
+        payload: scopedPayload,
+        credentials,
+        timeoutMs,
+        ...(routeDefaults ? { defaults: routeDefaults } : {}),
+        ...(route.overrides ? { overrides: route.overrides } : {}),
+      });
+      assertWriteReceipt(entry.operation, route, result.data);
+      return {
+        data: markApplied(entry.kind, result.data),
+        meta: {
+          ...routeMeta,
+          env: credentials.env,
+          url: result.url,
+          status: result.status,
+        },
+      };
+    }
+
+    const baseUrl = resolveBaseUrl(config);
     const url = `${baseUrl}${entry.path}`;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = ctx.signal
@@ -367,37 +670,20 @@ export const metaerpInvoke = defineTool({
       });
     }
 
-    const bodyText = await response.text();
-    if (!response.ok) {
-      throw new Error(
-        `metaerp.invoke: '${operationName}' returned HTTP ${response.status} — ` +
-          bodyText.slice(0, MAX_DIAGNOSTIC_CHARS),
-      );
-    }
-    let body: unknown;
-    try {
-      body = bodyText.trim() ? JSON.parse(bodyText) : {};
-    } catch {
-      throw new Error(
-        `metaerp.invoke: '${operationName}' returned non-JSON body — ` +
-          bodyText.slice(0, MAX_DIAGNOSTIC_CHARS),
-      );
-    }
-
     return {
-      data: body,
-      meta: {
-        tool: "metaerp.invoke",
+      data: normalizeMetaerpResponse({
         operation: entry.operation,
-        kind: entry.kind,
-        path: entry.path,
+        status: response.status,
+        body: await response.text(),
+        url,
+      }),
+      meta: {
+        ...routeMeta,
         // The absolute URL actually called, and the body actually sent. An
         // operator asked to trust that the ERP was written to needs to see the
         // request, not a claim that one happened.
         url,
-        request: payload,
         status: response.status,
-        correlationId: ctx.correlationId,
       },
     };
   },

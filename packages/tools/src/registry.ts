@@ -89,6 +89,8 @@ import { documentConvert } from "./document";
 import { inspectEnvironmentReferencesTool } from "./config";
 import { metaerpInvoke } from "./metaerp";
 import { powerPurchaseEvaluateTimeliness } from "./power-purchase";
+import { planningBackwardSchedule } from "./planning";
+import { recordsProject } from "./records";
 import {
   browserOpenSession,
   browserNavigate,
@@ -423,6 +425,152 @@ const GOHIRE_CONFIG_EXAMPLE = {
 };
 
 const REGISTRATIONS: ToolRegistration[] = [
+  // ── records.project — verbatim field copy out of the previous tool result. ─
+  {
+    descriptor: recordsProject,
+    catalog: {
+      name: "records.project",
+      category: "records",
+      sideEffect: "read",
+      operation: "compute",
+      effectScope: "none",
+      sandboxPolicy: "pure",
+      probeRequired: false,
+      testPolicy: "allow",
+      credentialPosture: "none",
+      summary:
+        "\u4ece\u4e0a\u4e00\u4e2a\u5de5\u5177\u7684\u8fd4\u56de\u503c\u91cc\u6309\u5b57\u6bb5\u6620\u5c04\u9010\u884c\u539f\u6837\u53d6\u503c\uff0c\u6807\u8bc6\u7b26\u4e0d\u7ecf\u8fc7\u6a21\u578b\u8f6c\u5199\u3002",
+      description:
+        "\u8fd0\u884c\u65f6\u628a\u4e0a\u4e00\u4e2a\u5de5\u5177\u7684\u8f93\u51fa\u4ee5 ctx.lastResult \u4ea4\u7ed9\u672c\u5de5\u5177\uff0c\u6295\u5f71\u5728\u670d\u52a1\u7aef\u5b8c\u6210\u3002source \u662f\u6307\u5411\u884c\u6570\u7ec4\u7684\u8def\u5f84\uff08\u5982 records[0].prLineList\uff0c\u7701\u7565\u5219\u53d6\u6574\u4e2a\u4e0a\u4e00\u7ed3\u679c\uff09\uff1bfields \u662f\u300c\u8f93\u51fa\u5b57\u6bb5: \u6e90\u5b57\u6bb5\u300d\u6620\u5c04\uff0c\u503c\u5199\u6210 \"$root.\u8def\u5f84\" \u5219\u4ece\u7ed3\u679c\u6839\u90e8\u53d6\u4e00\u4e2a\u8868\u5934\u503c\u76d6\u5230\u6bcf\u4e00\u884c\u3002\u8def\u5f84\u4e0d\u5b58\u5728\u3001\u6e90\u4e0d\u662f\u6570\u7ec4\u3001\u67d0\u884c\u7f3a\u5b57\u6bb5\uff0c\u4e00\u5f8b\u62a5\u9519\u5e76\u70b9\u540d\u884c\u53f7\u4e0e\u5b57\u6bb5\u3002",
+      argsSchema: {
+        source: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u6307\u5411\u884c\u6570\u7ec4\u7684\u8def\u5f84\uff0c\u5982 records[0].prLineList\u3002\u7701\u7565\u5219\u4e0a\u4e00\u7ed3\u679c\u672c\u8eab\u5c31\u662f\u6570\u7ec4\u3002",
+        },
+        fields: {
+          type: "object",
+          description:
+            "\u5fc5\u586b\uff1a{\u8f93\u51fa\u5b57\u6bb5\u540d: \u6e90\u5b57\u6bb5\u540d}\uff1b\u503c\u4ee5 \"$root.\" \u5f00\u5934\u5219\u4ece\u7ed3\u679c\u6839\u90e8\u53d6\u503c\u3002",
+        },
+      },
+      argsExample: {
+        source: "records[0].prLineList",
+        fields: {
+          plan_id: "$root.records[0].prNumber",
+          plan_line_id: "prLineId",
+          material_code: "itemCode",
+          material_name: "prLineDescription",
+          quantity: "quantity",
+          unit: "uomCode",
+        },
+      },
+      configSchema: {},
+      returnsSchema: {
+        rows: { type: "array", description: "\u6295\u5f71\u540e\u7684\u884c" },
+        row_count: { type: "number" },
+        source: { type: "string" },
+      },
+      returnsExample: {
+        rows: [
+          {
+            plan_id: "100020260902000001",
+            plan_line_id: "2033239140312683600",
+            material_code: "10000007",
+            material_name: "\u7535\u5bb9",
+            quantity: "10",
+            unit: "EA",
+          },
+        ],
+        row_count: 1,
+        source: "records[0].prLineList",
+      },
+      sourcePath: "packages/tools/src/records/project.ts",
+    },
+  },
+
+  // ── planning.* — pure date arithmetic, no external system. ──────────────
+  {
+    descriptor: planningBackwardSchedule,
+    catalog: {
+      name: "planning.backwardSchedule",
+      category: "planning",
+      sideEffect: "read",
+      operation: "compute",
+      effectScope: "none",
+      sandboxPolicy: "pure",
+      probeRequired: false,
+      testPolicy: "allow",
+      credentialPosture: "none",
+      summary:
+        "\u6309\u9700\u6c42\u5230\u8d27\u65e5\u671f\u4e0e\u5404\u8282\u70b9\u6807\u51c6\u5468\u671f\uff0c\u786e\u5b9a\u6027\u5730\u5012\u6392\u51fa\u6bcf\u4e2a\u8282\u70b9\u7684\u8ba1\u5212\u5b8c\u6210\u65f6\u95f4\u3002",
+      description:
+        "planned_finish(k) = required_arrival_date \u2212 \u03a3 standard_cycle_days(j>k)\uff1a\u6700\u540e\u4e00\u4e2a\u8282\u70b9\u843d\u5728\u9700\u6c42\u5230\u8d27\u65e5\u5f53\u5929\uff0c\u5176\u4f59\u8282\u70b9\u51cf\u53bb\u5176\u540e\u6240\u6709\u8282\u70b9\u7684\u5468\u671f\u4e4b\u548c\uff08\u4e0d\u542b\u81ea\u8eab\u5468\u671f\uff09\u3002\u884c\u53ef\u76f4\u63a5\u4f20 ERP \u914d\u7f6e\u8868\u539f\u59cb\u5927\u5199\u5b57\u6bb5\u3002\u4f20\u4e86 business_type \u5c31\u5148\u6309\u5b83\u7b5b\u884c\uff0c\u7b5b\u4e0d\u5230\u76f4\u63a5\u62a5\u9519\u5e76\u5217\u51fa\u914d\u7f6e\u91cc\u5b9e\u9645\u5b58\u5728\u7684\u4e1a\u52a1\u7c7b\u578b\uff0c\u4e0d\u4f1a\u9759\u9ed8\u964d\u7ea7\u5230\u76f8\u8fd1\u7684\u4e00\u6863\u3002\u5e8f\u53f7\u5fc5\u987b\u662f\u4ece 1 \u5f00\u59cb\u4e0d\u91cd\u4e0d\u6f0f\u7684\u8fde\u7eed\u6574\u6570\u3002",
+      argsSchema: {
+        required_arrival_date: {
+          type: "string",
+          description: "\u9700\u6c42\u5230\u8d27\u65e5\u671f\uff0cYYYY-MM-DD\u3002\u5012\u6392\u57fa\u51c6\u3002",
+        },
+        stages: {
+          type: "array",
+          description:
+            "\u5468\u671f\u914d\u7f6e\u884c\u3002\u76f4\u63a5\u628a queryStageCycleConfig \u8fd4\u56de\u7684\u539f\u59cb\u884c\u6574\u6bb5\u4f20\u8fdb\u6765\uff08\u5e26 BUSINESS_TYPE\uff09\uff0c\u4e0d\u8981\u81ea\u5df1\u8a8a\u5199\uff1a\u8a8a\u5199\u4f1a\u4e22\u6389 BUSINESS_TYPE\uff0c\u4e5f\u591a\u4e00\u4e2a\u6284\u9519\u5468\u671f\u5929\u6570\u7684\u673a\u4f1a\u3002\u6bcf\u884c\u81f3\u5c11\u542b stage_node / stage_sequence / standard_cycle_days\uff08\u5927\u5199 STAGE_NODE \u7b49\u540c\u6837\u53ef\u4ee5\uff09\u3002",
+        },
+        business_type: {
+          type: "string",
+          description: "\u53ef\u9009\uff1a\u6309\u4e1a\u52a1\u7c7b\u578b\u7b5b\u9009 stages\uff1b\u7b5b\u4e0d\u5230\u62a5\u9519\u3002",
+        },
+      },
+      argsExample: {
+        required_arrival_date: "2026-09-10",
+        business_type: "\u7269\u54c1\u91c7\u8d2d",
+        stages: [
+          { STAGE_NODE: "\u7acb\u9879", STAGE_SEQUENCE: 1, STANDARD_CYCLE_DAYS: 10, BUSINESS_TYPE: "\u7269\u54c1\u91c7\u8d2d" },
+          { STAGE_NODE: "\u5230\u8d27", STAGE_SEQUENCE: 2, STANDARD_CYCLE_DAYS: 70, BUSINESS_TYPE: "\u7269\u54c1\u91c7\u8d2d" },
+        ],
+      },
+      configSchema: {},
+      returnsSchema: {
+        required_arrival_date: { type: "string" },
+        business_type: { type: "string | null" },
+        business_type_filtered: { type: "boolean" },
+        stage_count: { type: "number" },
+        total_cycle_days: { type: "number" },
+        earliest_start_date: { type: "string" },
+        planned_dates: {
+          type: "array",
+          description:
+            "[{stage_node, stage_sequence, standard_cycle_days, planned_finish_date, planned_date_derived:true}]",
+        },
+      },
+      returnsExample: {
+        required_arrival_date: "2026-09-10",
+        business_type: "\u7269\u54c1\u91c7\u8d2d",
+        business_type_filtered: true,
+        stage_count: 2,
+        total_cycle_days: 80,
+        earliest_start_date: "2026-06-22",
+        planned_dates: [
+          {
+            stage_node: "\u7acb\u9879",
+            stage_sequence: 1,
+            standard_cycle_days: 10,
+            planned_finish_date: "2026-07-02",
+            planned_date_derived: true,
+          },
+          {
+            stage_node: "\u5230\u8d27",
+            stage_sequence: 2,
+            standard_cycle_days: 70,
+            planned_finish_date: "2026-09-10",
+            planned_date_derived: true,
+          },
+        ],
+      },
+      sourcePath: "packages/tools/src/planning/backward-schedule.ts",
+    },
+  },
+
   // ── power-purchase.* — pure shadow decision support. This intentionally
   //    declares no external-system capability: computing a recommendation
   //    must never be mistaken for an ERP integration or alert dispatcher. ──

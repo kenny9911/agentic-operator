@@ -35,6 +35,12 @@ const ENVELOPE_KEYS = new Set([
   "identifier_discipline",
   "queried_operations",
   "query_rounds_used",
+  // Payload-cap markers from the API's run endpoint. They are plumbing, and
+  // rendering them as 「采购概况」 facts tells the reader the truncation size
+  // where the purchase summary should be.
+  "_truncated",
+  "_bytes",
+  "_preview",
 ]);
 
 /** How deep to walk nested objects looking for a prefill value. */
@@ -280,6 +286,8 @@ const IDENTIFIER_LIKE = /^[A-Za-z0-9_.:/-]+$/;
 const SENTENCE_MARK = /[，。；：！？,;:!?]|\s/;
 /** Longer than this and a value is a description, not a name. */
 const MAX_LABEL_LENGTH = 20;
+/** Keys whose whole job is to be the readable name of the record. */
+const LABEL_KEY = /(^|_)(label|name|title)$/;
 /** Facts in the summary strip, beyond which it stops being a summary. */
 const MAX_SUMMARY_FACTS = 8;
 /** Paragraphs an approver will actually read before deciding. */
@@ -304,6 +312,24 @@ function isProse(value: string): boolean {
  * late, how severe. Short values only, deduped by key, first occurrence wins —
  * the same id repeats across most records and is worth showing once.
  */
+/**
+ * 挑一个真正有内容的上下文来源。
+ *
+ * 面板原本只读运行载荷，而 API 对它有 24KB 上限——真实链路一超限就整个塌成
+ * `{_truncated}` 标记，于是「采购概况」和「判断依据」两栏空着：审批人要在没有任何
+ * 依据的情况下做决定。任务自己带的 preparedContext 是上一步刚算出来的决策简报，
+ * 正是这时候该顶上的东西。
+ *
+ * 顺序是「先运行载荷、后任务简报」：载荷完整时信息更全，塌了才退。
+ */
+export function pickContext(...sources: unknown[]): unknown {
+  for (const source of sources) {
+    if (source == null) continue;
+    if (contextGroups(source).length > 0) return source;
+  }
+  return null;
+}
+
 export function contextSummary(payload: unknown): ContextFact[] {
   const seen = new Set<string>();
   const facts: ContextFact[] = [];
@@ -365,7 +391,17 @@ export function decisionOptions(
   fieldNames: readonly string[] = [],
 ): DecisionOption[] {
   const wanted = new Set(fieldNames);
-  const groups = contextGroups(payload).filter((group) => group.alternatives);
+  // An option is only an option if choosing it changes what gets submitted.
+  //
+  // Shape alone says "two or three sibling records", which is true of the three
+  // adjustment plans a leader picks between AND of the two approved demand
+  // plans a split gate merely reports. Rendering the latter as radios asks the
+  // planner to choose between 「检修一部」 and 「检修二部」 on a form that has
+  // nowhere to record either — the pick would be discarded on submit. So keep
+  // a group only when it answers at least one field the form actually asks for.
+  const groups = contextGroups(payload)
+    .filter((group) => group.alternatives)
+    .filter((group) => group.facts.some((fact) => wanted.has(fact.key)));
   if (groups.length === 0) return [];
 
   // What tells the options APART is what names them. Every option here carries
@@ -384,6 +420,12 @@ export function decisionOptions(
   const varies = (fact: ContextFact) => (distinct.get(fact.key)?.size ?? 0) > 1;
   const nameable = (fact: ContextFact) =>
     !IDENTIFIER_LIKE.test(fact.value) && fact.value.length <= MAX_LABEL_LENGTH;
+  // Otherwise the label is whichever readable field happens to come first in
+  // key order, which is a coin toss when several qualify. A key that says it is
+  // a display name is not a business field name — `label`/`name`/`title` mean
+  // the same thing in any domain — so honouring it stays tenant-agnostic while
+  // letting an agent choose how its own options read.
+  const named = (fact: ContextFact) => LABEL_KEY.test(fact.key) && nameable(fact);
 
   return groups.map((group) => {
     const values: Record<string, string> = {};
@@ -391,6 +433,8 @@ export function decisionOptions(
       if (wanted.has(fact.key)) values[fact.key] = fact.value;
     }
     const label =
+      group.facts.find((fact) => named(fact) && varies(fact)) ??
+      group.facts.find(named) ??
       group.facts.find((fact) => nameable(fact) && varies(fact)) ??
       group.facts.find(nameable);
     // Facts shared by every option belong in the summary, not repeated on each

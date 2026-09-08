@@ -1108,6 +1108,13 @@
                   },
                   "required": {
                     "type": "boolean"
+                  },
+                  "with": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
                   }
                 },
                 "required": [

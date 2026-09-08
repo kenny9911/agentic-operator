@@ -1,0 +1,275 @@
+{
+  "_readme": "Meta ERP 操作路由表。transport: mock | openapi | uiapi；未列出的操作一律走 mock。两道闸口：METAERP_TRANSPORT_MODE=real 本表才生效；写操作还需 METAERP_ALLOW_REAL_WRITES=true。path 不带环境前缀，运行时按 METAERP_ENV 归一到 /v15 或 /beta。",
+  "routes": {
+    "queryPbpHeader": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
+      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值"
+    },
+    "queryOpenPbpHeader": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
+      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值"
+    },
+    "queryPbpLine": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpLine"
+    },
+    "queryOpenPbpLine": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryPbpLine",
+      "note": "场景一沿用的别名，同一接口"
+    },
+    "queryAllPbpLinePage": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryAllPbpLinePage"
+    },
+    "queryPr": {
+      "transport": "openapi",
+      "path": "/hpo/mpr/openapi/v1/queryPr",
+      "overrides": {
+        "prNumberList": [
+          "100020260902000001"
+        ]
+      },
+      "note": "演示锁定 数据信息.xlsx 的第一条采购需求。用 overrides 而非 defaults：defaults 挡不住模型自己编过滤条件——实测它编过 PR-2026-11832 这个不存在的单号，整条链路因此建立在虚构数据上并判成无偏差"
+    },
+    "queryProcPackageLineExecuteMode": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryProcPackageLineExecuteMode"
+    },
+    "queryRfxList": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryRfxList"
+    },
+    "queryAwardList": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryAwardList"
+    },
+    "querySpaList": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/querySPAList"
+    },
+    "queryContract": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/queryContract"
+    },
+    "queryAcceptHeader": {
+      "transport": "openapi",
+      "path": "/hpo/mpo/openapi/v1/queryAcceptanceHeader"
+    },
+    "queryAcceptTransaction": {
+      "transport": "openapi",
+      "path": "/hpo/mpo/openapi/v1/queryAcTransaction"
+    },
+    "queryOnhandQuantity": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/multiOnhandQuantityQuery",
+      "note": "真实接口是批量版 multiOnhandQuantityQuery，入参形状与 mock 不同"
+    },
+    "queryPoLine": {
+      "transport": "openapi",
+      "path": "/hpo/mpo/openapi/v1/queryPoLine",
+      "note": "注册路径与文档路径不同形；swagger 缺失，入参需实测"
+    },
+    "queryPoHeader": {
+      "transport": "uiapi",
+      "path": "/gateway/hpo/poquery/services/ui/queryPoService/v1/poHeader/20/1",
+      "note": "分页参数在路径里（pageSize/curPage）"
+    },
+    "queryPoLineShipment": {
+      "transport": "uiapi",
+      "path": "/gateway/hpo/poquery/services/ui/queryPoService/v1/poShipment/20/1",
+      "note": "同上"
+    },
+    "queryReservation": {
+      "transport": "uiapi",
+      "path": "/gateway/hinv/minv/services/queryReservation",
+      "note": "openapi 形态未注册；路径取自 swagger 的 x-frontURL"
+    },
+    "queryItemMinMaxLevel": {
+      "transport": "uiapi",
+      "path": "/gateway/hinv/minv/services/getPlanItemLevel",
+      "note": "openapi 形态未注册；后端 operationId 为 getPlanItemLevelByQuery"
+    },
+    "createPbp": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/createPbp",
+      "note": "请求体是数组，不是对象"
+    },
+    "createProcPackageLines": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/createProcPackageLines"
+    },
+    "createTransactionOrder": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/createTransactionOrder",
+      "allow_real_write": true,
+      "idempotency_field": "uniqueSequenceNumber",
+      "defaults": {
+        "autoSubmit": {
+          "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
+        }
+      },
+      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。payload 必须是带 lineList 的完整单据头，不是单独一行；部署级编码与时间戳由 overrides / line_overrides 打进去，模型只负责物料、数量、发出存储库、来源单据这些业务值。演示期把每行数量钉死在 METAERP_TRANSFER_FIXED_QUANTITY（当前 5）：可调库存够、可以反复重跑，模型把数量算错也不会让整单被 ERP 退回。该变量留空即整字段不注入，恢复由模型按「min(需求量, 可调量)」给数的真实逻辑。",
+      "overrides": {
+        "sourceSystemCode": {
+          "$env": "METAERP_SOURCE_SYSTEM_CODE"
+        },
+        "sourceCode": {
+          "$env": "METAERP_TRANSFER_SOURCE_CODE"
+        },
+        "txnOrderTypeCode": {
+          "$env": "METAERP_TRANSFER_TXN_ORDER_TYPE_CODE"
+        },
+        "transactionTypeCode": {
+          "$env": "METAERP_TRANSFER_TRANSACTION_TYPE_CODE"
+        },
+        "transactionActionCode": {
+          "$env": "METAERP_TRANSFER_ACTION_CODE"
+        },
+        "transferOrganizationCode": {
+          "$env": "METAERP_TRANSFER_TO_ORGANIZATION_CODE"
+        },
+        "submittedBy": {
+          "$env": "METAERP_TRANSFER_SUBMITTED_BY"
+        },
+        "infoTransactionActionCode": "",
+        "requiredDate": {
+          "$now": {}
+        }
+      },
+      "line_field": "lineList",
+      "line_defaults": {
+        "lineNumber": "10",
+        "operationType": "ADD",
+        "itemVersion": "",
+        "lotNumber": "",
+        "locatorCode": {
+          "$env": "METAERP_TRANSFER_FROM_LOCATOR_CODE"
+        },
+        "transferStorehouseCode": {
+          "$env": "METAERP_TRANSFER_TO_STOREHOUSE_CODE"
+        },
+        "transferLocatorCode": "",
+        "primaryUomCode": {
+          "$env": "METAERP_TRANSFER_UOM_CODE"
+        },
+        "transactionUomCode": {
+          "$env": "METAERP_TRANSFER_UOM_CODE"
+        }
+      },
+      "line_overrides": {
+        "unitCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE"
+        },
+        "organizationCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "transferOrganizationCode": {
+          "$env": "METAERP_TRANSFER_TO_ORGANIZATION_CODE"
+        },
+        "txnOrderTypeCode": {
+          "$env": "METAERP_TRANSFER_TXN_ORDER_TYPE_CODE"
+        },
+        "transactionTypeCode": {
+          "$env": "METAERP_TRANSFER_TRANSACTION_TYPE_CODE"
+        },
+        "transactionActionCode": {
+          "$env": "METAERP_TRANSFER_ACTION_CODE"
+        },
+        "submittedBy": {
+          "$env": "METAERP_TRANSFER_SUBMITTED_BY"
+        },
+        "sourceCode": {
+          "$env": "METAERP_TRANSFER_SOURCE_CODE"
+        },
+        "transactionQuantity": {
+          "$env": "METAERP_TRANSFER_FIXED_QUANTITY"
+        },
+        "propertyType": "ORG",
+        "propertyCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "propertyTxnCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "privateType": "NORM",
+        "privateCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "privateTxnCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "transferPrivateType": "",
+        "transferPrivateCode": "",
+        "transferPrivateTxnCode": "",
+        "requiredDate": {
+          "$now": {
+            "minus_seconds": 60
+          }
+        }
+      },
+      "write_receipt": {
+        "require_fields": [
+          "txnOrderHeaderNumber"
+        ],
+        "line_status_field": "txnOrderLineStatus",
+        "line_failed_values": [
+          "FAILED",
+          "ERROR"
+        ],
+        "line_error_fields": [
+          "errorMessage"
+        ]
+      }
+    },
+    "changePbp": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/changePbp"
+    },
+    "changePbpLine": {
+      "transport": "openapi",
+      "path": "/hsrm/srm/openapi/v1/changePbp",
+      "note": "与 changePbp 同一接口，参数不同"
+    },
+    "updateTransactionOrder": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/updateTransactionOrder",
+      "note": "到货/归还回写。hc-procurement 演示不需要真回查，见 tenant_overrides。",
+      "tenant_overrides": {
+        "hc-procurement": {
+          "transport": "stub",
+          "stub_reason": "调拨单建在 v15，本地 mock 库里没有对应行（findRow 会 404）；该演示只需要「建单成功后往下走」，不需要真的回查到货状态。",
+          "stub_response": {
+            "ok": true,
+            "fulfilled": true,
+            "request_status": "已到货",
+            "note": "平台桩返回：未调用 ERP。调拨单的真实到货状态请在 ERP 界面查看。"
+          }
+        }
+      }
+    },
+    "queryProcPackageHeader": {
+      "transport": "mock",
+      "note": "ERP 无采购包头查询接口，平台模拟"
+    },
+    "queryProcPackageLine": {
+      "transport": "mock",
+      "note": "ERP 无采购包行查询接口（只有 queryProcPackageLineExecuteMode），平台模拟"
+    },
+    "queryTransactionOrders": {
+      "transport": "mock",
+      "note": "ERP 无库存单据/调拨单状态查询接口，平台模拟"
+    },
+    "queryPurchaseCategory": {
+      "transport": "mock",
+      "note": "ERP 无采购品类用途查询接口，平台模拟"
+    },
+    "queryTransferableStock": {
+      "transport": "openapi",
+      "path": "/hinv/minv/openapi/v1/multiOnhandQuantityQuery",
+      "note": "可调库存取真实现有量接口：availableTransQty 即可处理量。此前未路由，查的是 mock 的 inv_transferable_stock_t（M-BRK-126 等三行种子），而需求来自真实 ERP（10000007/8/9），两边编码体系对不上，调拨量恒为 0"
+    }
+  }
+}

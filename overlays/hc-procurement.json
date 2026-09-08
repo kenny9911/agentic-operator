@@ -23,7 +23,7 @@
       {
         "event": "NO_DEVIATION_CONFIRMED",
         "payload_from": "results.calculateExecutionDeviation",
-        "when": "lastResult.deviation_found == false"
+        "when": "lastResult.deviation_found == false && !lastResult.blocking_note"
       }
     ],
     "archiveDeviationMonitoring": [
@@ -463,7 +463,7 @@
     },
     "createStockTransferRequest": {
       "payload": {
-        "from": "event.data"
+        "from": "event.data.transfer_order"
       }
     },
     "trackTransferFulfillment": {
@@ -485,7 +485,7 @@
   "output_contracts": {
     "collectChainExecutionData": {
       "fields": {
-        "procurement_chain": "采购执行链路列表（范围内每条计划行一条）：[{chain_id, plan_id, plan_line_id, business_type, material_code, material_name, quantity, unit, required_arrival_date, current_stage:'立项'|'组包'|'询价'|'定标'|'合同'|'订单'|'到货', chain_status:'在途'|'已完成'|'已终止', planner, buyer, demand_department, forecast_arrival_date, last_synced_at, stalled_at:string|null（本链路停滞在哪一节——「已完成节点之后的第一个未完成节点」；七节点全完成时为 null）}]。current_stage 取该链路当前所处节点。",
+        "procurement_chain": "采购执行链路列表（范围内每条计划行一条）：[{chain_id, plan_id, plan_line_id, business_type, material_code, material_name, quantity, unit, required_arrival_date, current_stage:'立项'|'组包'|'询价'|'定标'|'合同'|'订单'|'到货', chain_status:'在途'|'已完成'|'已终止', planner, buyer, demand_department, forecast_arrival_date, last_synced_at, stalled_at:string|null（本链路停滞在哪一节——「已完成节点之后的第一个未完成节点」；七节点全完成时为 null）}]。current_stage 取该链路当前所处节点。\n\n【硬性·标识符与物料一律用 records.project 取，不要手打】\nqueryPr 返回后，**紧接着同一轮**调用 records.project 把需求行投影出来，然后逐字照抄它的 rows：\n  records.project({ source: \"records[0].prLineList\",\n                    fields: { plan_id: \"$root.records[0].prNumber\", plan_line_id: \"prLineId\",\n                              material_code: \"itemCode\", material_name: \"prLineDescription\",\n                              quantity: \"quantity\", unit: \"uomCode\",\n                              business_type: \"purchasingBasis\" } })\n一张需求有多行时，**每一行的 material_code 必须来自它自己那一行**——不同行的物料通常不同，把某一行的物料号复制到其他行是本步最常见也最难发现的错误。\n【为什么必须走工具】实跑中这一步读到的需求四行是 电阻/电阻/电容/电感（10000008、10000008、10000007、10000009），却报成了 二极管/电阻/电阻/电阻——凭空多出一个不在该需求上的 10000011，还把一个行 ID 从 …683600 打成了 …683792。三个物料全错，而每个值看起来都合理，下游没有任何环节能发现，最后照着这份错数据在真实 ERP 里建出了一张三行同物料的调拨单。行数据的复制是平台的事，不是你的自由度。\nchain_id 按 `${plan_id}-${plan_line_id}` 拼，两段都取自投影结果。\nbusiness_type 同样原样投影自需求行的 purchasingBasis（如 GOODS），**不要翻译成中文、不要改写**——下游按这个值去周期配置表里查标准周期，换个说法就查不到了。该需求头上的 businessType 是 null，实跑中模型每轮自己编一个（物品采购、物资……），导致倒排时灵时不灵。",
         "stage_progress_list": "七个节点的进度记录，顺序固定为 立项/组包/询价/定标/合同/订单/到货：[{stage_progress_id, chain_id, stage_node, stage_sequence:1-7, actual_finish_date, stage_status:'未开始'|'进行中'|'已完成'|'部分完成', source_document_type, source_document_no, stage_started_at, synced_at}]。每个节点的实际完成时间必须来自对应单据的真实字段：立项=采购申请审批通过时间、组包=采购包 LAST_UPDATE_DATE、询价=询价单 EFFECTIVE_DATE、定标=定标 AWARD_DATE、合同=合同 SIGNING_DATE、订单=订单 EFFECTIVE_DATE、到货=验收完成时间（接收数量=订单数量才算完成，小于为部分完成）。查不到对应单据的节点写 stage_status='未开始'、actual_finish_date=null，不得编造。",
         "synced_stage_count": "本次刷新的节点数（整数）。",
         "coverage_note": "本次盯防范围说明：若触发事件带 plan_id/plan_no，写明「按事件指定范围只处理 <该计划>」；否则写明已按 BR-COV-01 全量纳入所有状态=已批准且在途的计划、未做抽查。",
@@ -498,11 +498,11 @@
     "calculateExecutionDeviation": {
       "fields": {
         "procurement_chain": "原样透传上游链路对象，字段值不得改写或重新生成。",
-        "planned_dates": "各节点计划完成时间：[{stage_node, stage_sequence:1-7, standard_cycle_days, planned_finish_date:'YYYY-MM-DD', planned_date_derived:boolean}]。\n【倒排公式（逐字照算，不得凭感觉）】节点按 立项1/组包2/询价3/定标4/合同5/订单6/到货7 排序，标准周期取自 queryStageCycleConfig 中该 business_type 的行。\n  planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)，j 从 k+1 到 7\n即：到货(k=7) 的计划完成时间**就是** required_arrival_date 本身（不减任何东西）；其余节点 = 需求到货日期 减去**它之后**所有节点的标准周期之和，**不含本节点周期**。\n举例（物资类：立项10/组包15/询价20/定标15/合同15/订单10/到货70，需求到货 2026-11-30）：\n  到货 = 2026-11-30\n  订单 = 2026-11-30 − 70 = 2026-09-21\n  合同 = 2026-11-30 − (70+10) = 2026-09-11\n  定标 = 2026-11-30 − (70+10+15) = 2026-08-27\n  询价 = 2026-11-30 − (70+10+15+15) = 2026-08-12\n  组包 = 2026-11-30 − (70+10+15+15+20) = 2026-07-23\n  立项 = 2026-11-30 − (70+10+15+15+20+15) = 2026-07-08\n正排交叉校验：planned_finish(k) 应等于 planned_finish(k−1) + standard_cycle_days(k)；两向一致才置 planned_date_derived=true。缺任一节点周期配置则该节点不予推算并在 blocking_note 说明（BR-PLAN-01）。",
+        "planned_dates": "各节点计划完成时间：[{stage_node, stage_sequence, standard_cycle_days, planned_finish_date:'YYYY-MM-DD', planned_date_derived:boolean}]。\n【硬性·唯一来源】这个数组**必须逐字照抄 planning.backwardSchedule 工具的返回值**，一个日期都不许自己心算，也不许沿用本提示词或历史对话里出现过的任何日期。\n调用方式：先用 queryStageCycleConfig 取回周期配置行，然后调用\n  planning.backwardSchedule({ required_arrival_date: <链路的 required_arrival_date 原值>, business_type: <链路的 business_type 原值>, stages: <queryStageCycleConfig 返回的原始行，整段原样传，不要改字段名、不要自己筛> })\n工具是纯计算的，公式 planned_finish(k) = required_arrival_date − Σ standard_cycle_days(j)（j 从 k+1 到最后一个节点）：最后一个节点（到货）就落在需求到货日当天，其余节点减去**其后**所有节点的周期之和、不含自身周期。筛选业务类型由工具完成。\n【硬性·缺配置即停】若工具报「该业务类型在周期配置中没有任何行」，说明周期配置缺这一档：把工具报错原文写进 blocking_note 并停下，**不得**改用名字相近的业务类型、**不得**自己编一套周期天数。\n【硬性·可核对】本字段里每个 planned_finish_date 都必须能在工具返回的 planned_dates 里原样找到，工具没返回的节点不得出现在这里；planned_date_derived 一律取工具返回的值。\n【为什么必须走工具】实跑中模型曾把提示词里举例用的七个日期整段抄进输出，只替换了最后一个，算出「订单计划完成时间晚于到货计划完成时间」这种不可能的排期，却仍然声称正反校验通过，最终把延迟 78 天的链路判成「提前 3 天、无偏差」。日期算术一律交给工具。",
         "thresholds_used": "本次判定实际采用的阈值，必须取自 getAlertThresholdConfig 返回值，不得写死：{time_deviation_days, schedule_deviation_ratio, threshold_ids:[string]}（BR-DEV-02）。",
-        "execution_deviation": "执行偏差列表（范围内每条链路一条）：[{deviation_id, chain_id, stage_progress_id, stage_node（发生偏差的节点＝「已完成节点之后的第一个未完成节点」）, planned_finish_date（取 planned_dates 里该节点的值）, actual_finish_date, time_deviation_days:number, schedule_deviation_ratio:number, amount_deviation_ratio:number|null, has_deviation:boolean, deviation_level:'待定级', cause_tag, cause_explanation, cause_clarification_status, dwell_days:number, disposal_state:'待评分', evaluated_at}]。\n\n【actual_finish_date（硬性）】只有节点 stage_status 为「已完成」时才取对应单据的完成字段。「未开始」「进行中」**以及「部分完成」**一律视为未完成——到货节点的接收数量小于订单数量就是部分接收，链路仍在途，**不得**拿验收单时间戳当完成时间——此时**逐字填入上游透传的 scan_date 字符串**（不是你认为的今天，也不是任何单据上的时间戳）——不得凭空生成一个日期、不得使用系统当前时间、不得沿用上游任何别的时间戳。实跑曾出现定标节点从未完成却被填了一个过去的日期，导致时间偏差算成负数（「提前 32 天」），延期判定整体失效。\n\n【time_deviation_days（硬性）】= actual_finish_date − planned_finish_date，单位天，**正数表示延迟**。未完成节点因为代入了 scan_date，这个值就等于「今天比该节点的计划完成时间晚了几天」。若算出负数，意味着该节点尚未到期。\n\n【evaluated_at（硬性·必填）】直接填 scan_date 的那个字符串，与 actual_finish_date 未完成时代入的值完全相同。本体里它是 is_required 字段，留空即为不合规。\n【dwell_days（必填）】= scan_date − 该节点开始时间，单位天（整数或小数）。取不到节点开始时间时填 0，不要填 null。\n【deviation_level】本步一律填 '待定级'——等级由下游 scoreOnTimeProbability 按按期概率映射。\n【has_deviation】按 BR-DEV-01（含修正 C-01b）判定：\n  has_deviation = time_deviation_days > 时间阈值\n                  或（time_deviation_days > 0 且 schedule_deviation_ratio > 进度阈值）\n两个阈值都取自 queryAlertThresholdConfig，不得写死（BR-DEV-02）。\n**关键：节点尚未到期时，进度偏差不单独构成偏差——未完成但未延期的采购不预警。**\n例：到货节点部分接收（收 18 / 订 30，进度偏差 0.4），但需求到货日还有 141 天（time_deviation_days = -141），此时 has_deviation 必须为 false；\n反例：定标节点超期 5 天（time_deviation_days = 5），has_deviation 为 true。",
-        "blocking_note": "若因缺周期配置等原因无法完成推算，写明缺哪个「业务类型×节点」并置 has_deviation=false；否则填空字符串。",
-        "_parallel_tool_calls": "【并发取数（硬性）】本步的这些查询彼此独立、没有先后依赖，请在**同一轮**里一次性发出全部 metaerp.invoke 工具调用，不要一个一个串行来回——运行时支持一轮多调用（step-engine 按数组逐个执行），串行会把这一步拖成十几分钟。只有当后一个查询确实要用前一个的返回值做入参时，才允许分轮。本步需要的查询：queryStageCycleConfig、queryAlertThresholdConfig。第一轮一次性发出。本字段只是取数纪律说明，输出 JSON 里填一句确认语即可。",
+        "execution_deviation": "执行偏差列表（范围内每条链路一条）：[{deviation_id, chain_id, stage_progress_id, stage_node（发生偏差的节点＝「已完成节点之后的第一个未完成节点」）, planned_finish_date（取 planned_dates 里该节点的值）, actual_finish_date, time_deviation_days:number, schedule_deviation_ratio:number, amount_deviation_ratio:number|null, has_deviation:boolean, deviation_level:'待定级', cause_tag, cause_explanation, cause_clarification_status, dwell_days:number, disposal_state:'待评分', evaluated_at}]。\n\n【actual_finish_date（硬性）】只有节点 stage_status 为「已完成」时才取对应单据的完成字段。「未开始」「进行中」**以及「部分完成」**一律视为未完成——到货节点的接收数量小于订单数量就是部分接收，链路仍在途，**不得**拿验收单时间戳当完成时间——此时**逐字填入上游透传的 scan_date 字符串**（不是你认为的今天，也不是任何单据上的时间戳）——不得凭空生成一个日期、不得使用系统当前时间、不得沿用上游任何别的时间戳。实跑曾出现定标节点从未完成却被填了一个过去的日期，导致时间偏差算成负数（「提前 32 天」），延期判定整体失效。\n\n【time_deviation_days（硬性）】= actual_finish_date − planned_finish_date，单位天，**正数表示延迟**。未完成节点因为代入了 scan_date，这个值就等于「今天比该节点的计划完成时间晚了几天」。若算出负数，意味着该节点尚未到期。\n\n【evaluated_at（硬性·必填）】直接填 scan_date 的那个字符串，与 actual_finish_date 未完成时代入的值完全相同。本体里它是 is_required 字段，留空即为不合规。\n【dwell_days（必填）】= scan_date − 该节点开始时间，单位天（整数或小数）。取不到节点开始时间时填 0，不要填 null。\n【deviation_level】本步一律填 '待定级'——等级由下游 scoreOnTimeProbability 按按期概率映射。\n【has_deviation】按 BR-DEV-01（含修正 C-01b）判定：\n  has_deviation = time_deviation_days > 时间阈值\n                  或（time_deviation_days > 0 且 schedule_deviation_ratio > 进度阈值）\n两个阈值都取自 queryAlertThresholdConfig，不得写死（BR-DEV-02）。\n**关键：节点尚未到期时，进度偏差不单独构成偏差——未完成但未延期的采购不预警。**\n例：到货节点部分接收（收 18 / 订 30，进度偏差 0.4），但需求到货日还有 141 天（time_deviation_days = -141），此时 has_deviation 必须为 false；\n反例：定标节点超期 5 天（time_deviation_days = 5），has_deviation 为 true。\n【硬性】`planned_finish_date` **不得为 null**：它是倒排算出来的，以链路的 required_arrival_date 为基准、按 queryStageCycleConfig 的标准周期从后往前推。配置查不到（接口报错、或用了「采购需求」这类不存在的 BUSINESS_TYPE 过滤）时，**必须报错停下，不要把 planned_finish_date 填 null 然后判无偏差**——那会让「算不出来」和「确实没偏差」变成同一个结果，是最难发现的一类错误。",
+        "blocking_note": "若因缺周期配置、配置接口调不通等原因无法完成推算，写明缺哪个「业务类型×节点」或原样附上工具/接口的报错，并置 has_deviation=false、deviation_found=false；能正常算完则填空字符串。\n【注意】本字段非空时，工作流**不会**走归档分支——「算不出来」和「算出来了、确实没偏差」必须是两种可见的结果，不能都显示成无偏差。所以：真的算完了就必须留空，不要因为没查到偏差而顺手写点说明进来。",
+        "_parallel_tool_calls": "【并发取数（硬性）】本步的这些查询彼此独立、没有先后依赖，请在**同一轮**里一次性发出全部 metaerp.invoke 工具调用，不要一个一个串行来回——运行时支持一轮多调用（step-engine 按数组逐个执行），串行会把这一步拖成十几分钟。只有当后一个查询确实要用前一个的返回值做入参时，才允许分轮。本步需要的查询：queryStageCycleConfig、queryAlertThresholdConfig。第一轮一次性发出。planning.backwardSchedule 要用 queryStageCycleConfig 的返回做入参，所以它属于「确实有依赖」的那一类，放第二轮调用。本字段只是取数纪律说明，输出 JSON 里填一句确认语即可。",
         "scan_date": "触发事件负载里 scan_date 的值，**原样照抄**（YYYY-MM-DD 字符串，例如事件给 \"2026-09-01\" 就填 \"2026-09-01\"）。这是业务扫描日期，不是系统时间——与你认知里的今天不同也以它为准。**此字段必填，不得留空**。本步所有涉及「今天」的计算一律用它。",
         "deviation_found": "布尔值，必填。本批范围内只要 execution_deviation 里有任意一条 has_deviation=true 就填 true，全部为 false 才填 false。工作流据此二选一：true 走预警分支（DEVIATION_DETECTED→评分→预警），false 走归档分支（NO_DEVIATION_CONFIRMED→归档）。这是对 execution_deviation 的汇总，不得与其中任何一条自相矛盾。"
       }
@@ -517,10 +517,11 @@
       "fields": {
         "execution_deviation": "只透传 has_deviation=true 的那些偏差对象，逐字原样，不得改写。上游 execution_deviation 里 has_deviation=false 的链路（未完成但未延期）**必须整条丢弃**——它没有偏差，不评分、不定级、不预警。",
         "procurement_chain": "只透传上述保留下来的偏差所对应的链路对象，逐字原样。被丢弃的链路一并丢弃。",
-        "probability_assessment": "**只对 has_deviation=true 的链路评估**，每条一个对象；被丢弃的链路不得出现。\n按期达成概率评估：{assessment_id, deviation_id, chain_id, current_stage, remaining_standard_cycle_days:number（当前节点之后各节点标准周期之和，取自 getStageCycleConfig）, days_to_required_arrival:number, dwell_days:number, historical_on_time_rate:number（取自 queryHistoricalOnTimeRate）, historical_sample_size:integer, on_time_probability:number（0~1）, probability_grade:'红色'|'黄色'|'蓝色', explanation:string（不得为空，BR-PROB-04）, assessed_at}。【定级硬性】必须用 getAlertThresholdConfig 返回的分界值：概率<红色概率上限判红、介于红色上限与黄色下限之间判黄、>黄色概率下限判蓝（BR-PROB-01~03）。【explanation 硬性】必须同时说明剩余周期、滞留天数、历史达成率与样本量这四项如何影响了概率——只报超期天数不足以支撑决策。",
-        "alert_level": "与 probability_grade 同值，供下游预警推送直接取用。**与 probability_assessment 一一对应、条数一致**——被丢弃的链路不得在这里留下等级。",
+        "probability_assessment": "**只对 has_deviation=true 的链路评估**，每条一个对象；被丢弃的链路不得出现。\n按期达成概率评估：{assessment_id, deviation_id, chain_id, current_stage, remaining_standard_cycle_days:number（当前节点之后各节点标准周期之和，取自 getStageCycleConfig）, days_to_required_arrival:number, dwell_days:number, historical_on_time_rate:number（取自 queryHistoricalOnTimeRate）, historical_sample_size:integer, on_time_probability:number（0~1）, probability_grade:'红色'|'黄色'|'蓝色', explanation:string（不得为空，BR-PROB-04）, assessed_at}。【定级硬性】必须用 getAlertThresholdConfig 返回的分界值：概率<红色概率上限判红、介于红色上限与黄色下限之间判黄、>黄色概率下限判蓝（BR-PROB-01~03）。【explanation 硬性】必须同时说明剩余周期、滞留天数、历史达成率与样本量这四项如何影响了概率——只报超期天数不足以支撑决策。\n【硬约束·优先于一切软因子】先算 gap = remaining_standard_cycle_days - days_to_required_arrival。gap > 0 表示按标准周期**根本赶不到**——这是算术事实，不是风险偏好：此时 on_time_probability 必须 ≤ 红色概率上限，probability_grade 必须是「红色」，历史达成率、滞留天数、成因标签都不得把它抬回黄色或蓝色。explanation 里必须写明 gap 的具体天数，且不得出现「周期充裕」之类与 gap>0 矛盾的措辞。只有 gap ≤ 0 时，才用历史达成率与滞留天数在黄/蓝之间加权。",
+        "alert_level": "**单个字符串，不是数组**：取本轮所有链路 probability_grade 中最严重的一个（红色 > 黄色 > 蓝色）。下游 pushAlert 只接收一个等级，传数组会被拼成「蓝色,蓝色,蓝色」这样的字符串并被 ERP 拒绝（unsupported alert level）。每条链路各自的等级仍完整保留在 probability_assessment[].probability_grade 里，不会丢信息；逐链路分别推送需要 foreach，见 C-11。",
         "_parallel_tool_calls": "【并发取数（硬性）】本步的这些查询彼此独立、没有先后依赖，请在**同一轮**里一次性发出全部 metaerp.invoke 工具调用，不要一个一个串行来回——运行时支持一轮多调用（step-engine 按数组逐个执行），串行会把这一步拖成十几分钟。只有当后一个查询确实要用前一个的返回值做入参时，才允许分轮。本步需要的查询：queryStageCycleConfig、queryHistoricalOnTimeRate、queryAlertThresholdConfig。第一轮一次性发出。本字段只是取数纪律说明，输出 JSON 里填一句确认语即可。",
-        "scan_date": "触发事件负载里 scan_date 的值，**原样照抄**（YYYY-MM-DD 字符串，例如事件给 \"2026-09-01\" 就填 \"2026-09-01\"）。这是业务扫描日期，不是系统时间——与你认知里的今天不同也以它为准。**此字段必填，不得留空**。剩余天数、滞留天数以它为「今天」。"
+        "scan_date": "触发事件负载里 scan_date 的值，**原样照抄**（YYYY-MM-DD 字符串，例如事件给 \"2026-09-01\" 就填 \"2026-09-01\"）。这是业务扫描日期，不是系统时间——与你认知里的今天不同也以它为准。**此字段必填，不得留空**。剩余天数、滞留天数以它为「今天」。",
+        "thresholds_used": "**必填**：原样回填 queryAlertThresholdConfig 返回的分界值（红色概率上限 / 黄色概率下限等），不得留空对象、不得凭记忆写数。留空意味着定级没有依据——本轮实测就出现过 thresholds_used={} 而解释里凭空引用「0.85」。"
       }
     },
     "generateAdjustmentOptions": {
@@ -528,15 +529,53 @@
         "options_generated": "布尔值：预警等级为红色或黄色时为 true 并给出三个方案；蓝色时为 false 且 options 为空数组（BR-OPT-01：蓝色不生成方案）。",
         "options": "三个可执行方案，缺一不可（BR-OPT-02）：[{option_id, alert_id, chain_id, option_type:'压缩后续周期'|'调整需求日期'|'执行调拨', option_summary, expected_arrival_date_after:Date, arrival_impact_days:number, arrival_impact_simulated:true（未完成推演的方案不得上会，BR-OPT-03）, feasibility_note, is_recommended:boolean, is_high_risk:boolean（暂停申请、整单调剂标为 true，BR-OPT-06）, option_status:'待决策', decision_role:'分管领导'（红色）|'部门领导'（黄色）（BR-OPT-04）}]。三个 option_type 必须各出现一次。",
         "recommended_option": "被推荐的那一条方案对象（is_recommended=true），另附 recommendation_basis 说明为何推荐它：结合成因标签、按期概率与三个方案的到货影响天数对比。",
-        "transfer_source": "方案③的调拨来源，取自 queryTransferableStock：{warehouse_id, warehouse_name, item_code, available_qty, transfer_lead_days, transfer_quantity}。无可调库存时给出 {transfer_quantity: 0} 并在该方案的 feasibility_note 说明。",
+        "transfer_source": "方案③的调拨来源，取自 queryTransferableStock（真实接口为库存现有量查询）。字段名照抄该接口返回：{itemCode, organizationCode, storehouseCode, storehouseName, locatorCode, quantity, availableTransQty（可处理量，即可调数量）}，另加 transfer_quantity = min(availableTransQty, 需求数量)。该接口不返回调拨提前期，不要编造 transfer_lead_days。查询用需求行的物料编码（itemCodeList）。无可调库存时给 {transfer_quantity: 0} 并在该方案的 feasibility_note 说明。",
         "alert_context": "原样透传预警上下文：{alert_id, chain_id, deviation_id, alert_level, notified_role}。",
-        "_parallel_tool_calls": "【并发取数（硬性）】本步的这些查询彼此独立、没有先后依赖，请在**同一轮**里一次性发出全部 metaerp.invoke 工具调用，不要一个一个串行来回——运行时支持一轮多调用（step-engine 按数组逐个执行），串行会把这一步拖成十几分钟。只有当后一个查询确实要用前一个的返回值做入参时，才允许分轮。本步需要的查询：queryStageCycleConfig、queryTransferableStock。第一轮一次性发出。本字段只是取数纪律说明，输出 JSON 里填一句确认语即可。"
+        "_parallel_tool_calls": "【并发取数（硬性）】本步的这些查询彼此独立、没有先后依赖，请在**同一轮**里一次性发出全部 metaerp.invoke 工具调用，不要一个一个串行来回——运行时支持一轮多调用（step-engine 按数组逐个执行），串行会把这一步拖成十几分钟。只有当后一个查询确实要用前一个的返回值做入参时，才允许分轮。本步需要的查询：queryStageCycleConfig、queryTransferableStock。第一轮一次性发出。本字段只是取数纪律说明，输出 JSON 里填一句确认语即可。",
+        "transfer_order": "方案③要写进 ERP 的调拨单请求体（createTransactionOrder）。**字段名与结构由真实接口实测确定，swagger 里 OrderCreatePubLineDTO 是未解析的，照抄下面这份**：\n{sourceCode:'<采购需求编号>', requiredDate:'YYYY-MM-DD HH:mm:ss'（取需求行 needByDate）, lineList:[{itemCode, organizationCode, storehouseCode（取 transfer_source 的调出库点）, transactionQuantity:'<数量字符串>', transactionUomCode:'<主单位，如 EA>', requiredDate:'YYYY-MM-DD HH:mm:ss'（行上也必须有，与头同值）, sourceObjectNumber:'<采购需求编号>', sourceObjectLineId:'<采购需求行ID>'}]}\nunitCode / organizationCode / sourceSystemCode / txnOrderTypeCode / transactionTypeCode / autoSubmit / submittedBy / uniqueSequenceNumber **由平台自动补上，你不要写**。无可调库存（transfer_quantity=0）时该字段给 null。\n\n【硬性·数量不得超过可调量】每行 transactionQuantity = min(该需求行的 quantity, 该物料当前剩余可调量)，写成字符串。可调量取 queryTransferableStock 返回的 availableTransQty（不是 quantity——quantity 是账面库存，其中一部分可能已被占用）。\n**同一物料出现在多行时按行依次扣减同一个可调量池**：例如可调 100、两行需求各 10，则两行分别为 '10' 和 '10'；若可调 100、两行需求各 80，则第一行 '80'、第二行 '20'。扣到 0 之后的行不要写进 lineList。\n【为什么是硬性】实跑中可调量是 40/100/100，却报了 300、200、40、80——两行同为 10000008 合计 500。ERP 用 HTTP 200 收下，却在行里回 \"The outbound quantity is not enough.\" / txnOrderLineStatus:\"FAILED\"，整单回滚、表头没有单号。平台现在会据此判失败并停下，所以数量报大不会「先建了再说」，只会让整条链路失败。",
+        "transfer_order_line": "方案③落地时写进 createTransactionOrder 的**行**，逐字段照下面给（已在 v15 实跑建单成功、且与界面建单形态一致：INOT20260908YF100008）：\n{lineNumber:'10', operationType:'ADD', unitCode, organizationCode（发出库存组织）, organizationName, itemCode, itemVersion:'', storehouseCode（发出存储库）, locatorCode（发出货位）, lotNumber:'', transferStorehouseCode（接收存储库）, transferLocatorCode:'', transferPrivateType:'', transferPrivateCode:'', transferPrivateTxnCode:'', privateType:'NORM', privateCode, privateTxnCode, propertyType:'ORG', propertyCode, propertyTxnCode, primaryUomCode, transactionUomCode, transactionQuantity, requiredDate, sourceObjectNumber（采购需求编号）, sourceObjectLineId（需求行ID）}\n取值来自 queryTransferableStock 的返回与需求行本身。\n【硬性 1】行上的 `requiredDate` 被 ERP 当作**交易时间**校验，**必须早于当前时刻**；填需求到货日期（未来）会被拒：'The transaction time must before now.'。\n【硬性 2】发出存储库若启用货位，`locatorCode` 必填。\n【硬性 3】`transferPrivate*` 三个字段要留**空字符串**，不要照抄发出方的值。\n【不要写】接收库存组织、单据类型、交易类型/动作、来源系统、来源模块、申请人由平台补；也不要写 autoSubmit（会让单据变成「关闭」）、costMethodCode、inventoryStatusControl（后两个是界面审批流专有，openapi 带上报 'querying account period'）。",
+        "transfer_apply_time": "方案③的**申请时间**：写成 createTransactionOrder 头上的 requiredDate。注意它不是需求到货日期，而是**本次申请的时刻**（格式 'YYYY-MM-DD HH:mm:ss'）——填成需求日期会让 ERP 里的申请时间显示错误。取本轮 scan_date 当天的当前时刻即可。"
       }
     },
     "closeDeviationHandling": {
       "fields": {
         "closure_context": "闭环上下文：{alert_id, deviation_id, chain_id, deviation_eliminated:boolean, verification_result:'属实'|'误报', closed_at}。deviation_eliminated 为 false 时不得闭环，退回重新生成调整方案（BR-CLOSE-01）。"
       }
+    },
+    "createStockTransferRequest": {
+      "fields": {
+        "transfer_order": "调拨单据头，**必须带 lineList 数组**——平台就是把这个对象整个发给 ERP 的 createTransactionOrder。\n你只负责业务值，编码和时间戳由平台注入，别自己填：\n  头：{ lineList: [...] }（其余字段平台补齐；不要写 sourceCode / txnOrderTypeCode / transactionTypeCode /\n      transferOrganizationCode / submittedBy / requiredDate / autoSubmit——写了也会被覆盖）\n  行：{ itemCode, transactionQuantity, storehouseCode（发出存储库）, sourceObjectNumber（来源单据号）,\n      sourceObjectLineId（来源单据行 ID） }，其余同样由平台补齐。\nitemCode / storehouseCode / sourceObjectNumber / sourceObjectLineId / transactionQuantity 一律取自\nqueryTransferableStock 与上游透传的真实值，不得自造。\n【硬性】lineList 为空或缺失时平台会直接报错停下：ERP 对无行单据只回一句\n「Cannot submit because there is no detailed line information」，既不说哪张单也不说缺什么。"
+      }
     }
+  },
+  "input_examples": {
+    "DAILY_DEVIATION_SCAN_SCHEDULED": {
+      "scan_batch_id": "DEV-20260907-001",
+      "chain_scope": "指定单位",
+      "unit_code": "1000",
+      "organization_code": "YF1"
+    },
+    "PROCUREMENT_DOCUMENT_STATUS_CHANGED": {
+      "document_type": "采购订单",
+      "document_id": "HPO1000202609030004",
+      "chain_id": "100020260902000003",
+      "new_status": "已审批",
+      "changed_at": "2026-09-03T10:10:00+08:00"
+    },
+    "ALERT_TIMEOUT_SCAN_SCHEDULED": {
+      "scan_batch_id": "ESC-20260907-001"
+    }
+  },
+  "extra_tools": {
+    "calculateExecutionDeviation": [
+      {
+        "name": "planning.backwardSchedule"
+      }
+    ],
+    "collectChainExecutionData": [
+      {
+        "name": "records.project"
+      }
+    ]
   }
 }

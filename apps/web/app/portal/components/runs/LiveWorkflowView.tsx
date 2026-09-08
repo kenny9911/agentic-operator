@@ -128,10 +128,34 @@ export function LiveWorkflowView() {
     [subject, live.agents],
   );
 
+  /**
+   * 只属于当前链路的待人工任务。
+   *
+   * 徽标原本用 agent 上累积的 waitingTaskIds，那是跨运行的：昨天另一条链路留下的
+   * 未处理任务会挂在今天这次运行的节点上——节点显示「待人工」，点开却是别的 subject
+   * 的旧任务，看板于是和实际走过的路径对不上。
+   */
+  const taskInScope = useCallback(
+    (taskId: string) => {
+      if (!subject) return true;
+      const owner = live.taskSubject[taskId];
+      return owner == null || owner === subject;
+    },
+    [subject, live.taskSubject],
+  );
+
   /** The agent's state, or nothing when it belongs to another chain. */
   const stateOf = useCallback(
-    (name: string) => (inScope(name) ? live.agents[name] : undefined),
-    [inScope, live.agents],
+    (name: string) => {
+      if (!inScope(name)) return undefined;
+      const state = live.agents[name];
+      if (!state || !subject) return state;
+      const owned = state.waitingTaskIds.filter(taskInScope);
+      return owned.length === state.waitingTaskIds.length
+        ? state
+        : { ...state, waitingTaskIds: owned };
+    },
+    [inScope, live.agents, subject, taskInScope],
   );
 
   // Freshness is a function of elapsed time, so it needs a clock. It ticks only
@@ -630,9 +654,11 @@ export function LiveNode({
           ? copy(`失败 ${ago ?? ""}`.trim(), `Failed ${ago ?? ""}`.trim())
           : status === "ok"
             ? copy(`已完成 ${ago ?? ""}`.trim(), `Done ${ago ?? ""}`.trim())
-            : agent.actor === "Human"
-              ? copy("人工节点", "Human step")
-              : copy("空闲", "Idle");
+            : status === "skipped"
+              ? copy(`未执行 ${ago ?? ""}`.trim(), `Not taken ${ago ?? ""}`.trim())
+              : agent.actor === "Human"
+                ? copy("人工节点", "Human step")
+                : copy("空闲", "Idle");
   return (
     <button
       type="button"

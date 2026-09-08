@@ -1,0 +1,20 @@
+{
+  "rows": [
+    {
+      "CATALOG_ID": "CC-001",
+      "CATEGORY_CODE": "CAT-HV-SWITCH",
+      "CENTRAL_PURCHASE_FLAG": true,
+      "CENTRAL_PURCHASE_LEVEL": "集团集采",
+      "EFFECTIVE_FROM": "2026-01-01",
+      "MATERIAL_CODE": "M-BRK-126"
+    },
+    {
+      "CATALOG_ID": "CC-002",
+      "CATEGORY_CODE": "CAT-CABLE",
+      "CENTRAL_PURCHASE_FLAG": false,
+      "CENTRAL_PURCHASE_LEVEL": "省级自采",
+      "EFFECTIVE_FROM": "2026-01-01",
+      "MATERIAL_CODE": "M-CAB-240"
+    }
+  ]
+}

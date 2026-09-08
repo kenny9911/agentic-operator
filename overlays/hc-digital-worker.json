@@ -1,0 +1,396 @@
+{
+  "emissions": {
+    "scanApprovedDemandPlan": [
+      {
+        "event": "APPROVED_DEMAND_PLAN_SCANNED",
+        "payload_from": "results.scanApprovedDemandPlan",
+        "when": "always"
+      }
+    ],
+    "analyzeDemandMerge": [
+      {
+        "event": "DEMAND_MERGE_ANALYZED",
+        "payload_from": "results.analyzeDemandMerge",
+        "when": "lastResult.split_required == false"
+      },
+      {
+        "event": "DEMAND_SPLIT_REQUIRED",
+        "payload_from": "results.analyzeDemandMerge",
+        "when": "lastResult.split_required == true"
+      }
+    ],
+    "splitOversizedDemand": [
+      {
+        "event": "DEMAND_SPLIT_CONFIRMED",
+        "payload_from": "event.data",
+        "when": "results.manual-3.decision == 'approved'"
+      }
+    ],
+    "verifyInventoryAvailability": [
+      {
+        "event": "INVENTORY_AVAILABILITY_VERIFIED",
+        "payload_from": "results.verifyInventoryAvailability",
+        "when": "always"
+      },
+      {
+        "event": "STOCK_SUFFICIENT_FOR_DEMAND",
+        "payload_from": "results.verifyInventoryAvailability",
+        "when": "lastResult.purchase_required == false"
+      },
+      {
+        "event": "PURCHASE_REQUIRED_CONFIRMED",
+        "payload_from": "results.verifyInventoryAvailability",
+        "when": "lastResult.purchase_required == true"
+      }
+    ],
+    "derivePurchaseSchedule": [
+      {
+        "event": "PURCHASE_SCHEDULE_DERIVED",
+        "payload_from": "results.derivePurchaseSchedule",
+        "when": "lastResult.schedule_derived == true"
+      },
+      {
+        "event": "SCHEDULE_TIME_CONFLICT_DETECTED",
+        "payload_from": "results.derivePurchaseSchedule",
+        "when": "lastResult.time_conflict == true"
+      }
+    ],
+    "auditAnnualPlanCompliance": [
+      {
+        "event": "ANNUAL_PLAN_AUDITED",
+        "payload_from": "results.auditAnnualPlanCompliance",
+        "when": "lastResult.audit_passed == true"
+      },
+      {
+        "event": "PLAN_AUDIT_INTERCEPTED",
+        "payload_from": "results.auditAnnualPlanCompliance",
+        "when": "lastResult.audit_passed == false"
+      }
+    ],
+    "returnPlanForRectification": [
+      {
+        "event": "PLAN_RETURNED_FOR_RECTIFICATION",
+        "payload_from": "event.data",
+        "when": "always"
+      },
+      {
+        "event": "PLAN_RECTIFICATION_SUBMITTED",
+        "payload_from": "event.data",
+        "when": "results.manual-4.decision == 'approved'"
+      }
+    ],
+    "recommendPackagingScheme": [
+      {
+        "event": "PACKAGING_SCHEME_RECOMMENDED",
+        "payload_from": "results.recommendPackagingScheme",
+        "when": "lastResult.packaging_compliant == true"
+      },
+      {
+        "event": "PACKAGING_COMPLIANCE_VIOLATED",
+        "payload_from": "results.recommendPackagingScheme",
+        "when": "lastResult.packaging_compliant == false"
+      }
+    ],
+    "annotateFrameAndCentralPurchase": [
+      {
+        "event": "FRAME_AND_CENTRAL_ANNOTATED",
+        "payload_from": "event.data",
+        "when": "always"
+      }
+    ],
+    "raisePackagingComplianceAlert": [
+      {
+        "event": "PACKAGING_ALERT_RAISED",
+        "payload_from": "event.data",
+        "when": "always"
+      }
+    ],
+    "confirmPlanAndPackage": [
+      {
+        "event": "PLAN_AND_PACKAGE_CONFIRMED",
+        "payload_from": "results.manual-2",
+        "when": "results.manual-2.decision == 'approved'"
+      },
+      {
+        "event": "PLAN_AND_PACKAGE_REJECTED",
+        "payload_from": "event.data",
+        "when": "results.manual-2.decision == 'rejected'"
+      }
+    ],
+    "submitPlanForApproval": [
+      {
+        "event": "PLAN_SUBMITTED_FOR_APPROVAL",
+        "payload_from": "event.data",
+        "when": "always"
+      }
+    ]
+  },
+  "rule_gates": {
+    "BR2-STOCK-01": {
+      "strategy": "condition",
+      "condition": "input.purchase_required == false"
+    },
+    "BR2-HITL-01": {
+      "strategy": "condition",
+      "condition": "input.confirmed_by"
+    }
+  },
+  "tool_arguments": {
+    "splitOversizedDemand": {
+      "payload": {
+        "from": "results.manual-3"
+      }
+    },
+    "createInventoryTransferOrder": {
+      "payload": {
+        "from": "event.data"
+      }
+    },
+    "generateExecutionPlanDraft": {
+      "payload": {
+        "from": "event.data"
+      }
+    },
+    "returnPlanForRectification": {
+      "payload": {
+        "from": "results.manual-4",
+        "with": {
+          "task_type": "计划整改",
+          "title": "年度计划合规校验未通过，请整改后重新提交",
+          "assignee_role": "计划员"
+        }
+      }
+    },
+    "annotateFrameAndCentralPurchase": {
+      "payload": {
+        "from": "event.data"
+      }
+    },
+    "raisePackagingComplianceAlert": {
+      "payload": {
+        "from": "event.data",
+        "with": {
+          "task_type": "组包合规预警",
+          "title": "组包方案违反合规规则，请重新编排",
+          "assignee_role": "计划员"
+        }
+      }
+    },
+    "confirmPlanAndPackage": {
+      "payload": {
+        "from": "results.manual-2"
+      }
+    },
+    "submitPlanForApproval": {
+      "payload": {
+        "from": "event.data"
+      }
+    }
+  },
+  "manual_steps": {
+    "splitOversizedDemand": {
+      "confirmSplitByPlanner": {
+        "task_type": "demand.split-confirm",
+        "awaiting_role": "计划员",
+        "form_schema": {
+          "type": "object",
+          "title": "需求拆分确认（R2-01）",
+          "description": "计划行编号与拆分建议由系统从本轮比对结果带出，不需要手工填写；只需确认是否按建议拆分。",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "title": "确认结果（确认后按建议拆分）",
+              "enum": [
+                "approved",
+                "rejected"
+              ]
+            },
+            "plan_line_id": {
+              "type": "string",
+              "title": "计划行编号"
+            },
+            "split_reason": {
+              "type": "string",
+              "title": "拆分理由"
+            },
+            "remark": {
+              "type": "string",
+              "title": "备注"
+            }
+          },
+          "required": [
+            "decision",
+            "plan_line_id"
+          ]
+        }
+      }
+    },
+    "returnPlanForRectification": {
+      "acceptRectification": {
+        "task_type": "plan.rectify",
+        "awaiting_role": "计划员",
+        "form_schema": {
+          "type": "object",
+          "title": "计划退回整改（R2-04）",
+          "description": "审核意见与违规明细由系统带出；整改完成后确认，计划将重新进入合规校验。",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "title": "确认结果（确认后重新进入合规校验）",
+              "enum": [
+                "approved",
+                "rejected"
+              ]
+            },
+            "audit_opinion_id": {
+              "type": "string",
+              "title": "审核意见编号"
+            },
+            "rectification_note": {
+              "type": "string",
+              "title": "整改说明"
+            }
+          },
+          "required": [
+            "decision",
+            "audit_opinion_id",
+            "rectification_note"
+          ]
+        }
+      }
+    },
+    "confirmPlanAndPackage": {
+      "confirmByPlanner": {
+        "task_type": "plan.package-confirm",
+        "awaiting_role": "计划员",
+        "form_schema": {
+          "type": "object",
+          "title": "计划与组包确认（R2-06）",
+          "description": "计划编号与组包方案由系统带出，确认人取当前登录人；确认后进入审批提交，驳回则退回组包重排。",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "title": "确认结果（驳回则退回组包重排）",
+              "enum": [
+                "approved",
+                "rejected"
+              ]
+            },
+            "plan_id": {
+              "type": "string",
+              "title": "计划编号"
+            },
+            "package_scheme_id": {
+              "type": "string",
+              "title": "组包方案编号"
+            },
+            "confirmed_by": {
+              "type": "string",
+              "title": "确认人"
+            },
+            "remark": {
+              "type": "string",
+              "title": "备注"
+            }
+          },
+          "required": [
+            "decision",
+            "plan_id",
+            "package_scheme_id",
+            "confirmed_by"
+          ]
+        }
+      },
+      "captureRejectionReason": {
+        "task_type": "plan.package-reject-reason",
+        "awaiting_role": "计划员",
+        "condition": "results.manual-2.decision == 'rejected'",
+        "form_schema": {
+          "type": "object",
+          "title": "驳回原因（仅驳回时填写）",
+          "properties": {
+            "rejection_reason": {
+              "type": "string",
+              "title": "驳回原因"
+            }
+          },
+          "required": []
+        }
+      }
+    }
+  },
+  "output_contracts": {
+    "scanApprovedDemandPlan": {
+      "fields": {
+        "demand_plan": "本轮纳入的采购计划头列表：[{plan_id, plan_no, business_type, plan_type, status, demand_organization, demand_department, planner, annual_plan_flag, approved_at}]。只含 status='已批准' 的计划，草稿/已取消/已删除一律不得出现。",
+        "demand_plan_line": "计划行列表（每条归属到其 plan_id）：[{plan_line_id, plan_id, line_type_code, material_code, material_name, quantity, unit, estimated_unit_price, required_arrival_date, inventory_org, split_flag}]。编码一律用 metaERP 返回的原值。",
+        "scanned_line_count": "本轮纳入的计划行条数（整数）。",
+        "coverage_note": "本轮范围说明：触发事件带 plan_id 时写明只处理该计划，否则写明已全量纳入所有已批准计划。",
+        "scan_date": "触发事件负载里 scan_date 的值，**原样照抄**（YYYY-MM-DD）。这是业务扫描日期，不是系统时间——与你认知里的今天不同也以它为准。**必填，不得留空**。"
+      }
+    },
+    "analyzeDemandMerge": {
+      "fields": {
+        "demand_plan_line": "原样透传上游计划行列表，不得改写。",
+        "merge_suggestion": "合并建议列表：[{merge_suggestion_id, split_option_label, plan_line_id, material_code, line_type_code, member_plan_line_ids:[string], date_span_days:number, suggestion:'mergeable'|'split_required'|'needs_confirmation', merged_quantity:number, weighted_unit_price:number, confidence:number}]。每个聚类一条。\n其中两个字段直接决定人工闸口能否作答，必须填：\n- `plan_line_id`：本条建议要拆分/合并的**目标计划行编号**，取自 member_plan_line_ids 中作为主行的那一条。计划员在待办里选中本条建议时，系统就用它回写 metaERP。\n- `split_option_label`：给人看的短名，**不超过 20 字、不带标点**，一眼说清这条建议是什么，例如「M-BRK-126 三行合并」「M-CAB-240 跨期拆分」。不要写成编号，也不要重复 merge_reason。",
+        "split_required": "**必填布尔值**。只要有任意一组 suggestion='split_required' 就填 true，否则 false。工作流据此决定走拆分分支还是直接进库存校验——填错会让整条链路走错方向。",
+        "thresholds_used": "本次采用的分档阈值：{merge_window_days:number, split_window_days:number}。",
+        "scan_date": "原样透传上游 scan_date。",
+        "merge_reason": "可选。每条建议的成因说明（一句话），写在 merge_suggestion[].merge_reason 里，供计划员判断时阅读。"
+      }
+    },
+    "verifyInventoryAvailability": {
+      "fields": {
+        "demand_plan_line": "原样透传上游计划行列表。",
+        "stock_check_result": "逐条需求的库存校验结论：[{stock_check_id, plan_line_id, material_code, inventory_org, onhand_qty:number, reserved_qty:number, available_qty:number, safety_stock_qty:number, max_stock_qty:number, stock_check_flag:'可调度'|'需采购'|'触及安全库存', explanation:string}]。explanation 必须写明用到的数值。",
+        "purchase_required": "**必填布尔值**。只要有任意一条 stock_check_flag 不是 '可调度'，就填 true（需要走采购）；全部为 '可调度' 才填 false（转调拨，采购路径结束）。工作流据此分流。",
+        "scan_date": "原样透传上游 scan_date。"
+      }
+    },
+    "derivePurchaseSchedule": {
+      "fields": {
+        "demand_plan_line": "原样透传上游计划行列表。",
+        "backward_schedule_plan": "倒排计划：[{schedule_plan_id, plan_line_id, required_arrival_date, business_type, schedule_derived:boolean}]。",
+        "backward_schedule_stage": "各节点计划完成时间：[{schedule_stage_id, schedule_plan_id, stage_node, stage_sequence:1-8, standard_cycle_days:number, planned_finish_date:'YYYY-MM-DD'}]。按倒排公式逐字计算，并做正排交叉校验。",
+        "schedule_derived": "**必填布尔值**。所有计划行都完成倒排且两向校验一致才填 true。",
+        "time_conflict": "**必填布尔值**。倒排出的第一个节点计划完成时间早于 scan_date（工期已经不够）时填 true，否则 false。",
+        "scan_date": "原样透传上游 scan_date。"
+      }
+    },
+    "auditAnnualPlanCompliance": {
+      "fields": {
+        "demand_plan_line": "原样透传上游计划行列表。",
+        "audit_opinion": "审核意见：{audit_opinion_id, plan_id, audited_at, audit_passed:boolean, summary:string}。",
+        "audit_finding": "违规明细：[{audit_finding_id, audit_opinion_id, plan_line_id, finding_type:'集采未标注'|'价格偏离超限'|'必填项缺失', expected:string, actual:string, explanation:string}]。全部通过时为空数组。",
+        "audit_passed": "**必填布尔值**。三项校验全部通过才填 true；任意一条违规填 false。工作流据此决定放行组包还是退回整改。",
+        "thresholds_used": "本次采用的阈值：{price_deviation_ratio:number, threshold_ids:[string]}，必须取自 queryAuditThresholdConfig。",
+        "scan_date": "原样透传上游 scan_date。"
+      }
+    },
+    "recommendPackagingScheme": {
+      "fields": {
+        "package_scheme": "组包方案：[{package_scheme_id, package_name, category_code, member_plan_line_ids:[string], total_amount:number, category_count:integer, required_arrival_window:string}]。",
+        "packaging_finding": "组包合规结论：[{pkg_finding_id, package_scheme_id, finding_type:'单包金额超限'|'品类混装超限', threshold_value:number, actual_value:number, explanation:string}]。全部合规时为空数组。",
+        "packaging_compliant": "**必填布尔值**。所有候选包都合规才填 true；任意一个不合规填 false。工作流据此决定继续标注还是先发合规预警。",
+        "thresholds_used": "本次采用的阈值：{package_max_amount:number, package_category_mixed:number, threshold_ids:[string]}。",
+        "scan_date": "原样透传上游 scan_date。"
+      }
+    }
+  },
+  "submission_gates": {},
+  "input_examples": {
+    "DAILY_DEMAND_PLAN_SCAN_SCHEDULED": {
+      "scan_batch_id": "DW-20260907-001",
+      "scan_scope": "指定管理单元",
+      "plan_id": "",
+      "unit_code": "1000",
+      "organization_code": "YF1"
+    },
+    "DEMAND_PLAN_APPROVED": {
+      "plan_id": "100020260903000006",
+      "plan_no": "100020260903000006",
+      "approved_at": "2026-09-03T10:10:00+08:00",
+      "business_type": "物资"
+    }
+  }
+}

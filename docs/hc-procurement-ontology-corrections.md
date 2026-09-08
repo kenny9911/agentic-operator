@@ -400,3 +400,151 @@ R1-02 说「以需求到货日期为终点按配置的标准周期逐级倒排�
 
 编译器会拒绝指向不存在的动作、或指向非 external 动作的 `submission_gates` 条目——
 一个被静默忽略的闸口比不支持更糟：它该拦的分支照跑，而覆盖层看上去是对的。
+
+---
+
+## C-10 扫描事件没有承载「单位」的字段，且「加载示例」给的是不存在的单号
+
+**现状**：`DAILY_DEVIATION_SCAN_SCHEDULED` 有 `chain_scope`，描述写着
+「扫描范围：全集团或指定单位」——但没有字段说明是哪个单位，也没有库存组织。
+
+**问题**：真实 metaERP 每个查询都要管理单元编码，没有就直接拒绝
+（`字段:管理单元编码不能为空`）。对着 mock 看不出来，mock 不给也能返回全量。
+同时运行控制台的「加载示例」按 schema 生成占位串，在真实环境里查回空集——
+运行不报错，只是什么都没查到，比报错更难排查。
+
+**建议修正**：给扫描事件加 `unit_code` 与 `organization_code`；
+并为关键事件字段声明真实可用的示例值。
+
+**平台侧现状**：`scripts/stage-hc-procurement-ontology.mjs` 的 `SCAN_SCOPE_FIELDS`
+投影这两个字段，`collectChainExecutionData` 的取数提示加了第 0 步；
+`overlays/hc-procurement.json` 的 `input_examples` 填入 v15 真实数据——
+管理单元 `1000`、库存组织 `YF1`、走通到订单的完整链路
+`100020260902000003 → PROCPKG20260903000005 → RFQ20260903000007 → BID202609036/7
+→ CN20260903FA000001 → BPA20260903000003 → HPO1000202609030004`。
+
+---
+
+## C-11 逐链路预警与单次推送动作对不上
+
+**现状**：`scoreOnTimeProbability` 的 `alert_level` 按本体口径与每条链路一一对应（数组），
+而 `raiseDeviationAlert` 编译成的是**一次** external 动作，`tool_arguments` 把整个
+`event.data` 当作 pushAlert 的请求体。
+
+**问题**：数组被 `String()` 成 `"蓝色,蓝色,蓝色,蓝色"`，ERP 返回
+`400 unsupported alert level`，动作连重试四次全败。真实数据下一条采购需求就有 4 条链路，
+所以这个问题在真实环境里必现，mock 单链路时看不出来。
+
+**建议修正**：把「按概率分级推送」建模成对每条链路的循环动作（foreach），
+而不是一个接收链路数组的单次动作。
+
+**平台侧现状**：`alert_level` 改为**单个**最严重等级（红 > 黄 > 蓝），推一条批次预警；
+每条链路各自的等级仍完整保留在 `probability_assessment[].probability_grade` 里，不丢信息。
+本体补上 foreach 后应改回逐条推送。
+
+---
+
+## C-12 赶不上的链路被历史达成率抬成了蓝色
+
+**现状**：`scoreOnTimeProbability` 把剩余标准周期、滞留天数、历史达成率并列为加权因子。
+
+**问题**：真实数据上模型自己算出 **剩余周期 145 天 > 距到货 115 天**（缺口 30 天，按标准周期
+根本赶不到），却因为历史按期达成率 74% 给出 `on_time_probability=0.88` → 定级蓝色，
+于是走「计划员自行处置」而不是升级。解释里还自相矛盾：「剩余周期虽理论上充裕但已出现
+10 天缺口」——既说充裕，又把 30 天的缺口写成 10 天。
+
+**周期赶不上是算术事实，不是风险偏好**，历史表现救不回一个时间上不可能的排期。
+
+**建议修正**：把 `gap = 剩余标准周期 − 距要求到货天数 > 0` 定为硬约束——命中即判红色，
+软因子只在 gap ≤ 0 时用于黄/蓝之间的加权。
+
+**同时发现**：`thresholds_used` 回填的是空对象 `{}`，而解释里引用了「黄色概率下限 0.85」
+——定级用的是模型记忆里的数，不是 `queryAlertThresholdConfig` 返回的配置。契约已改为必填。
+
+**平台侧现状**：两条都写进了 `overlays/hc-procurement.json` 的输出契约。
+
+---
+
+## C-13 调拨单的行结构在 swagger 里没有定义
+
+**现状**：方案③落地调用 `createTransactionOrder`。真实 ERP 拒绝时点名了 6 个必填字段，
+其中 `lineList` 的元素类型是 `OrderCreatePubLineDTO`——而该 schema 在 swagger 里标着
+`x-unresolved: true`，**没有任何字段定义**。
+
+**已解决的部分**：
+- `uniqueSequenceNumber` 由运行时用 runId 填充。ERP 自己要求这个字段，正好是它的幂等键：
+  编译出的外部动作每次运行只发一次该写调用，runId 稳定且唯一，Inngest 重放拿到同一个值，
+  由 ERP 拒掉重复建单，而不是造出第二张单。
+- `sourceSystemCode` / `txnOrderTypeCode` / `transactionTypeCode` / `autoSubmit` 是 ERP
+  **实例**配置值（swagger 里既无枚举也无说明），改由环境变量提供，未配置则整字段省略——
+  让 ERP 点名报缺，好过我们编一个值建出错误的单据类型。
+
+**行结构已由实测反推出来**（swagger 帮不上忙，是拿 ERP 自己的报错一层层逼出来的）：
+
+```
+lineList[]: itemCode, organizationCode, storehouseCode,
+            transactionQuantity, transactionUomCode,
+            requiredDate,                 ← 行上也必须有，与头同名同值
+            sourceObjectNumber, sourceObjectLineId
+```
+
+期间纠正的两处：`autoSubmit` 是 **Y/N** 不是 `Yes`（430437「长度不得超过 1」）；
+行的日期字段叫 `requiredDate`，不是 `requirementDate` 或 `needByDate`。
+
+**已确认可用的配置值**：`sourceSystemCode=LYY2`、`txnOrderTypeCode=在途交易出货`、
+`autoSubmit=Y`、`submittedBy=1`。
+
+`transactionTypeCode` = **`INTRANSIT_ISSUE`**，`txnOrderTypeCode` = **`INOT`**。
+两个字段要的都是**编码不是显示名**——中文名一律被拒（在途 / 在途交易出货 / 在途出货…）。
+
+**调拨单已在 v15 真实创建成功**（`txnOrderHeaderId: 1992656320092771594` 等），
+完整可用的请求结构：
+
+```
+头: unitCode=1000, organizationCode=YF1, sourceSystemCode=LYY2,
+    txnOrderTypeCode=INOT, transactionTypeCode=INTRANSIT_ISSUE,
+    autoSubmit=Y, submittedBy=1, sourceCode=<采购需求编号>,
+    requiredDate='YYYY-MM-DD HH:mm:ss', uniqueSequenceNumber=<runId>
+行: itemCode, organizationCode, storehouseCode（调出库）,
+    transactionQuantity, transactionUomCode, requiredDate（与头同值）,
+    sourceObjectNumber, sourceObjectLineId
+```
+
+**已在 v15 实跑建单成功**：单号 `INOT20260908YF100004`，行状态 DRAFT、无错误。
+完整可用报文（每一项都由实跑逐个逼出）：
+
+```
+头: unitCode=1000, organizationCode=YF1(发出库存组织),
+    transferOrganizationCode=YF2(接收库存组织，必须与发出不同),
+    sourceSystemCode=LYY2, txnOrderTypeCode=INOT,
+    transactionTypeCode=ORGANIZATION_TRANSFER(直接跨组织转库),
+    autoSubmit=Y, submittedBy=1, sourceCode=<采购需求编号>,
+    requiredDate=<需求到货日期>, uniqueSequenceNumber=<runId>
+行: itemCode, organizationCode=YF1, storehouseCode=300000(发出存储库),
+    locatorCode=LC001(发出货位), transferStorehouseCode=1000(接收存储库),
+    transactionQuantity, transactionUomCode=EA,
+    requiredDate=<**必须早于当前时刻**>, sourceObjectNumber, sourceObjectLineId
+```
+
+三个反直觉的点，都是被 ERP 报错逐个逼出来的：
+
+1. **交易类型是 `ORGANIZATION_TRANSFER`（直接跨组织转库），不是 `INTRANSIT_ISSUE`**。
+   后者是在途出货，另一套两步流程。
+2. **行上的 `requiredDate` 被当作交易时间校验，必须早于当前时刻**——填需求到货日期
+   （未来）会被拒：`The transaction time must before now.`。头上的 requiredDate 仍是
+   需求日期，两者语义不同却同名。
+3. **发出货位必填**：成品库启用了货位控制，缺 `locatorCode` 报
+   `The locator is enabled, but the locator code is not transferred`，而 UI 上这一栏
+   是空的——界面会自动补，接口不会。
+
+**方法教训（值得单独记）**：中途把多个假设塞进同一张单的多行做批量探测，ERP 会把整批
+报成同一个错误，导致「错误前进了一格 = 这个字段对了」的推断连续多轮失真——曾据此错误
+断定 LYY1/LYY2 是库位、又断定是组织。**每次只改一个变量、每张单只放一行**之后，三轮
+之内就走通了。真正解题的是用户提供的 UI 截图（发出/接收库存组织 YF1→YF2、交易类型
+ORGANIZATION_TRANSFER），不是继续猜。
+
+**仍待确认**：行状态是 `DRAFT` 而非已提交，`autoSubmit=Y` 似乎未生效，可能取值不是 Y
+（也可能提交是独立动作）。演示若要求单据处于已提交状态，需再确认这一项。
+
+**探测残留**：v15 中共 13 张只有头、行为 FAILED 的调拨单，加 1 张成功单
+（INOT20260908YF100004）。失败单演示前建议清理。

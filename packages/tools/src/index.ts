@@ -78,6 +78,7 @@ export * as document from "./document";
 export * as config from "./config";
 export * as browser from "./browser";
 export * as comms from "./comms";
+export * as planning from "./planning";
 export * as powerPurchase from "./power-purchase";
 
 // DI seam: apps/api injects a resolver at boot so DB-backed integration

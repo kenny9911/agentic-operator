@@ -16,6 +16,7 @@ import { canonicalJson } from "../src/canonical-json.ts";
 import { compile, serializeCompileResult } from "../src/compile.ts";
 import { loadStudioDomain } from "../src/load.ts";
 import type { CompiledAgent, CompiledStep, CompilerOverlay } from "../src/types.ts";
+import type { MetaerpOperationParams } from "../src/compile.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, "..", "..", "..");
@@ -58,10 +59,31 @@ const SCENARIO_TWO = [
   "submitPlanForApproval",
 ];
 
+/**
+ * 与 CLI 一致的入参清单加载。
+ *
+ * `pnpm hcf:compile` 走 cli.ts，它会读 config/metaerp-operation-params.json 并把
+ * 每个 ERP 操作的真实请求字段写进 metaerp.invoke 的工具描述。测试若不加载同一份
+ * 文件，断言的就不是这条命令实际写出的产物——漂移检查会在编译器正确的时候报红。
+ */
+function operationParams(): Record<string, MetaerpOperationParams> | undefined {
+  const file = path.join(REPO_ROOT, "config", "metaerp-operation-params.json");
+  if (!existsSync(file)) return undefined;
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+    operations?: Record<string, MetaerpOperationParams>;
+  };
+  const operations = parsed.operations;
+  return operations && Object.keys(operations).length ? operations : undefined;
+}
+
 function compileDomain() {
   const model = loadStudioDomain(SOURCE);
   const overlay = JSON.parse(readFileSync(OVERLAY, "utf8")) as CompilerOverlay;
-  return compile(model, overlay, { tenant: "procurement-hc-formal" });
+  const params = operationParams();
+  return compile(model, overlay, {
+    tenant: "procurement-hc-formal",
+    ...(params ? { operationParams: params } : {}),
+  });
 }
 
 function agentById(workflow: CompiledAgent[], id: string): CompiledAgent {

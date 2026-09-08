@@ -35,6 +35,7 @@ import {
   actorDefaults,
   contextInsights,
   contextSummary,
+  pickContext,
   decisionOptions,
   prefillFromContext,
   type ContextFact,
@@ -83,15 +84,24 @@ export function NodeTaskPanel({
   // identifiers nobody could type, and the context nobody could decide without.
   const run = useRun(task.data?.runId ?? null);
   const me = useMe();
+  // `prefill` is stored WITH the task, by the runtime, from the data that
+  // opened it. It comes first because the run payload behind it is capped at
+  // 24KB and collapses to a `_truncated` marker on a real chain — which is how
+  // an operator ends up staring at a required 预警编号 with nothing to type.
   const sources = useMemo(
-    () => [payload.preparedContext, run.data?.run?.inputPayload],
-    [payload.preparedContext, run.data],
+    () => [payload.prefill, payload.preparedContext, run.data?.run?.inputPayload],
+    [payload.prefill, payload.preparedContext, run.data],
   );
   const fieldNames = useMemo(
     () => definition.fields.map((field) => field.name),
     [definition],
   );
-  const runPayload = run.data?.run?.inputPayload;
+  // 运行载荷超过 API 的 24KB 上限就整个塌成 {_truncated} 标记——真实链路必然超。
+  // 那时退回任务自己带的决策简报，而不是给审批人两栏空白。
+  const runPayload = useMemo(
+    () => pickContext(run.data?.run?.inputPayload, payload.preparedContext),
+    [run.data, payload.preparedContext],
+  );
   const summary = useMemo(() => contextSummary(runPayload), [runPayload]);
   const insights = useMemo(() => contextInsights(runPayload), [runPayload]);
   const options = useMemo(

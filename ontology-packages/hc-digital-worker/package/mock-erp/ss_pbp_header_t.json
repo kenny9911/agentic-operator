@@ -1,0 +1,48 @@
+{
+  "rows": [
+    {
+      "ANNUAL_PLAN_FLAG": true,
+      "APPROVED_AT": "2026-11-28T16:30:00+08:00",
+      "BUSINESS_TYPE": "物资",
+      "DEMAND_DEPARTMENT": "检修一部",
+      "DEMAND_ORGANIZATION": "华东检修分公司",
+      "DEPARTMENT_LEADER": "李部长",
+      "DIVISION_LEADER": "王分管",
+      "PBP_HEADER_ID": "PBP-2027-0101",
+      "PLANNER": "张计划",
+      "PLAN_NO": "PBP-2027-0101",
+      "PLAN_TYPE": "年度计划",
+      "STATUS": "已批准",
+      "SUBMITTED_AT": "2026-11-20T09:00:00+08:00",
+      "TOTAL_AMOUNT": 4800000
+    },
+    {
+      "ANNUAL_PLAN_FLAG": true,
+      "APPROVED_AT": "2026-11-29T10:10:00+08:00",
+      "BUSINESS_TYPE": "物资",
+      "DEMAND_DEPARTMENT": "检修二部",
+      "DEMAND_ORGANIZATION": "华东检修分公司",
+      "DEPARTMENT_LEADER": "李部长",
+      "DIVISION_LEADER": "王分管",
+      "PBP_HEADER_ID": "PBP-2027-0102",
+      "PLANNER": "赵计划",
+      "PLAN_NO": "PBP-2027-0102",
+      "PLAN_TYPE": "年度计划",
+      "STATUS": "已批准",
+      "SUBMITTED_AT": "2026-11-21T09:00:00+08:00",
+      "TOTAL_AMOUNT": 2100000
+    },
+    {
+      "ANNUAL_PLAN_FLAG": true,
+      "BUSINESS_TYPE": "物资",
+      "DEMAND_DEPARTMENT": "检修三部",
+      "DEMAND_ORGANIZATION": "华东检修分公司",
+      "PBP_HEADER_ID": "PBP-2027-0199",
+      "PLANNER": "钱计划",
+      "PLAN_NO": "PBP-2027-0199",
+      "PLAN_TYPE": "年度计划",
+      "STATUS": "草稿",
+      "TOTAL_AMOUNT": 500000
+    }
+  ]
+}
