@@ -31,6 +31,7 @@ import {
 import type {
   EventRow,
   RunBusinessResult,
+  RunExecutionRow,
   RunRow,
   RunUsageSummary,
   StepRow,
@@ -280,6 +281,8 @@ export interface RunFilterOpts {
   testRun?: boolean;
   from?: number;
   to?: number;
+  /** One workflow execution: every agent run carrying this subject. */
+  subject?: string;
   /** true → only tombstoned rows (recycle bin); default/false → only live rows. */
   deleted?: boolean;
 }
@@ -342,6 +345,9 @@ function buildRunWhere(tenantId: string, opts: RunFilterOpts) {
   if (opts.parentRunId) {
     whereParts.push(eq(runs.parentRunId, opts.parentRunId));
   }
+  if (opts.subject) {
+    whereParts.push(eq(runs.subject, opts.subject));
+  }
   if (
     opts.status &&
     opts.status !== "all" &&
@@ -402,6 +408,7 @@ export async function listRecentRuns(
     testRun?: boolean;
     from?: number;
     to?: number;
+    subject?: string;
     deleted?: boolean;
   } = {},
 ): Promise<RunRow[]> {
@@ -486,6 +493,128 @@ export async function listRecentRuns(
  * index backs the ORDER BY. Shares the exact filter predicate with
  * `listRecentRuns` via `buildRunWhere`, including the soft-delete lens.
  */
+/**
+ * Workflow executions — agent runs rolled up by subject.
+ *
+ * The runs table is per-agent: one procurement chain is fifteen rows, and no
+ * amount of scrolling that list answers "how did that execution go". Every
+ * agent in a chain carries the same subject, so grouping on it restores the
+ * unit the operator actually watched. Runs without a subject (ad-hoc single
+ * invocations) are not executions and are left out.
+ *
+ * Grouped in SQL rather than in the client: the client only ever holds one
+ * page, so client-side grouping would silently report "3 runs" for an
+ * execution whose other twelve rows are on page two.
+ */
+export async function listRunExecutions(
+  tenantSlug: string,
+  opts: { page?: number; pageSize?: number; query?: string } = {},
+): Promise<{
+  rows: RunExecutionRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const db = getDb();
+  const page = Math.max(1, Math.trunc(opts.page ?? 1));
+  const pageSize = Math.min(200, Math.max(1, Math.trunc(opts.pageSize ?? 50)));
+  const tenantId = await resolveTenantId(tenantSlug);
+  if (!tenantId) return { rows: [], total: 0, page, pageSize };
+
+  const whereParts = [
+    eq(runs.tenantId, tenantId),
+    isNull(runs.deletedAt),
+    isNotNull(runs.subject),
+  ];
+  if (opts.query) {
+    const q = `%${opts.query}%`;
+    whereParts.push(or(like(runs.subject, q), like(agents.name, q))!);
+  }
+  const where = and(...whereParts);
+
+  const totalRow = db
+    .select({ c: sql<number>`count(distinct ${runs.subject})` })
+    .from(runs)
+    .innerJoin(agents, eq(agents.id, runs.agentId))
+    .where(where)
+    .all()[0];
+  const total = Number(totalRow?.c ?? 0);
+
+  // `ended_at` is null while a run is in flight, so activity falls back to the
+  // start and then the queue time — an execution that only ever queued still
+  // sorts sensibly instead of landing at the epoch.
+  const activityAt = sql<number>`max(coalesce(${runs.endedAt}, ${runs.startedAt}, ${runs.queuedAt}))`;
+  const startedAt = sql<number>`min(coalesce(${runs.queuedAt}, ${runs.startedAt}))`;
+
+  const grouped = db
+    .select({
+      subject: runs.subject,
+      runCount: sql<number>`count(*)`,
+      agentCount: sql<number>`count(distinct ${agents.name})`,
+      startedAt,
+      lastActivityAt: activityAt,
+      failedCount: sql<number>`sum(case when ${runs.status} = 'failed' then 1 else 0 end)`,
+      activeCount: sql<number>`sum(case when ${runs.status} in ('running', 'queued') then 1 else 0 end)`,
+      waitingCount: sql<number>`sum(case when ${runs.status} = 'waiting' then 1 else 0 end)`,
+      cancelledCount: sql<number>`sum(case when ${runs.status} = 'cancelled' then 1 else 0 end)`,
+      firstAgentName: sql<string | null>`(
+        select a2.name from runs r2 join agents a2 on a2.id = r2.agent_id
+        where r2.subject = ${runs.subject} and r2.tenant_id = ${tenantId}
+          and r2.deleted_at is null
+        order by coalesce(r2.queued_at, r2.started_at) asc limit 1
+      )`,
+      lastAgentName: sql<string | null>`(
+        select a2.name from runs r2 join agents a2 on a2.id = r2.agent_id
+        where r2.subject = ${runs.subject} and r2.tenant_id = ${tenantId}
+          and r2.deleted_at is null
+        order by coalesce(r2.queued_at, r2.started_at) desc limit 1
+      )`,
+    })
+    .from(runs)
+    .innerJoin(agents, eq(agents.id, runs.agentId))
+    .where(where)
+    .groupBy(runs.subject)
+    .orderBy(desc(activityAt))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
+    .all();
+
+  const rows: RunExecutionRow[] = grouped.map((row) => {
+    const failedCount = Number(row.failedCount ?? 0);
+    const activeCount = Number(row.activeCount ?? 0);
+    const waitingCount = Number(row.waitingCount ?? 0);
+    const cancelledCount = Number(row.cancelledCount ?? 0);
+    // Order matters: an execution with a live agent is running whatever else
+    // happened, and a failure outranks a completed sibling — the rollup must
+    // never read healthier than its worst part.
+    const status: RunExecutionRow["status"] =
+      activeCount > 0
+        ? "running"
+        : waitingCount > 0
+          ? "waiting"
+          : failedCount > 0
+            ? "failed"
+            : cancelledCount > 0
+              ? "cancelled"
+              : "ok";
+    return {
+      subject: String(row.subject),
+      runCount: Number(row.runCount ?? 0),
+      agentCount: Number(row.agentCount ?? 0),
+      firstAgentName: row.firstAgentName ?? null,
+      lastAgentName: row.lastAgentName ?? null,
+      startedAt: Number(row.startedAt ?? 0),
+      lastActivityAt: Number(row.lastActivityAt ?? 0),
+      failedCount,
+      activeCount,
+      waitingCount,
+      status,
+    };
+  });
+
+  return { rows, total, page, pageSize };
+}
+
 export async function listRunsPaged(
   tenantSlug: string,
   opts: {
@@ -501,6 +630,7 @@ export async function listRunsPaged(
     testRun?: boolean;
     from?: number;
     to?: number;
+    subject?: string;
     deleted?: boolean;
   } = {},
 ): Promise<{ rows: RunRow[]; total: number; page: number; pageSize: number }> {

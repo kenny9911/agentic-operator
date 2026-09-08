@@ -49,6 +49,8 @@ export interface RunListFilter {
    * trace-tree view to load the children of the current run.
    */
   parentRunId?: string;
+  /** One workflow execution — every agent run carrying this subject. */
+  subject?: string;
 }
 
 export type CodeActAttestationStatus =
@@ -91,6 +93,7 @@ function buildQuery(filter: RunListFilter | undefined): string {
   if (filter.to !== undefined) sp.set("to", String(filter.to));
   if (filter.limit) sp.set("limit", String(filter.limit));
   if (filter.parentRunId) sp.set("parentRunId", filter.parentRunId);
+  if (filter.subject) sp.set("subject", filter.subject);
   const s = sp.toString();
   return s ? `?${s}` : "";
 }
@@ -140,6 +143,62 @@ export function useRuns(filter?: RunListFilter): UseQueryResult<RunListRow[]> {
     queryFn: () => callV1<RunListRow[]>(`/v1/runs${query}`),
     staleTime: 2_000,
     // SSE invalidation is primary; polling is a bounded resilience fallback.
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+/**
+ * One workflow execution — the agent runs that share a subject, rolled up.
+ *
+ * Mirrors `RunExecutionRow` in @agentic/contracts.
+ */
+export interface RunExecutionRow {
+  subject: string;
+  runCount: number;
+  agentCount: number;
+  firstAgentName: string | null;
+  lastAgentName: string | null;
+  startedAt: number;
+  lastActivityAt: number;
+  failedCount: number;
+  activeCount: number;
+  waitingCount: number;
+  status: "running" | "waiting" | "failed" | "ok" | "cancelled";
+}
+
+export interface PaginatedRunExecutions {
+  rows: RunExecutionRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * The execution list — what the operator calls "a run of the workflow".
+ *
+ * Grouped on the server: the client holds one page, so grouping here would
+ * report an execution's run count as however many of its rows happened to
+ * land on the current page.
+ */
+export function useRunExecutions(filter: {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+}): UseQueryResult<PaginatedRunExecutions> {
+  const sp = new URLSearchParams();
+  if (filter.page) sp.set("page", String(filter.page));
+  if (filter.pageSize) sp.set("pageSize", String(filter.pageSize));
+  if (filter.q) sp.set("q", filter.q);
+  const query = sp.toString() ? `?${sp.toString()}` : "";
+  return useQuery({
+    queryKey: RUN_KEYS.list({ executions: true, ...filter } as Record<
+      string,
+      unknown
+    >),
+    queryFn: () =>
+      callV1<PaginatedRunExecutions>(`/v1/runs/executions${query}`),
+    staleTime: 2_000,
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
   });

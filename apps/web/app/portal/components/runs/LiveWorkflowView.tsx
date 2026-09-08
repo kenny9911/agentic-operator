@@ -48,6 +48,7 @@ import {
   appendFeed,
   countStates,
   edgeVisual,
+  executionStateFromRuns,
   linkRunAgent,
   nextFollowState,
   nodeFreshness,
@@ -57,6 +58,7 @@ import {
   type FeedEntry,
   type NodeFreshness,
 } from "./live-view";
+import { useRuns } from "@/lib/hooks/useRuns";
 import { NodeTaskPanel } from "./NodeTaskPanel";
 
 const FEED_W = 400;
@@ -76,7 +78,20 @@ function readFeedOpen(): boolean {
   }
 }
 
-export function LiveWorkflowView() {
+/**
+ * The workflow canvas.
+ *
+ * Two sources, one canvas: live it is fed by the run stream; given a
+ * `historySubject` it is rebuilt from that execution's persisted runs. Keeping
+ * one component means the historical view cannot drift from the live one —
+ * the layout, the node states and the colours are the same code.
+ */
+export function LiveWorkflowView({
+  historySubject = null,
+}: {
+  /** Render a finished execution instead of following the stream. */
+  historySubject?: string | null;
+} = {}) {
   const { language } = useI18n();
   const tenant = useTenant();
   const copy = useCallback(
@@ -99,7 +114,19 @@ export function LiveWorkflowView() {
     },
     [copy],
   );
-  const live = useWorkflowLiveState(tenant, onFrame);
+  const streamed = useWorkflowLiveState(tenant, onFrame);
+  // History is a fixed set of rows; 500 covers a chain many times over, and the
+  // canvas only needs one row per agent to colour it.
+  const historyRuns = useRuns(
+    historySubject ? { subject: historySubject, limit: 500 } : undefined,
+  );
+  const live = useMemo(
+    () =>
+      historySubject
+        ? executionStateFromRuns(historyRuns.data ?? [], historySubject)
+        : streamed,
+    [historySubject, historyRuns.data, streamed],
+  );
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
   // DEBUG lines are real content but bury the business ones; off by default.
@@ -133,7 +160,9 @@ export function LiveWorkflowView() {
   // like it raced through — human gate and all — when in truth those greens
   // belong to the previous subject.
   const [scoped, setScoped] = useState(true);
-  const subject = scoped ? live.latestSubject : null;
+  // History is one execution by definition — unpinning it would mean showing a
+  // chain the reader did not open.
+  const subject = historySubject ?? (scoped ? live.latestSubject : null);
   /** 画布是否固定在某一次执行上——固定时节点高亮不随时间褪去。 */
   const pinnedToExecution = subject != null;
   const inScope = useCallback(

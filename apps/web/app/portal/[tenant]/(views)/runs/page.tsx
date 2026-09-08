@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LiveWorkflowView } from "@/app/portal/components/runs/LiveWorkflowView";
+import { ExecutionHistory } from "@/app/portal/components/runs/ExecutionHistory";
 import Link from "next/link";
 import {
   Badge,
@@ -74,7 +75,7 @@ export default function RunsPage() {
   // moving graph. Workflows owns build time, this owns runtime — and runtime is
   // what someone opening this page wants first, so the graph is the default and
   // the table is one click away.
-  const [view, setView] = useState<"list" | "live">("live");
+  const [view, setView] = useState<"list" | "live" | "history">("live");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
   const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set());
@@ -256,13 +257,24 @@ export default function RunsPage() {
             </Button>
             <Button
               small
-              tone={binMode || view === "live" ? "ghost" : "primary"}
+              tone={binMode || view !== "list" ? "ghost" : "primary"}
               onClick={() => {
                 setView("list");
                 setBinMode(false);
               }}
             >
               {t("runs.activeRecords")}
+            </Button>
+            <Button
+              small
+              icon="replay"
+              tone={view === "history" ? "primary" : "ghost"}
+              onClick={() => {
+                setView("history");
+                setBinMode(false);
+              }}
+            >
+              {t("runs.executionHistory")}
             </Button>
             <Button
               small
@@ -280,10 +292,11 @@ export default function RunsPage() {
       />
 
       {view === "live" && <LiveWorkflowView />}
+      {view === "history" && <ExecutionHistory />}
 
       <div
         style={{
-          display: view === "live" ? "none" : "flex",
+          display: view === "list" ? "flex" : "none",
           padding: "12px 16px",
           borderBottom: "1px solid var(--border)",
           gap: 8,
@@ -446,7 +459,7 @@ export default function RunsPage() {
 
       <div
         style={{
-          display: view === "live" ? "none" : "block",
+          display: view === "list" ? "block" : "none",
           flex: 1,
           minHeight: 0,
           overflow: "auto",
@@ -547,7 +560,7 @@ export default function RunsPage() {
           padding: "9px 16px",
           borderTop: "1px solid var(--border)",
           // Paging belongs to the table; the live canvas has nothing to page.
-          display: view === "live" ? "none" : "flex",
+          display: view === "list" ? "flex" : "none",
           alignItems: "center",
           gap: 10,
           justifyContent: "space-between",
