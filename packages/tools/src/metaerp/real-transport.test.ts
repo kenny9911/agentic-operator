@@ -562,6 +562,7 @@ describe("createTransactionOrder · 单据行由平台补齐", () => {
     METAERP_TRANSFER_FROM_LOCATOR_CODE: "LC001",
     METAERP_TRANSFER_TO_STOREHOUSE_CODE: "1000",
     METAERP_TRANSFER_UOM_CODE: "EA",
+    METAERP_TRANSFER_FIXED_QUANTITY: "5",
   } as const;
 
   beforeEach(() => {
@@ -609,6 +610,8 @@ describe("createTransactionOrder · 单据行由平台补齐", () => {
     // 业务值保持模型给的
     expect(line.itemCode).toBe("10000009");
     expect(line.storehouseCode).toBe("300000");
+    // 演示期数量被钉死：模型报 100 也按 5 发出，可调库存够、能反复重跑
+    expect(line.transactionQuantity).toBe("5");
     // 缺省补齐：模型没给的收货库与货位
     expect(line.transferStorehouseCode).toBe("1000");
     expect(line.locatorCode).toBe("LC001");
@@ -714,5 +717,35 @@ describe("stub 通道", () => {
     expect(route.transport).toBe("stub");
     expect(route.downgradedFrom).toBeUndefined();
     expect(route.stub_response?.fulfilled).toBe(true);
+  });
+});
+
+describe("演示期固定调拨数量", () => {
+  beforeEach(() => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_ALLOW_REAL_WRITES = "true";
+    _clearMetaerpRoutesCacheForTests();
+  });
+  afterEach(() => {
+    delete process.env.METAERP_TRANSFER_FIXED_QUANTITY;
+    _clearMetaerpRoutesCacheForTests();
+  });
+
+  const lines = () => [{ itemCode: "10000008", transactionQuantity: "300" }];
+
+  it("pins every line to the configured quantity", () => {
+    process.env.METAERP_TRANSFER_FIXED_QUANTITY = "5";
+    _clearMetaerpRoutesCacheForTests();
+    const route = resolveRoute("createTransactionOrder", "write");
+    const out = _applyLineScopeForTests("createTransactionOrder", route, { lineList: lines() }, null);
+    expect((out.lineList as Record<string, unknown>[])[0]!.transactionQuantity).toBe("5");
+  });
+
+  it("falls back to the caller's quantity when the pin is unset", () => {
+    delete process.env.METAERP_TRANSFER_FIXED_QUANTITY;
+    _clearMetaerpRoutesCacheForTests();
+    const route = resolveRoute("createTransactionOrder", "write");
+    const out = _applyLineScopeForTests("createTransactionOrder", route, { lineList: lines() }, null);
+    expect((out.lineList as Record<string, unknown>[])[0]!.transactionQuantity).toBe("300");
   });
 });
