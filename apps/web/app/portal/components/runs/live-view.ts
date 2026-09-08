@@ -428,9 +428,21 @@ export function nodeFreshness(
   status: AgentLiveStatus | undefined,
   lastEventAt: number | null | undefined,
   now: number,
+  /**
+   * The canvas is pinned to ONE execution and this node belongs to it.
+   *
+   * The elapsed-time decay above answers "what is happening now" on a canvas
+   * that replays every frame it ever received. Once the canvas is pinned to a
+   * subject, that question is already answered by the pin: every coloured node
+   * ran in the execution being looked at, and greying it out after five
+   * minutes erases the path the operator opened the view to read. A历史 run
+   * would otherwise render entirely grey.
+   */
+  pinnedToExecution = false,
 ): NodeFreshness {
   if (status === "running" || status === "waiting_human") return "live";
   if (status !== "ok" && status !== "failed") return "stale";
+  if (pinnedToExecution) return "recent";
   if (lastEventAt == null) return "stale";
   return now - lastEventAt <= FRESH_WINDOW_MS ? "recent" : "stale";
 }

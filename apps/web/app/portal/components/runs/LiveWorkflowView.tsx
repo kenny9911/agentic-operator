@@ -60,6 +60,21 @@ import {
 import { NodeTaskPanel } from "./NodeTaskPanel";
 
 const FEED_W = 400;
+/** Collapsed width: wide enough for the reopen affordance, narrow enough that
+ *  the canvas gets the space back. */
+const FEED_RAIL_W = 30;
+const FEED_OPEN_KEY = "agentic.runs.activityFeedOpen";
+
+/** Remember the choice — a pane you have to re-collapse on every visit is
+ *  worse than one that never collapsed. Storage can throw (private windows,
+ *  blocked site data), and a pane preference is never worth a broken view. */
+function readFeedOpen(): boolean {
+  try {
+    return window.localStorage.getItem(FEED_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
 
 export function LiveWorkflowView() {
   const { language } = useI18n();
@@ -119,6 +134,8 @@ export function LiveWorkflowView() {
   // belong to the previous subject.
   const [scoped, setScoped] = useState(true);
   const subject = scoped ? live.latestSubject : null;
+  /** 画布是否固定在某一次执行上——固定时节点高亮不随时间褪去。 */
+  const pinnedToExecution = subject != null;
   const inScope = useCallback(
     (name: string) => {
       if (!subject) return true;
@@ -161,13 +178,32 @@ export function LiveWorkflowView() {
   // Freshness is a function of elapsed time, so it needs a clock. It ticks only
   // while a node can still decay, so an idle canvas costs nothing.
   const [now, setNow] = useState(() => Date.now());
-  const hasDecayable = agents.some((agent) => {
-    const state = live.agents[agent.name];
-    return (
-      state != null &&
-      nodeFreshness(state.state, state.lastEventAt, now) === "recent"
-    );
-  });
+  // Server render has no localStorage; hydrate the remembered choice after mount
+  // so the markup matches on both sides.
+  const [feedOpen, setFeedOpen] = useState(true);
+  useEffect(() => setFeedOpen(readFeedOpen()), []);
+  const toggleFeed = useCallback(() => {
+    setFeedOpen((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(FEED_OPEN_KEY, next ? "1" : "0");
+      } catch {
+        /* preference only — never fail the view over it */
+      }
+      return next;
+    });
+  }, []);
+  // Pinned to one execution, nothing decays — so the clock has nothing to do.
+  const hasDecayable =
+    !pinnedToExecution &&
+    agents.some((agent) => {
+      const state = live.agents[agent.name];
+      return (
+        state != null &&
+        nodeFreshness(state.state, state.lastEventAt, now, pinnedToExecution) ===
+          "recent"
+      );
+    });
   useEffect(() => {
     if (!hasDecayable) return;
     const timer = setInterval(() => setNow(Date.now()), 15_000);
@@ -209,7 +245,12 @@ export function LiveWorkflowView() {
       if (
         state &&
         inScope(agent.name) &&
-        nodeFreshness(state.state, state.lastEventAt, now) !== "stale"
+        nodeFreshness(
+          state.state,
+          state.lastEventAt,
+          now,
+          pinnedToExecution,
+        ) !== "stale"
       ) {
         names.add(agent.name);
       }
@@ -365,6 +406,7 @@ export function LiveWorkflowView() {
                   stateOf(agent.name)?.state,
                   stateOf(agent.name)?.lastEventAt,
                   now,
+                  pinnedToExecution,
                 )}
                 lastEventAt={stateOf(agent.name)?.lastEventAt ?? null}
                 waitingCount={
@@ -394,12 +436,49 @@ export function LiveWorkflowView() {
       </div>
 
       {/* ── activity feed ────────────────────────────────────────────────── */}
+      {!feedOpen && (
+        <button
+          type="button"
+          onClick={toggleFeed}
+          title={copy("展开处理动作流水线", "Show the activity feed")}
+          aria-expanded={false}
+          style={{
+            width: FEED_RAIL_W,
+            flexShrink: 0,
+            borderLeft: "1px solid var(--border)",
+            border: "none",
+            borderLeftWidth: 1,
+            borderLeftStyle: "solid",
+            borderLeftColor: "var(--border)",
+            background: "var(--panel)",
+            color: "var(--text-3)",
+            cursor: "pointer",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 0",
+          }}
+        >
+          <Icon name="chevron-left" size={13} />
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              writingMode: "vertical-rl",
+              letterSpacing: 1,
+            }}
+          >
+            {copy("处理动作流水线", "Activity")}
+          </span>
+        </button>
+      )}
       <div
         style={{
+          display: feedOpen ? "flex" : "none",
           width: FEED_W,
           flexShrink: 0,
           borderLeft: "1px solid var(--border)",
-          display: "flex",
           flexDirection: "column",
           background: "var(--panel)",
         }}
@@ -438,6 +517,23 @@ export function LiveWorkflowView() {
             >
               {copy("跟随", "Follow")}
             </FeedToggle>
+            <button
+              type="button"
+              onClick={toggleFeed}
+              title={copy("收起处理动作流水线", "Hide the activity feed")}
+              aria-expanded
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "var(--text-3)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+            >
+              <Icon name="chevron-right" size={13} />
+            </button>
           </span>
         </div>
 

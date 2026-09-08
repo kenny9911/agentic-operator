@@ -553,3 +553,28 @@ describe("agentSubtitle", () => {
     expect(agentSubtitle("【查】")).toBeNull();
   });
 });
+
+describe("固定在一次执行上时，高亮不随时间褪去", () => {
+  const HOUR_AGO = Date.now() - 60 * 60_000;
+
+  it("keeps a finished node coloured however long ago it ran", () => {
+    // 未固定：五分钟窗口之外就褪成灰色——这正是历史流程整张图全灰的原因
+    expect(nodeFreshness("ok", HOUR_AGO, Date.now())).toBe("stale");
+    expect(nodeFreshness("ok", HOUR_AGO, Date.now(), true)).toBe("recent");
+    expect(nodeFreshness("failed", HOUR_AGO, Date.now(), true)).toBe("recent");
+    expect(nodeVisual("ok", nodeFreshness("ok", HOUR_AGO, Date.now(), true)).accent)
+      .toBe("var(--green)");
+  });
+
+  it("still says nothing ran when nothing ran", () => {
+    // 固定不等于给没跑过的节点上色：本次执行没走到的分支仍然是灰的
+    expect(nodeFreshness("idle", null, Date.now(), true)).toBe("stale");
+    expect(nodeFreshness("skipped", HOUR_AGO, Date.now(), true)).toBe("stale");
+    expect(nodeFreshness(undefined, null, Date.now(), true)).toBe("stale");
+  });
+
+  it("leaves live states alone", () => {
+    expect(nodeFreshness("running", HOUR_AGO, Date.now(), true)).toBe("live");
+    expect(nodeFreshness("waiting_human", HOUR_AGO, Date.now(), true)).toBe("live");
+  });
+});
