@@ -153,6 +153,13 @@ and resource/script access, with a visible failure in affected Runs.
 Publish, archive and restore are transactional, audited and available without
 an API restart. No successful response may depend on a best-effort audit write.
 
+Retain versions referenced by Runs, Workflow snapshots, published Agent
+bindings or evaluations. Garbage collection must check these references;
+archiving an owner or clearing an editor draft cannot delete replay inputs.
+Import name conflicts offer explicit rename/copy/update-draft choices, never
+a silent overwrite. Publishing a broadly available Skill shows its future
+scope of use before committing the version.
+
 ## Skill Creator and editing experience
 
 The portal adds **Skills** next to **Agentic Tools**. Its primary actions are
@@ -239,10 +246,34 @@ return clear errors when an operation would exceed the configured budget.
 
 ## Durable execution and all harness paths
 
+```mermaid
+flowchart TD
+  Builder[Skill Builder and editor] --> Draft[Validated Skill Draft]
+  Draft --> Published[Immutable published Skill Versions]
+  Legacy[Legacy filesystem Skills] --> Resolver[Authorized catalog resolver]
+  Published --> Resolver
+  Bindings[Tenant, Workflow and Agent settings] --> Resolver
+  Resolver --> Snapshot[Durable execution snapshot]
+  Snapshot --> Session[Scoped Skill Session]
+  Session --> Manifest[Manifest and Workflow runtime]
+  Session --> Code[BaseAgent and CodeAct]
+  Session --> Codex[Private Codex skill root]
+  Manifest --> Gateway[Existing model Gateway]
+  Code --> Gateway
+  Codex --> Gateway
+```
+
 Resolve latest-published selectors once at the execution boundary, and persist
 only immutable version references/digests as the durable snapshot. Never store
 the entire library in an Inngest step payload or resolve a mutable published
 pointer independently in each Action.
+
+For Manifest Agents, the existing `step.run("init")` in `register.ts` is the
+preferred capture point. Store a create-once Run Skill Snapshot and return its
+id/digest with the Run id. On replay, reload and verify that snapshot rather
+than selecting current publications. Store activation references in Action
+results so subsequent Actions can reconstruct active guidance after process
+restart. Snapshot legacy filesystem contents, not just mutable file paths.
 
 Within a Workflow execution, reuse the root snapshot for internal handoffs,
 subflows and subagents, intersected with each recipient's settings and current
