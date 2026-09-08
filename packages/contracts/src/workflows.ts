@@ -210,7 +210,14 @@ export const ManifestImportCommit = z.object({
     app_id: z.string(),
     expected_function_count: z.number().int().nonnegative(),
     observed_function_count: z.number().int().nonnegative(),
-    evidence: z.enum(["dev_graphql", "cloud_sync_acceptance", "test_only_bypass"]),
+    evidence: z.enum([
+      "dev_graphql",
+      "cloud_sync_acceptance",
+      // An app that serves zero functions (a stopped tenant) has no connection
+      // to probe; the accepted sync PUT is its receipt.
+      "empty_app_sync_acceptance",
+      "test_only_bypass",
+    ]),
     checked_at: z.string(),
   }),
   file_written: z.string(),

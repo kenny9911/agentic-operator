@@ -73,7 +73,11 @@ export interface PromoteResult {
     appId: string;
     expectedFunctionCount: number;
     observedFunctionCount: number;
-    evidence: "dev_graphql" | "cloud_sync_acceptance" | "test_only_bypass";
+    evidence:
+    | "dev_graphql"
+    | "cloud_sync_acceptance"
+    | "empty_app_sync_acceptance"
+    | "test_only_bypass";
     checkedAt: string;
   };
   regression?: {

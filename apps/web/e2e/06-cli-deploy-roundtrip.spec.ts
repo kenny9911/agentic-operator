@@ -158,6 +158,27 @@ test.describe("P4-TEST-06: CLI init + deploy round-trip E2E", () => {
     expect(codeDeployment?.versionString).toMatch(/^v1-[a-f0-9]{12}$/);
   });
 
+  test("post-deploy: starting the tenant runtime serves its functions", async () => {
+    // `POST /v1/tenants` deliberately creates a tenant STOPPED ("New empty
+    // tenants start stopped" — routes/v1/tenants.ts), so until an operator
+    // starts it the tenant serves zero Inngest functions and no event of its
+    // own can run. The deploy above is legal in that state; execution below
+    // is not, so start the runtime here — this is the 上线 step of the real
+    // operator flow, not test scaffolding.
+    const started = await apiFetch<{ functionCount: number; brokerVerified: boolean }>(
+      `/v1/tenants/${slug}/inngest-deployment`,
+      {
+        method: "PUT",
+        tenantSlug: slug,
+        body: JSON.stringify({ enabled: true }),
+      },
+    );
+    expect(started.status, JSON.stringify(started.body)).toBe(200);
+    if (!started.body.ok) throw new Error("tenant runtime start failed");
+    // The scaffolded manifest declares two agents; both must now be served.
+    expect(started.body.data.functionCount).toBeGreaterThan(0);
+  });
+
   test("post-deploy: uploaded registry executes through the real event runtime", async () => {
     const agents = await apiFetch<Array<{ name: string; enabled: boolean }>>(
       "/v1/agents?kind=manifest",

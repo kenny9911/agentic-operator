@@ -165,7 +165,11 @@ export interface SandboxBrokerRegistrationProof {
   observedFunctionCount: number | null;
   connected: boolean;
   verified: boolean;
-  evidence: "dev_graphql" | "cloud_sync_acceptance" | "test_only_bypass";
+  evidence:
+    | "dev_graphql"
+    | "cloud_sync_acceptance"
+    | "empty_app_sync_acceptance"
+    | "test_only_bypass";
   checkedAt: string;
   error?: string;
 }
