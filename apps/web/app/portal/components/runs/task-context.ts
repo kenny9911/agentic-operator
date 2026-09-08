@@ -41,6 +41,19 @@ const ENVELOPE_KEYS = new Set([
   "_truncated",
   "_bytes",
   "_preview",
+  "_droppedKeys",
+  // The agent's echo of its own scaffolding. `inputs`/`input` repeat the
+  // top-level identifiers, `prompt`/`context` are the instruction text the
+  // agent was given. They are the FIRST records in a manifest payload, so an
+  // unfiltered summary fills all eight of its slots with them — a live
+  // approval panel showed chain_id / document_id / scan_batch_id and
+  // 「审核传入事件、校验数据，并返回工作流预期结果。」 where the alert level,
+  // deviation days and material belonged. Evidence is what the agent found,
+  // not what it was told.
+  "input",
+  "inputs",
+  "prompt",
+  "context",
 ]);
 
 /** How deep to walk nested objects looking for a prefill value. */

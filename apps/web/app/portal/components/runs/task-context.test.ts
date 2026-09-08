@@ -401,3 +401,44 @@ describe("actorDefaults", () => {
     expect(actorDefaults(["decided_by"], "   ")).toEqual({});
   });
 });
+
+describe("智能体脚手架不占「采购概况」的位置", () => {
+  /** A manifest agent echoes its own inputs and instruction text back into the
+   *  emitted payload, ahead of anything it actually found. */
+  const payload = {
+    inputs: {
+      chain_id: "100020260902000003",
+      document_id: "HPO1000202609030004",
+      document_type: "采购订单",
+      new_status: "已审批",
+      organization_code: "YF1",
+      scan_batch_id: "DEV-20260907-001",
+      scan_date: "2026-09-08",
+      prompt: "审核传入事件、校验数据，并返回工作流预期结果。",
+    },
+    prompt: "审核传入事件、校验数据，并返回工作流预期结果。",
+    context: "审核传入事件、校验数据，并返回工作流预期结果。",
+    input: "审核传入事件、校验数据，并返回工作流预期结果。",
+    alert_context: {
+      alert_id: "ALT-1788878265752-1",
+      alert_level: "红色",
+      notified_role: "分管领导",
+    },
+  };
+
+  it("shows what the agent found, not what it was told", () => {
+    const keys = contextSummary(payload).map((fact) => fact.key);
+    // 实跑中这八个槽位全被 inputs 占满，预警等级一条都没露出来
+    expect(keys).toContain("alert_level");
+    expect(keys).toContain("notified_role");
+    for (const scaffolding of ["prompt", "document_id", "scan_batch_id", "new_status"]) {
+      expect(keys).not.toContain(scaffolding);
+    }
+  });
+
+  it("drops the API's own cap markers, including the dropped-key list", () => {
+    expect(
+      contextGroups({ _truncated: true, _bytes: 42268, _droppedKeys: ["last_result"] }),
+    ).toEqual([]);
+  });
+});

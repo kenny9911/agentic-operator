@@ -43,12 +43,29 @@ const gunzipAsync = promisify(gunzip);
  * IO/Events tabs. Two ref formats coexist:
  *   - event ledger: "<file>#<byteOffset>" → the NDJSON line's `.data`
  *   - step artifact: "<file>"             → the whole JSON file
- * Bounded to MAX_PAYLOAD_BYTES so a base64 résumé can't bloat the response;
- * an oversized payload collapses to a small preview marker. A persisted ref
- * that cannot be resolved is a data-integrity failure, not an empty payload.
+ * Bounded to MAX_PAYLOAD_BYTES so a base64 résumé can't bloat the response.
+ * A persisted ref that cannot be resolved is a data-integrity failure, not an
+ * empty payload.
  */
 const MAX_PAYLOAD_BYTES = 24_000;
 
+/**
+ * Shed the biggest top-level branches until the payload fits, instead of
+ * collapsing the whole thing.
+ *
+ * The all-or-nothing cap made the approval panel unusable: a real procurement
+ * chain's trigger payload is ~42KB, so the operator's decision brief — alert
+ * level, deviation days, stalled node, material, the three adjustment options —
+ * was replaced wholesale by `{_truncated, _bytes, _preview}`. The panel filters
+ * those markers as plumbing, so it rendered nothing and the approver had to
+ * decide with no evidence on screen.
+ *
+ * The bulk is almost never the evidence: here 19KB of the 42KB was
+ * `stage_progress_list` (28 per-stage rows) and `last_result` (the previous
+ * step's echo). Dropping those two leaves every decision-relevant object
+ * intact. Which keys were dropped is reported rather than hidden — a reader
+ * must be able to tell "not shown" from "not present".
+ */
 function capPayload(
   value: unknown,
   maxPayloadBytes = MAX_PAYLOAD_BYTES,
@@ -57,6 +74,45 @@ function capPayload(
   const serialized = JSON.stringify(value);
   const bytes = Buffer.byteLength(serialized, "utf8");
   if (bytes <= maxPayloadBytes) return value;
+
+  if (
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length > 1
+  ) {
+    const entries = Object.entries(value as Record<string, unknown>).map(
+      ([key, entryValue]) => ({
+        key,
+        value: entryValue,
+        bytes: Buffer.byteLength(JSON.stringify(entryValue) ?? "null", "utf8"),
+      }),
+    );
+    // Biggest first: shedding one 10KB list beats shedding twenty 100-byte
+    // scalars, and the scalars are usually the identifiers the reader needs.
+    const byBulk = [...entries].sort((a, b) => b.bytes - a.bytes);
+    const dropped = new Set<string>();
+    let remaining = bytes;
+    for (const entry of byBulk) {
+      if (remaining <= maxPayloadBytes) break;
+      dropped.add(entry.key);
+      // `"key":value,` — close enough for a budget, and always an underestimate
+      // of the saving, so the loop never stops early believing it has room.
+      remaining -= entry.bytes + entry.key.length + 4;
+    }
+    if (remaining <= maxPayloadBytes && dropped.size < entries.length) {
+      const kept: Record<string, unknown> = {};
+      for (const entry of entries) {
+        if (!dropped.has(entry.key)) kept[entry.key] = entry.value;
+      }
+      return {
+        ...kept,
+        _truncated: true,
+        _bytes: bytes,
+        _droppedKeys: [...dropped].sort(),
+      };
+    }
+  }
+
   return {
     _truncated: true,
     _bytes: bytes,
