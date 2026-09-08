@@ -43,6 +43,15 @@ export interface MetaerpRoute {
    * 调拨单，而同一批路由里还有 changePbp——那会改掉一张真实的采购计划。逐个放行
    * 才能把不可回滚的动作限制在真正需要的那一个上。
    */
+  /**
+   * 强制字段：合并在调用方**之上**，调用方给了也会被覆盖。
+   *
+   * `defaults` 是「没给才补」，挡不住模型自己编一个过滤条件——实测里它就编过一个
+   * 不存在的采购需求号（PR-2026-11832），还在 coverage_note 里写着「平台锁定单号」，
+   * 于是整条链路建立在虚构数据上、判成无偏差。演示范围这种东西必须由平台说了算，
+   * 不能是模型的自由度。
+   */
+  overrides?: Record<string, unknown>;
   allow_real_write?: boolean;
   /**
    * 让运行时把稳定的幂等键写进这个字段。
@@ -102,10 +111,18 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
   ) {
     throw new Error(`metaerp routes: entry '${operation}' defaults must be an object`);
   }
+  const routeOverrides = (raw as { overrides?: unknown }).overrides;
+  if (
+    routeOverrides !== undefined &&
+    (!routeOverrides || typeof routeOverrides !== "object" || Array.isArray(routeOverrides))
+  ) {
+    throw new Error(`metaerp routes: entry '${operation}' overrides must be an object`);
+  }
   return {
     transport,
     ...(routePath ? { path: routePath } : {}),
     ...(routeDefaults ? { defaults: routeDefaults as Record<string, unknown> } : {}),
+    ...(routeOverrides ? { overrides: routeOverrides as Record<string, unknown> } : {}),
     ...((raw as { allow_real_write?: unknown }).allow_real_write === true
       ? { allow_real_write: true }
       : {}),
@@ -211,7 +228,11 @@ export function resolveRoute(
 ): ResolvedRoute {
   const stored = loadMetaerpRoutes().get(operation);
   const declared: MetaerpRoute = stored
-    ? { ...stored, ...(stored.defaults ? { defaults: expandDefaults(stored.defaults) } : {}) }
+    ? {
+        ...stored,
+        ...(stored.defaults ? { defaults: expandDefaults(stored.defaults) } : {}),
+        ...(stored.overrides ? { overrides: expandDefaults(stored.overrides) } : {}),
+      }
     : { transport: "mock" as const };
   if (declared.transport === "mock") return declared;
   if (metaerpTransportMode() !== "real") {

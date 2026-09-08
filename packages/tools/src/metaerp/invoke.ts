@@ -390,6 +390,7 @@ export const metaerpInvoke = defineTool({
         credentials,
         timeoutMs,
         ...(routeDefaults ? { defaults: routeDefaults } : {}),
+        ...(route.overrides ? { overrides: route.overrides } : {}),
       });
       return {
         data: result.data,

@@ -27,12 +27,12 @@
     "queryPr": {
       "transport": "openapi",
       "path": "/hpo/mpr/openapi/v1/queryPr",
-      "defaults": {
+      "overrides": {
         "prNumberList": [
           "100020260902000001"
         ]
       },
-      "note": "为跑通演示锁定 数据信息.xlsx 的第一条采购需求（实测该号在 queryPr 下有 4 条记录）"
+      "note": "演示锁定 数据信息.xlsx 的第一条采购需求。用 overrides 而非 defaults：defaults 挡不住模型自己编过滤条件——实测它编过 PR-2026-11832 这个不存在的单号，整条链路因此建立在虚构数据上并判成无偏差"
     },
     "queryProcPackageLineExecuteMode": {
       "transport": "openapi",

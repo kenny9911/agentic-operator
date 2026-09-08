@@ -255,9 +255,9 @@ describe("metaerp real transports", () => {
     // 调用方为准，否则演示至少查得到东西而不是收一个 401069。
     it("carries per-operation defaults, under the caller and over the deployment keys", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
-      // 数据信息.xlsx 里的编号是采购需求(PR)号：queryPr 查它有 4 条，
-      // queryPbpHeader 查它恒为 0 条——锚点钉错表，整条链就从空数据开始。
-      expect(resolveRoute("queryPr", "query").defaults).toEqual({
+      // 演示锚点用 overrides 而非 defaults：defaults 是「没给才补」，挡不住模型
+      // 自己编一个过滤条件——实测它编过 PR-2026-11832 这个不存在的单号。
+      expect(resolveRoute("queryPr", "query").overrides).toEqual({
         prNumberList: ["100020260902000001"],
       });
       expect(resolveRoute("queryPbpHeader", "query").defaults).toBeUndefined();
@@ -357,6 +357,35 @@ describe("metaerp real transports", () => {
         organizationCode: "OTHER",
         pbpNumber: "PBP-1",
       });
+    });
+
+    // defaults 让调用方赢，overrides 让平台赢——演示范围不能被模型编的过滤条件顶掉。
+    it("lets the platform's overrides beat the caller's own filter", async () => {
+      const erp = await startServer((req, res) => {
+        if (req.url?.endsWith("/iam/auth/token")) {
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ access_token: "tok" }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ status: "SUCCESS", data: {} }));
+      });
+      process.env.METAERP_APIGW_BASE = erp.origin;
+      process.env.METAERP_IAM_TOKEN_URL = `${erp.origin}/iam/auth/token`;
+      _clearMetaerpConfigCacheForTests();
+
+      await callMetaerpOpenapi({
+        operation: "queryPr",
+        path: "/hpo/mpr/openapi/v1/queryPr",
+        payload: { prNumberList: ["PR-2026-11832"], unitCode: "9999" },
+        defaults: { unitCode: "1000" },
+        overrides: { prNumberList: ["100020260902000001"] },
+        credentials: resolveMetaerpCredentials(),
+        timeoutMs: 5_000,
+      });
+      await erp.close();
+      const sent = JSON.parse(erp.seen.find((r) => r.url.includes("queryPr"))!.body);
+      // 平台强制项赢过调用方；而 defaults 仍然输给调用方。
+      expect(sent.prNumberList).toEqual(["100020260902000001"]);
+      expect(sent.unitCode).toBe("9999");
     });
 
     it("re-mints once when a cached token has expired server-side", async () => {

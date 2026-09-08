@@ -95,6 +95,8 @@ export interface OpenapiCallInput {
   timeoutMs: number;
   /** 该操作的默认字段，位于部署级范围键之上、调用方之下。 */
   defaults?: Record<string, unknown>;
+  /** 强制字段，合并在调用方之上——调用方给了也会被覆盖。 */
+  overrides?: Record<string, unknown>;
 }
 
 export interface TransportResult {
@@ -115,7 +117,12 @@ export async function callMetaerpOpenapi(
       method: "POST",
       insecureTls: preset.insecureTls,
       timeoutMs,
-      json: { ...credentials.defaults, ...(input.defaults ?? {}), ...input.payload },
+      json: {
+        ...credentials.defaults,
+        ...(input.defaults ?? {}),
+        ...input.payload,
+        ...(input.overrides ?? {}),
+      },
       headers: {
         authorization: token,
         "x-renter-id": credentials.renterId,
