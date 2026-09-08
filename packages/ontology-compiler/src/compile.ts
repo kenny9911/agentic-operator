@@ -80,6 +80,36 @@ const BACKWARD_SCHEDULE_REVIEWED_POLICY = {
   sandbox_policy: "pure",
 } as const;
 
+const RECORDS_PROJECT_TOOL = "records.project";
+
+function recordsProjectToolUseEntry(grant: OverlayExtraTool): CompiledToolUseEntry {
+  return {
+    name: RECORDS_PROJECT_TOOL,
+    description:
+      grant.description ??
+      "\u4ece\u4e0a\u4e00\u4e2a\u5de5\u5177\u7684\u8fd4\u56de\u503c\u91cc\u6309\u5b57\u6bb5\u6620\u5c04\u9010\u884c\u539f\u6837\u53d6\u503c\uff08\u7eaf\u8ba1\u7b97\uff09\u3002\u6807\u8bc6\u7b26\u3001\u7269\u6599\u53f7\u3001\u5355\u636e\u53f7\u8fd9\u7c7b\u503c\u4e00\u5f8b\u7528\u5b83\u53d6\uff0c\u4e0d\u8981\u81ea\u5df1\u62c4\u3002",
+    side_effect: "read",
+    execution_policy: BACKWARD_SCHEDULE_REVIEWED_POLICY,
+    input_schema: {
+      type: "object",
+      required: ["fields"],
+      properties: {
+        source: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u6307\u5411\u884c\u6570\u7ec4\u7684\u8def\u5f84\uff0c\u5982 records[0].prLineList\u3002\u7701\u7565\u5219\u4e0a\u4e00\u7ed3\u679c\u672c\u8eab\u5373\u6570\u7ec4\u3002",
+        },
+        fields: {
+          type: "object",
+          description:
+            "{\u8f93\u51fa\u5b57\u6bb5\u540d: \u6e90\u5b57\u6bb5\u540d}\uff1b\u503c\u4ee5 \"$root.\" \u5f00\u5934\u5219\u4ece\u7ed3\u679c\u6839\u90e8\u53d6\u4e00\u4e2a\u8868\u5934\u503c\u76d6\u5230\u6bcf\u4e00\u884c\u3002",
+        },
+      },
+    },
+    config: narrowOverlayToolConfig(grant.config),
+  };
+}
+
 function backwardScheduleToolUseEntry(grant: OverlayExtraTool): CompiledToolUseEntry {
   return {
     name: BACKWARD_SCHEDULE_TOOL,
@@ -675,6 +705,7 @@ const EXTRA_TOOL_BUILDERS: Record<
 > = {
   [ONTOLOGY_QUERY_TOOL]: ontologyQueryToolUseEntry,
   [BACKWARD_SCHEDULE_TOOL]: backwardScheduleToolUseEntry,
+  [RECORDS_PROJECT_TOOL]: recordsProjectToolUseEntry,
 };
 
 /** Apply overlay `extra_tools` grants to a compiled agent in place: append

@@ -19,3 +19,4 @@ export {
   type RuleAuditPersistenceReceipt,
   type RuleCheckAuditRecord,
 } from "./persist-rule-check-audit";
+export { projectRecords, recordsProject, type ProjectResult } from "./project";

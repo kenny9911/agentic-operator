@@ -240,6 +240,35 @@ function maxCallsPerRun(): number {
  * which names neither the document nor the field; catching it here says which
  * operation and which payload key were empty.
  */
+/**
+ * Mark a successful write so `lastResult.applied == true` holds on the real ERP.
+ *
+ * `applied` is a MOCK invention (apps/mock-erp/src/effects.ts) that the compiled
+ * manifests adopted as their "did the write land" signal — three option branches
+ * gate their emit on it. The real ERP has no such field, so the moment the route
+ * flipped to the live transport those emits silently evaluated false: the ERP
+ * created INOT20260908YF100013 and the workflow still sat in
+ * createStockTransferRequest with nothing downstream. The write path only gets
+ * here after the envelope normalizer has rejected an ERROR status, so reaching
+ * this point IS the applied signal.
+ *
+ * Set only when absent: a mock write that reports `applied: false` (option type
+ * not applicable) must keep saying so.
+ */
+export function _markAppliedForTests(
+  kind: "query" | "write",
+  data: unknown,
+): unknown {
+  return markApplied(kind, data);
+}
+
+function markApplied(kind: "query" | "write", data: unknown): unknown {
+  if (kind !== "write") return data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const record = data as Record<string, unknown>;
+  return "applied" in record ? record : { ...record, applied: true };
+}
+
 export function _applyLineScopeForTests(
   operation: string,
   route: MetaerpRoute,
@@ -462,7 +491,7 @@ export const metaerpInvoke = defineTool({
         ...(route.overrides ? { overrides: route.overrides } : {}),
       });
       return {
-        data: result.data,
+        data: markApplied(entry.kind, result.data),
         meta: {
           ...routeMeta,
           env: credentials.env,

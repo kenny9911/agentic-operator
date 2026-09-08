@@ -21,7 +21,7 @@ import { normalizeMetaerpResponse } from "./envelope";
 import { callMetaerpOpenapi, _clearMetaerpTokenCacheForTests } from "./openapi-transport";
 import { callMetaerpUiapi, _clearMetaerpSessionCacheForTests } from "./uiapi-transport";
 import { _clearMetaerpRoutesCacheForTests, resolveRoute } from "./routes";
-import { _applyLineScopeForTests } from "./invoke";
+import { _applyLineScopeForTests, _markAppliedForTests } from "./invoke";
 
 interface Recorded {
   method: string;
@@ -631,5 +631,25 @@ describe("createTransactionOrder · 单据行由平台补齐", () => {
   it("names the empty line array instead of letting ERP answer with its opaque 430138", () => {
     expect(() => scope({ requiredDate: "2026-09-08 17:00:00" })).toThrow(/lineList 为空/);
     expect(() => scope({ lineList: [] })).toThrow(/lineList 为空/);
+  });
+});
+
+describe("写操作成功后补 applied 标记", () => {
+  it("marks a real write applied — the mock-only field three emit gates depend on", () => {
+    // 真实 ERP 的建单回执里没有 applied，切到真实通道后三个方案分支的
+    // `lastResult.applied == true` 全部静默变 false，单据建出来了流程却不往下走。
+    const receipt = { txnOrderHeaderNumber: "INOT20260908YF100013", affectedRows: 1 };
+    expect(_markAppliedForTests("write", receipt)).toEqual({ ...receipt, applied: true });
+  });
+
+  it("leaves a mock write that reported applied:false alone", () => {
+    const skipped = { ok: true, id: "SKIPPED", applied: false, skipped_reason: "压缩后续周期" };
+    expect(_markAppliedForTests("write", skipped)).toEqual(skipped);
+  });
+
+  it("does not touch query results or non-objects", () => {
+    expect(_markAppliedForTests("query", { records: [] })).toEqual({ records: [] });
+    expect(_markAppliedForTests("write", [1, 2])).toEqual([1, 2]);
+    expect(_markAppliedForTests("write", null)).toBeNull();
   });
 });

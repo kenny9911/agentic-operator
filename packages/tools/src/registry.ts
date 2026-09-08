@@ -89,6 +89,7 @@ import { inspectEnvironmentReferencesTool } from "./config";
 import { metaerpInvoke } from "./metaerp";
 import { powerPurchaseEvaluateTimeliness } from "./power-purchase";
 import { planningBackwardSchedule } from "./planning";
+import { recordsProject } from "./records";
 import {
   browserOpenSession,
   browserNavigate,
@@ -423,6 +424,70 @@ const GOHIRE_CONFIG_EXAMPLE = {
 };
 
 const REGISTRATIONS: ToolRegistration[] = [
+  // ── records.project — verbatim field copy out of the previous tool result. ─
+  {
+    descriptor: recordsProject,
+    catalog: {
+      name: "records.project",
+      category: "records",
+      sideEffect: "read",
+      operation: "compute",
+      effectScope: "none",
+      sandboxPolicy: "pure",
+      probeRequired: false,
+      testPolicy: "allow",
+      credentialPosture: "none",
+      summary:
+        "\u4ece\u4e0a\u4e00\u4e2a\u5de5\u5177\u7684\u8fd4\u56de\u503c\u91cc\u6309\u5b57\u6bb5\u6620\u5c04\u9010\u884c\u539f\u6837\u53d6\u503c\uff0c\u6807\u8bc6\u7b26\u4e0d\u7ecf\u8fc7\u6a21\u578b\u8f6c\u5199\u3002",
+      description:
+        "\u8fd0\u884c\u65f6\u628a\u4e0a\u4e00\u4e2a\u5de5\u5177\u7684\u8f93\u51fa\u4ee5 ctx.lastResult \u4ea4\u7ed9\u672c\u5de5\u5177\uff0c\u6295\u5f71\u5728\u670d\u52a1\u7aef\u5b8c\u6210\u3002source \u662f\u6307\u5411\u884c\u6570\u7ec4\u7684\u8def\u5f84\uff08\u5982 records[0].prLineList\uff0c\u7701\u7565\u5219\u53d6\u6574\u4e2a\u4e0a\u4e00\u7ed3\u679c\uff09\uff1bfields \u662f\u300c\u8f93\u51fa\u5b57\u6bb5: \u6e90\u5b57\u6bb5\u300d\u6620\u5c04\uff0c\u503c\u5199\u6210 \"$root.\u8def\u5f84\" \u5219\u4ece\u7ed3\u679c\u6839\u90e8\u53d6\u4e00\u4e2a\u8868\u5934\u503c\u76d6\u5230\u6bcf\u4e00\u884c\u3002\u8def\u5f84\u4e0d\u5b58\u5728\u3001\u6e90\u4e0d\u662f\u6570\u7ec4\u3001\u67d0\u884c\u7f3a\u5b57\u6bb5\uff0c\u4e00\u5f8b\u62a5\u9519\u5e76\u70b9\u540d\u884c\u53f7\u4e0e\u5b57\u6bb5\u3002",
+      argsSchema: {
+        source: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u6307\u5411\u884c\u6570\u7ec4\u7684\u8def\u5f84\uff0c\u5982 records[0].prLineList\u3002\u7701\u7565\u5219\u4e0a\u4e00\u7ed3\u679c\u672c\u8eab\u5c31\u662f\u6570\u7ec4\u3002",
+        },
+        fields: {
+          type: "object",
+          description:
+            "\u5fc5\u586b\uff1a{\u8f93\u51fa\u5b57\u6bb5\u540d: \u6e90\u5b57\u6bb5\u540d}\uff1b\u503c\u4ee5 \"$root.\" \u5f00\u5934\u5219\u4ece\u7ed3\u679c\u6839\u90e8\u53d6\u503c\u3002",
+        },
+      },
+      argsExample: {
+        source: "records[0].prLineList",
+        fields: {
+          plan_id: "$root.records[0].prNumber",
+          plan_line_id: "prLineId",
+          material_code: "itemCode",
+          material_name: "prLineDescription",
+          quantity: "quantity",
+          unit: "uomCode",
+        },
+      },
+      configSchema: {},
+      returnsSchema: {
+        rows: { type: "array", description: "\u6295\u5f71\u540e\u7684\u884c" },
+        row_count: { type: "number" },
+        source: { type: "string" },
+      },
+      returnsExample: {
+        rows: [
+          {
+            plan_id: "100020260902000001",
+            plan_line_id: "2033239140312683600",
+            material_code: "10000007",
+            material_name: "\u7535\u5bb9",
+            quantity: "10",
+            unit: "EA",
+          },
+        ],
+        row_count: 1,
+        source: "records[0].prLineList",
+      },
+      sourcePath: "packages/tools/src/records/project.ts",
+    },
+  },
+
   // ── planning.* — pure date arithmetic, no external system. ──────────────
   {
     descriptor: planningBackwardSchedule,
