@@ -510,13 +510,15 @@ lineList[]: itemCode, organizationCode, storehouseCode,
     sourceObjectNumber, sourceObjectLineId
 ```
 
-**仍缺**：行的**调出/调入库位**。头建成后行返回
-`txnOrderLineStatus=FAILED, errorMessage="The transfer storehouse code is invalid."`。
-试过 transferStorehouseCode / toStorehouseCode / destStorehouseCode /
-transferToStorehouseCode 四个字段名，全部同一错误——说明不是字段名的问题，而是
-**演示数据里只有一个库位（300000 成品库），调拨到自己不成立**。
-需要业务侧在 v15 建第二个库位（或给出一个合法的调入库位编码）。
+**行的调入库位已定位**：字段名是 `transferStorehouseCode`，`LYY1` / `LYY2` 都是合法
+库位编码——填入后报错从 `The transfer storehouse code is invalid.` 变成
+`An error occurred when querying limit between item and storehouse limit`，
+**错误前进即字段与取值都对了**。
 
-**探测残留**：过程中创建了 3 张只有头、行为 FAILED 的调拨单
-（1992656320092771594 / 1992657793393300749 / 1992656606487975180），
-演示前建议清理。
+**仍缺**：目标库位上的物料限额配置。物料 10000008 在 LYY1/LYY2 下没有配置
+最小/最大库存水平（数据信息.xlsx Sheet3 里只有 300000 成品库这一行），ERP 在建行时
+查不到限额就失败。这是 ERP 主数据配置，需业务侧在目标库位上为演示物料补一条限额记录。
+
+**探测残留**：过程中在 v15 创建了 4 张只有头、行为 FAILED 的调拨单
+（1992656320092771594 / 1992657793393300749 / 1992656606487975180 /
+1992656320092837130），演示前建议清理。
