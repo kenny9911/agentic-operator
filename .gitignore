@@ -54,7 +54,10 @@ data/logs/*
 
 # Claude Code local tooling: preview launch config, session settings, worktrees.
 # Local-only — never committed (contains machine-specific paths, no source value).
-.claude/
+# Exception: .claude/skills/ holds relative symlinks into .agents/skills/ (the
+# in-repo agent skills; see CLAUDE.md "Agent skills") and IS committed.
+.claude/*
+!.claude/skills/
 
 # Generated deliverables / working docs — architecture books, deep-analysis reports,
 # audits and session design specs are RENDERED artifacts, not source; kept local, not

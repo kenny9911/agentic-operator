@@ -47,12 +47,14 @@ Integrations stores third-party credentials (e.g. GoHire) encrypted per tenant.
 LLM traffic is routed per tenant through the gateway (providers include
 Moonshot and Z.ai) and accounted in a usage ledger surfaced at `/v1/usage`.
 
-The workspace requires exactly Node 26.5.0 and pnpm 11.21.0. Both versions are
+The workspace requires exactly Node 26.8.1 and pnpm 11.21.0. Both versions are
 pinned and enforced by the root lifecycle guards.
 
 ## Local development
 
 ```bash
+nvm install
+nvm use
 pnpm install
 cp .env.example .env
 # Configure a unique AUTH_SESSION_SECRET, a real LLM provider/model and its
@@ -83,12 +85,18 @@ curl --fail http://localhost:3540/health
 pnpm typecheck
 pnpm lint
 pnpm test
-pnpm build
+./scripts/build.sh
 pnpm codex:runtime:install
 pnpm codex:protocol:check
 pnpm verify:codex-harness
 pnpm --filter @agentic/api verify:observability
 ```
+
+`./scripts/build.sh` selects Node from `.nvmrc` (via nvm when needed), uses the pinned
+pnpm version, and runs the production build with the native-module guard.
+Use `./scripts/build.sh --install` to install dependencies from the frozen lockfile
+first; a missing `node_modules` triggers that automatically. Additional flags
+go to Turbo, for example `./scripts/build.sh --force` for an uncached build.
 
 An immutable OntoPlanet package is admitted through a separate, non-runtime
 boundary. The command below validates the vendored OntoPlanet 3.2.0 envelope

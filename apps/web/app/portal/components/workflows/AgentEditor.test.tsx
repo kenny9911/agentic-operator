@@ -1,5 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { PreferencesProvider } from "@/app/portal/lib/preferences-context";
+import { translate } from "@/lib/i18n";
+import { createAutomatedAgentDefinition } from "./draft";
+
+vi.mock("@/lib/hooks/useModelFleet", () => ({
+  useFleet: () => ({ data: [] }),
+  useAvailableModels: () => ({ data: { models: [] } }),
+}));
+vi.mock("@/lib/hooks/useWorkflowAuthoring", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useGenerateWorkflowAgentPrompt: () => ({ isPending: false }),
+}));
 import {
+  AgentEditor,
+  editableTaskActions,
+  patchTaskInstruction,
+  parseHandoffBindings,
+  workflowInputReferences,
   parseCompleteAgentDefinition,
   parseJsonArray,
   parseList,
@@ -149,3 +167,209 @@ function dagAgent(
     isLive: false,
   };
 }
+
+describe("guided workflow authoring", () => {
+  it("changes task instructions without losing tools, conditions, or action extensions", () => {
+    const actions = [
+      {
+        type: "tool",
+        name: "fetch",
+        tool: "meta.ping",
+        config: { region: "sg" },
+      },
+      {
+        type: "logic",
+        name: "review",
+        action_prompt: "Before",
+        condition: "approved",
+        extension: { enabled: true },
+      },
+    ];
+    expect(editableTaskActions(actions).map((entry) => entry.index)).toEqual([
+      1,
+    ]);
+    const next = patchTaskInstruction(
+      actions,
+      1,
+      "Review {{inputs.previous}} and give a decision.",
+    );
+    expect(next[0]).toBe(actions[0]);
+    expect(next[1]).toEqual({
+      ...actions[1],
+      action_prompt: "Review {{inputs.previous}} and give a decision.",
+    });
+    expect(actions[1]?.action_prompt).toBe("Before");
+  });
+
+  it("shows the source result, usable reference, and advanced binding override", () => {
+    const receiver = createAutomatedAgentDefinition({ id: "review" });
+    receiver.inputs = [
+      {
+        id: "from_research_result",
+        kind: "value",
+        required: false,
+        schema: { type: "string" },
+        sensitivity: "none",
+        workflow_handoff: {
+          source_agent_id: "research",
+          source_agent_name: "researchAgent",
+          source_output_id: "result",
+          event: "RESEARCH_DONE",
+          required: true,
+        },
+      },
+    ];
+    receiver.trigger = ["RESEARCH_DONE"];
+    receiver.trigger_bindings = {
+      RESEARCH_DONE: { from_research_result: { path: "event.data.corrected" } },
+    };
+    const references = workflowInputReferences(receiver, [
+      dagAgent("research", [], ["RESEARCH_DONE"], "Research evidence"),
+    ]);
+    expect(references).toEqual([
+      {
+        inputId: "from_research_result",
+        sourceAgentId: "research",
+        sourceTitle: "Research evidence",
+        outputId: "result",
+        event: "RESEARCH_DONE",
+        reference: "{{inputs.from_research_result}}",
+        binding: '{"path":"event.data.corrected"}',
+      },
+    ]);
+    receiver.trigger = [];
+    expect(workflowInputReferences(receiver, [])).toEqual([]);
+  });
+
+  it("validates mapping overrides and preserves tenant extension fields", () => {
+    expect(
+      parseHandoffBindings(
+        '{"DONE":{"summary":{"path":"event.data.result","extension":true}}}',
+        "trigger_bindings",
+      ),
+    ).toEqual({
+      DONE: { summary: { path: "event.data.result", extension: true } },
+    });
+    expect(
+      parseHandoffBindings(
+        '{"DONE":{"summary":{"output":"result"}}}',
+        "output_bindings",
+      ),
+    ).toEqual({ DONE: { summary: { output: "result" } } });
+    expect(() => parseHandoffBindings("[]", "trigger_bindings")).toThrow();
+    expect(() =>
+      parseHandoffBindings(
+        '{"DONE":{"summary":{"output":"result"}}}',
+        "trigger_bindings",
+      ),
+    ).toThrow();
+  });
+
+  it("keeps task instructions before collapsed advanced JSON controls", () => {
+    const definition = createAutomatedAgentDefinition({
+      id: "review",
+      actionPrompt: "Review the previous result.",
+    });
+    const agent = {
+      ...dagAgent(
+        "review",
+        definition.trigger,
+        definition.triggered_event,
+        "Review",
+      ),
+      definition,
+    };
+    const html = renderToStaticMarkup(
+      <PreferencesProvider>
+        <AgentEditor
+          agent={agent}
+          workflowAgents={[agent]}
+          events={[]}
+          draft={undefined}
+          onChange={() => {}}
+          onToggleWidth={() => {}}
+          isWide={false}
+          canResize={true}
+          onRemove={() => {}}
+          onClose={() => {}}
+        />
+      </PreferencesProvider>,
+    );
+    expect(html).toContain("Review the previous result.");
+    const advanced = html.indexOf("<details");
+    expect(advanced).toBeGreaterThan(
+      html.indexOf("Review the previous result."),
+    );
+    expect(html.indexOf('aria-label="Actions JSON"')).toBeGreaterThan(advanced);
+    expect(html.slice(advanced, html.indexOf(">", advanced))).not.toContain(
+      "open",
+    );
+  });
+
+  it("shows repaired default text from the resolved definition without restoring stale sparse values", () => {
+    const definition = createAutomatedAgentDefinition({ id: "review" });
+    const agent = {
+      ...dagAgent(
+        "review",
+        definition.trigger,
+        definition.triggered_event,
+        "Review",
+      ),
+      definition,
+    };
+    const renderDraft = (draft: Parameters<typeof AgentEditor>[0]["draft"]) =>
+      renderToStaticMarkup(
+        <PreferencesProvider>
+          <AgentEditor
+            agent={agent}
+            workflowAgents={[agent]}
+            events={[]}
+            draft={draft}
+            onChange={() => {}}
+            onToggleWidth={() => {}}
+            isWide={false}
+            canResize={true}
+            onRemove={() => {}}
+            onClose={() => {}}
+          />
+        </PreferencesProvider>,
+      );
+    const html = renderDraft({
+      id: "review",
+      title: "workflowPage.newNodeDefaults.automatedTitle",
+      description: "workflowPage.newNodeDefaults.automatedDescription",
+      ontology_instructions:
+        "workflowPage.newNodeDefaults.automatedOntologyInstructions",
+      actions: [
+        {
+          ...definition.actions[0],
+          action_prompt: "workflowPage.newNodeDefaults.automatedActionPrompt",
+        },
+      ],
+    });
+    expect(html).not.toContain("workflowPage.newNodeDefaults.");
+    expect(html).toContain("New automated step");
+    const cleared = renderDraft({
+      id: "review",
+      description: null,
+      ontology_instructions: null,
+    });
+    expect(cleared).not.toContain(definition.description);
+    expect(cleared).not.toContain(definition.ontology_instructions!);
+  });
+
+  it("resolves persisted starter text in both UI languages", () => {
+    for (const language of ["en", "zh"] as const) {
+      for (const field of [
+        "automatedTitle",
+        "automatedActionDescription",
+        "automatedActionPrompt",
+        "automatedOntologyInstructions",
+        "humanTitle",
+      ]) {
+        const key = `inspectors.newNodeDefaults.${field}`;
+        expect(translate(language, key, { title: "Review" })).not.toBe(key);
+      }
+    }
+  });
+});

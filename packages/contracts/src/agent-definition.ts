@@ -94,6 +94,16 @@ export const AgentFilePolicySchema = z
   .passthrough();
 export type AgentFilePolicy = z.infer<typeof AgentFilePolicySchema>;
 
+/** Provenance for an input generated when connecting two workflow agents. */
+export const AgentWorkflowHandoffSchema = z.object({
+  source_agent_id: z.string().min(1).max(160),
+  source_agent_name: z.string().min(1).max(160),
+  source_output_id: AgentPortIdSchema,
+  event: z.string().min(1).max(160),
+  required: z.boolean().default(true),
+});
+export type AgentWorkflowHandoff = z.infer<typeof AgentWorkflowHandoffSchema>;
+
 export const AgentInputPortV2Schema = z
   .object({
     id: AgentPortIdSchema,
@@ -107,6 +117,7 @@ export const AgentInputPortV2Schema = z
     sensitivity: AgentSensitivitySchema.default("none"),
     ui: AgentPortUiSchema.optional(),
     file: AgentFilePolicySchema.optional(),
+    workflow_handoff: AgentWorkflowHandoffSchema.optional(),
   })
   .passthrough();
 export type AgentInputPortV2 = z.infer<typeof AgentInputPortV2Schema>;

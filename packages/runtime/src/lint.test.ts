@@ -2,11 +2,20 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { lint } from "./lint";
 import { WorkflowManifestSchema, type WorkflowManifest } from "./manifest";
+import { connectWorkflowAgents } from "@agentic/contracts";
 
 const lintContext = {
   llmProviders: ["mock"],
   concurrencyMax: 25,
 };
+
+it("rejects stale generated handoffs through the direct manifest import linter", () => {
+  const source = { id: "source", name: "source", actor: ["Agent"], trigger: ["START"], triggered_event: [], actions: [] };
+  const target = { ...source, id: "target", name: "target" };
+  const connected = connectWorkflowAgents(source, target, "READY");
+  const manifest = WorkflowManifestSchema.parse([connected.target]);
+  assert.ok(lint(manifest, lintContext).issues.some((issue) => issue.code === "handoff_source_missing"));
+});
 
 function humanManifest(overrides: Record<string, unknown>): WorkflowManifest {
   return WorkflowManifestSchema.parse([

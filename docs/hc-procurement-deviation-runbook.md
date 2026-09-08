@@ -29,7 +29,7 @@ pnpm hc:erp
 
 **顺序是依赖不是习惯**：mock ERP 必须在 api 之后启动。`scripts/stop-dev.sh` 的
 kill 模式含 `tsx.*src/server\.ts`，正是 mock ERP 的 argv，所以每次 `pnpm dev` /
-`restart.sh` 都会杀掉它；ERP 不在时，带 `metaerp.invoke` 的 agent 会耗尽
+`scripts/restart.sh` 都会杀掉它；ERP 不在时，带 `metaerp.invoke` 的 agent 会耗尽
 Inngest 重试落到 `failed`。
 
 ## 触发

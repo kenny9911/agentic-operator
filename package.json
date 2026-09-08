@@ -4,7 +4,7 @@
   "private": true,
   "description": "Agentic Operator — event-driven agentic workflow runtime + admin portal",
   "engines": {
-    "node": "26.5.0"
+    "node": "26.8.1"
   },
   "packageManager": "pnpm@11.21.0",
   "scripts": {
@@ -23,7 +23,7 @@
     "pretypecheck": "pnpm run ensure:node",
     "typecheck": "turbo run typecheck",
     "pretest": "pnpm run ensure:native",
-    "test": "node --test scripts/run-db-command.test.mjs scripts/codex-harness-contract.test.mjs scripts/factory-sandbox-release-manifest.test.mjs scripts/allmeta-full-domain-release-client.test.mjs scripts/build-agents-generation-ontology.test.mjs deploy/factory-sandbox/validate-external-sandbox.test.mjs && turbo run test --concurrency=1",
+    "test": "node --test scripts/ensure-node-version.test.mjs scripts/restart-dev.test.mjs scripts/build.test.mjs scripts/run-db-command.test.mjs scripts/codex-harness-contract.test.mjs scripts/factory-sandbox-release-manifest.test.mjs scripts/allmeta-full-domain-release-client.test.mjs scripts/build-agents-generation-ontology.test.mjs deploy/factory-sandbox/validate-external-sandbox.test.mjs && turbo run test --concurrency=1",
     "test:db-env": "node --test scripts/run-db-command.test.mjs",
     "verify:real-runtime": "node --env-file-if-exists=apps/api/.env.local --env-file-if-exists=.env scripts/verify-real-runtime.mjs",
     "precodex:runtime:install": "node scripts/ensure-node-version.mjs",

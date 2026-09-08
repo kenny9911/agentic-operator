@@ -13,6 +13,8 @@ import {
 import { normalizeAgentForExecution } from "./agent-execution";
 import { parseValidateAndRepairOutput } from "./agent-execution";
 import { createBufferedTraceSink } from "./execution-trace";
+import { WorkflowAgentHarness } from "./agent-harness";
+import type { ToolContext } from "@agentic/agent-kit";
 import { getRuntimeGateway, setRuntimeGateway } from "./llm-host";
 import { runAction } from "./step-engine";
 
@@ -148,6 +150,125 @@ function v2Agent(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runAction v2 integration", () => {
+  it("uses the exact terminal logic output after a tool supplies intermediate receipt fields", async () => {
+    const agent = v2Agent({
+      tool_use: [{ name: "collectEvidence" }],
+      actions: [
+        { order: "1", name: "collectEvidence", type: "tool", description: "Collect evidence." },
+        { order: "2", name: "execute", type: "logic", description: "Assess the evidence." },
+      ],
+    });
+    const harness = new WorkflowAgentHarness(agent);
+    const event = { name: "RUN", data: { prompt: "Assess candidate.", candidate: { id: "cand-multi" } } };
+    const prepared = await harness.prepare({ event });
+    const ctx = {
+      agentName: agent.name, actionName: "collectEvidence", tenantSlug: "test", correlationId: "cor-multi",
+      event: { ...event, data: { ...event.data, inputs: prepared.inputs } },
+    };
+    const registry = { tools: { collectEvidence: {
+      kind: "tool" as const, name: "collectEvidence",
+      async handler() { return { data: { evidence: "verified", toolReceipt: "receipt-1" } }; },
+    } } };
+    const first = await runAction({
+      ctx, agent, finalOutput: false, action: agent.actions[0]! as never,
+      tenantRegistry: registry,
+    });
+    assert.equal(first.ok, true);
+    const intermediate = harness.accumulateActionResult(null, first.data, { terminal: false });
+    responses.push(response(JSON.stringify({ result: { decision: "advance" } })));
+    const terminal = await runAction({
+      ctx: { ...ctx, actionName: "execute", lastResult: intermediate },
+      agent, finalOutput: true, action: agent.actions[1]! as never, tenantRegistry: registry,
+    });
+    assert.equal(terminal.ok, true);
+    assert.equal(terminal.meta?.outputValid, true);
+    const final = await harness.finalize({
+      candidate: harness.accumulateActionResult(intermediate, terminal.data, { terminal: true }),
+      inputs: prepared.inputs, source: { agentName: agent.name, runId: "run-multi" },
+    });
+    assert.deepEqual(final.output.value, { result: { decision: "advance" } });
+    assert.deepEqual(final.emissions[0]?.payload.outputs, { result: { decision: "advance" } });
+    assert.equal(requests.length, 1);
+  });
+
+  it("invalidates a prior output-validation receipt when output_mapping changes the value", async () => {
+    const agent = v2Agent({ tool_use: [{ name: "mappedTool" }] });
+    const outcome = await runAction({
+      ctx: {
+        agentName: agent.name, actionName: "mappedTool", tenantSlug: "test", correlationId: "cor-mapped-invalid",
+        event: { name: "RUN", data: {} },
+      },
+      agent,
+      action: { order: "1", name: "mappedTool", type: "tool", description: "Map the result.", output_mapping: {
+        result: { constant: { decision: "unknown" } },
+      } },
+      tenantRegistry: { tools: { mappedTool: {
+        kind: "tool", name: "mappedTool",
+        async handler() { return { data: { result: { decision: "advance" } }, meta: { outputValid: true } }; },
+      } } },
+    });
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.meta?.outputMapped, true);
+    assert.equal(outcome.meta?.outputValid, undefined);
+    await assert.rejects(new WorkflowAgentHarness(agent).finalize({
+      candidate: outcome.data, inputs: {}, source: { agentName: agent.name, runId: "run-mapped-invalid" },
+    }), (error: unknown) => error instanceof Error && error.message.includes("output_schema_invalid"));
+  });
+
+  it("retains connected output references when a model tool call replaces event data", async () => {
+    const agent = v2Agent({
+      inputs: [
+        { id: "prompt", kind: "prompt", required: true, schema: { type: "string" } },
+        {
+          id: "candidate", kind: "value", required: false,
+          schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
+          workflow_handoff: {
+            source_agent_id: "source", source_agent_name: "sourceAgent",
+            source_output_id: "candidate", event: "RUN", required: true,
+          },
+        },
+      ],
+      user_prompt_template: "Use the connected evidence for this assessment.",
+      tool_use: [{
+        name: "readConnectedCandidate",
+        input_schema: { type: "object", properties: { request: { type: "string" } }, required: ["request"], additionalProperties: false },
+      }],
+    });
+    const event = { name: "RUN", data: {
+      prompt: "Assess this candidate.", candidate: { id: "cand-upstream" }, source_agent: "sourceAgent", source_run: "run-source",
+    } };
+    const prepared = await new WorkflowAgentHarness(agent).prepare({ event });
+    responses.push(
+      response("", [{ id: "call-upstream", name: "readConnectedCandidate", input: { request: "review" } }]),
+      response(JSON.stringify({ result: { decision: "advance" } })),
+    );
+    let received: ToolContext | undefined;
+    const result = await runAction({
+      ctx: {
+        agentName: agent.name, actionName: "execute", tenantSlug: "test", correlationId: "cor-upstream",
+        event: { name: "test/RUN", data: { ...event.data, inputs: prepared.inputs } },
+        lastResult: prepared.context.previousResult,
+      },
+      action: { order: "1", name: "execute", description: "Assess the connected candidate.", type: "logic" },
+      agent,
+      tenantRegistry: { tools: {
+        readConnectedCandidate: {
+          kind: "tool", name: "readConnectedCandidate",
+          async handler(ctx) { received = ctx; return { data: { verified: true } }; },
+        },
+      } },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(received?.event?.data, { request: "review" });
+    assert.deepEqual(received?.inputs?.candidate, { id: "cand-upstream" });
+    assert.deepEqual(received?.upstream?.source?.candidate, { id: "cand-upstream" });
+    assert.deepEqual(received?.lastResult, { id: "cand-upstream" });
+    const user = requests[0]?.messages.at(-1)?.content;
+    assert.equal(typeof user, "string");
+    assert.match(String(user), /inputs.candidate/);
+    assert.match(String(user), /cand-upstream/);
+  });
+
   it("sends the Studio prompt as a real user role and repairs strict output once", async () => {
     responses.push(
       response("not-json"),

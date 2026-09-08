@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "26"
+  NODE_VERSION: "26.8.1"
   PNPM_VERSION: "11.21.0"
 
 jobs:

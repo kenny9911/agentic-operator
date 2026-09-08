@@ -14,6 +14,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
   AgentSpec as AgentSpecSchema,
+  AgentTriggerBindingsV2Schema,
+  AgentOutputBindingsV2Schema,
   PROVIDER_IDS,
   REASONING_CONTEXTS,
   REASONING_EFFORTS,
@@ -91,6 +93,7 @@ export function AgentEditor({
   const [toolsError, setToolsError] = useState<string | null>(null);
   const [inputsError, setInputsError] = useState<string | null>(null);
   const [outputsError, setOutputsError] = useState<string | null>(null);
+  const [bindingsError, setBindingsError] = useState<string | null>(null);
   const [definitionError, setDefinitionError] = useState<string | null>(null);
   const [numberErrors, setNumberErrors] = useState<Record<string, string>>({});
   const [promptMode, setPromptMode] =
@@ -124,6 +127,7 @@ export function AgentEditor({
     setInputsError(null);
     setOutputsError(null);
     setDefinitionError(null);
+    setBindingsError(null);
     setNumberErrors({});
     setPromptMode(
       definition?.ontology_instructions?.trim() ? "improve" : "generate",
@@ -141,7 +145,35 @@ export function AgentEditor({
 
   useEffect(() => {
     draftRef.current = draft;
-  }, [draft]);
+    const incoming = resolvedDefinition(agent, draft);
+    if (JSON.stringify(incoming) === JSON.stringify(definitionRef.current))
+      return;
+    definitionRef.current = incoming;
+    const next = editorValues(agent, draft);
+    setValues((current) => ({
+      ...next,
+      ...(actionsError ? { actions: current.actions } : {}),
+      ...(toolsError ? { tool_use: current.tool_use } : {}),
+      ...(inputsError ? { inputs: current.inputs } : {}),
+      ...(outputsError ? { outputs: current.outputs } : {}),
+      ...Object.fromEntries(
+        Object.keys(numberErrors).map((key) => [
+          key,
+          current[key as keyof EditorValues],
+        ]),
+      ),
+    }));
+    if (!definitionError) setDefinitionText(formatDefinition(incoming));
+  }, [
+    agent,
+    draft,
+    actionsError,
+    toolsError,
+    inputsError,
+    outputsError,
+    numberErrors,
+    definitionError,
+  ]);
 
   useEffect(() => {
     onValidityChange?.(
@@ -152,11 +184,13 @@ export function AgentEditor({
         inputsError,
         outputsError,
         definitionError,
+        bindingsError,
         ...Object.values(numberErrors),
       ].filter((entry): entry is string => Boolean(entry)),
     );
   }, [
     actionsError,
+    bindingsError,
     agent.kebabId,
     definitionError,
     inputsError,
@@ -537,137 +571,18 @@ export function AgentEditor({
       {editorMode === "guided" ? (
         <>
           <Section title={t("agentEditor.identity")}>
-            <div style={fieldGridStyle}>
-              <EditorField label={t("agentEditor.name")}>
-                <input
-                  value={values.name}
-                  onChange={(event) => {
-                    const name = event.target.value;
-                    setValues((current) => ({ ...current, name }));
-                    commit({ name });
-                  }}
-                  placeholder={t("agentEditor.namePlaceholder")}
-                  style={inputStyle}
-                />
-              </EditorField>
-              <EditorField label={t("agentEditor.titleSection")}>
-                <input
-                  value={values.title}
-                  onChange={(event) => {
-                    const title = event.target.value;
-                    setValues((current) => ({ ...current, title }));
-                    commit({ title });
-                  }}
-                  placeholder={t("agentEditor.titlePlaceholder")}
-                  style={inputStyle}
-                />
-              </EditorField>
-              <EditorField label={t("agentEditor.actor")}>
-                <select
-                  value={values.actor}
-                  onChange={(event) => {
-                    const actor = event.target.value as AgentActor;
-                    setValues((current) => ({ ...current, actor }));
-                    commit({ actor });
-                  }}
-                  style={inputStyle}
-                >
-                  <option value="Agent">
-                    {t("agentEditor.automatedAgent")}
-                  </option>
-                  <option value="Human">{t("agentEditor.humanTask")}</option>
-                </select>
-              </EditorField>
-              <EditorField label={t("agentEditor.stage")}>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={values.stage}
-                  onChange={(event) => {
-                    const stage = event.target.value;
-                    setValues((current) => ({ ...current, stage }));
-                    const stageError = validateNumberInput(
-                      stage,
-                      t("agentEditor.stage"),
-                      {
-                        integer: true,
-                        min: 0,
-                        required: true,
-                      },
-                      t,
-                    );
-                    setNumberErrors((current) => {
-                      const next = { ...current };
-                      if (stageError) next.stage = stageError;
-                      else delete next.stage;
-                      return next;
-                    });
-                    const parsed = Number(stage);
-                    if (!stageError) commit({ stage: parsed });
-                  }}
-                  style={inputStyle}
-                />
-                {numberErrors.stage ? (
-                  <ErrorText>{numberErrors.stage}</ErrorText>
-                ) : null}
-              </EditorField>
-              <EditorField label={t("agentEditor.agentTemplate")}>
-                <select
-                  value={stringValue(currentDefinition?.template)}
-                  onChange={(event) =>
-                    commitDefinitionFields({
-                      template: event.target.value || null,
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.unspecified")}</option>
-                  <option value="blank">
-                    {t("agentEditor.templateBlank")}
-                  </option>
-                  <option value="classify">
-                    {t("agentEditor.templateClassify")}
-                  </option>
-                  <option value="extract">
-                    {t("agentEditor.templateExtract")}
-                  </option>
-                  <option value="rag">{t("agentEditor.templateRag")}</option>
-                  <option value="loop">{t("agentEditor.templateLoop")}</option>
-                  <option value="human">
-                    {t("agentEditor.templateHuman")}
-                  </option>
-                </select>
-              </EditorField>
-              <EditorField label={t("agentEditor.promptOwnership")}>
-                <select
-                  value={
-                    typeof currentDefinition?.generated === "boolean"
-                      ? String(currentDefinition.generated)
-                      : ""
-                  }
-                  onChange={(event) =>
-                    commitDefinitionFields({
-                      generated:
-                        event.target.value === ""
-                          ? null
-                          : event.target.value === "true",
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="">
-                    {t("agentEditor.inheritManifestBehavior")}
-                  </option>
-                  <option value="true">
-                    {t("agentEditor.manifestGeneratedPrompt")}
-                  </option>
-                  <option value="false">
-                    {t("agentEditor.tenantPromptRegistry")}
-                  </option>
-                </select>
-              </EditorField>
-            </div>
+            <EditorField label={t("agentEditor.titleSection")}>
+              <input
+                value={values.title}
+                onChange={(event) => {
+                  const title = event.target.value;
+                  setValues((current) => ({ ...current, title }));
+                  commit({ title });
+                }}
+                placeholder={t("agentEditor.titlePlaceholder")}
+                style={inputStyle}
+              />
+            </EditorField>
             <EditorField label={t("agentEditor.description")}>
               <textarea
                 value={values.description}
@@ -685,43 +600,55 @@ export function AgentEditor({
             </EditorField>
           </Section>
 
-          <Section title={t("agentEditor.triggeredBySection")}>
-            <textarea
-              value={values.triggers}
-              onChange={(event) => {
-                const triggers = event.target.value;
-                setValues((current) => ({ ...current, triggers }));
-                commit({ triggers: parseList(triggers) });
-              }}
-              placeholder="EVENT_A, EVENT_B"
-              rows={2}
-              style={textareaStyle}
-            />
-            <EventDictHint
-              events={events}
-              prefix={t("agentEditor.available")}
-            />
+          <Section title={t("agentEditor.taskInstructions")}>
+            <div style={hintStyle}>{t("agentEditor.taskInstructionsHelp")}</div>
+            {editableTaskActions(currentDefinition?.actions ?? []).map(
+              ({ action, index }) => (
+                <EditorField
+                  key={String(action.id ?? index)}
+                  label={String(
+                    action.description ??
+                      action.name ??
+                      t("agentEditor.taskInstructions"),
+                  )}
+                >
+                  <textarea
+                    aria-label={t("agentEditor.taskPromptAria", {
+                      index: index + 1,
+                    })}
+                    value={stringValue(action.action_prompt)}
+                    onChange={(event) => {
+                      const actions = patchTaskInstruction(
+                        definitionRef.current?.actions ?? [],
+                        index,
+                        event.target.value,
+                      );
+                      setValues((current) => ({
+                        ...current,
+                        actions: JSON.stringify(actions, null, 2),
+                      }));
+                      setActionsError(null);
+                      commit({ actions });
+                    }}
+                    rows={5}
+                    placeholder={t("agentEditor.taskInstructionsPlaceholder")}
+                    style={textareaStyle}
+                  />
+                </EditorField>
+              ),
+            )}
+            {editableTaskActions(currentDefinition?.actions ?? []).length ===
+            0 ? (
+              <div style={hintStyle}>
+                {t("agentEditor.taskInstructionsAdvanced")}
+              </div>
+            ) : null}
           </Section>
 
-          <Section title={t("agentEditor.triggeredEventSection")}>
-            <textarea
-              value={values.emits}
-              onChange={(event) => {
-                const emits = event.target.value;
-                setValues((current) => ({ ...current, emits }));
-                commit({ emits: parseList(emits) });
-              }}
-              placeholder="EVENT_A, EVENT_B"
-              rows={2}
-              style={textareaStyle}
-            />
-            <EventDictHint
-              events={events}
-              prefix={t("agentEditor.available")}
-            />
-          </Section>
-
-          <AutomaticLinkSummary summary={automaticLinks} />
+          <WorkflowInputSummary
+            definition={currentDefinition}
+            workflowAgents={workflowAgents}
+          />
 
           <Section title={t("agentEditor.instructionsPrompts")}>
             <div style={{ marginBottom: 10 }}>
@@ -918,92 +845,46 @@ export function AgentEditor({
                 </div>
               </div>
             ) : null}
-            <EditorField label={t("agentEditor.userPromptTemplate")}>
-              <textarea
-                value={values.user_prompt_template}
-                onChange={(event) => {
-                  const user_prompt_template = event.target.value;
-                  setValues((current) => ({
-                    ...current,
-                    user_prompt_template,
-                  }));
-                  commit({
-                    user_prompt_template:
-                      user_prompt_template === "" ? null : user_prompt_template,
-                  });
-                }}
-                placeholder={t("agentEditor.userPromptPlaceholder")}
-                rows={6}
-                style={textareaStyle}
-              />
-            </EditorField>
           </Section>
 
-          <Section title={t("agentEditor.typedInputsOutputs")}>
-            <EditorField label={t("agentEditor.inputsJson")}>
-              <textarea
-                aria-label={t("agentEditor.inputsJsonAria")}
-                value={values.inputs}
-                onChange={(event) =>
-                  changeJson("inputs", event.target.value, setInputsError)
-                }
-                placeholder={
-                  '[{"id":"request","kind":"value","required":true,"schema":{"type":"object"}}]'
-                }
-                rows={8}
-                spellCheck={false}
-                style={jsonTextareaStyle}
-              />
-              {inputsError ? <ErrorText>{inputsError}</ErrorText> : null}
-            </EditorField>
-            <EditorField label={t("agentEditor.outputsJson")}>
-              <textarea
-                aria-label={t("agentEditor.outputsJsonAria")}
-                value={values.outputs}
-                onChange={(event) =>
-                  changeJson("outputs", event.target.value, setOutputsError)
-                }
-                placeholder={
-                  '[{"id":"result","required":true,"schema":{"type":"object"}}]'
-                }
-                rows={8}
-                spellCheck={false}
-                style={jsonTextareaStyle}
-              />
-              {outputsError ? <ErrorText>{outputsError}</ErrorText> : null}
-            </EditorField>
-            <div style={hintStyle}>{t("agentEditor.typedPortsHelp")}</div>
-          </Section>
-
-          <Section title={t("agentEditor.actions")}>
-            <textarea
-              aria-label={t("agentEditor.actionsJsonAria")}
-              value={values.actions}
-              onChange={(event) =>
-                changeJson("actions", event.target.value, setActionsError)
-              }
-              rows={12}
-              spellCheck={false}
-              style={jsonTextareaStyle}
-            />
-            {actionsError ? <ErrorText>{actionsError}</ErrorText> : null}
-            <div style={hintStyle}>{t("agentEditor.jsonArrayHelp")}</div>
-          </Section>
-
-          <Section title={t("agentEditor.tools")}>
-            <textarea
-              aria-label={t("agentEditor.toolUseJsonAria")}
-              value={values.tool_use}
-              onChange={(event) =>
-                changeJson("tool_use", event.target.value, setToolsError)
-              }
-              placeholder={'[{"name":"meta.ping","config":{}}]'}
-              rows={8}
-              spellCheck={false}
-              style={jsonTextareaStyle}
-            />
-            {toolsError ? <ErrorText>{toolsError}</ErrorText> : null}
-            <div style={hintStyle}>{t("agentEditor.toolsHelp")}</div>
+          <Section title={t("agentEditor.expectedResults")}>
+            <div style={hintStyle}>{t("agentEditor.expectedResultsHelp")}</div>
+            {(currentDefinition?.outputs ?? []).map((port) => (
+              <EditorField key={port.id} label={port.label ?? port.id}>
+                <textarea
+                  aria-label={t("agentEditor.outputDescriptionAria", {
+                    output: port.id,
+                  })}
+                  value={
+                    port.description ??
+                    stringValue(objectValue(port.schema).description)
+                  }
+                  placeholder={t("agentEditor.outputDescriptionPlaceholder")}
+                  onChange={(event) => {
+                    const outputs = (definitionRef.current?.outputs ?? []).map(
+                      (candidate) =>
+                        candidate.id === port.id
+                          ? {
+                              ...candidate,
+                              description: event.target.value,
+                              schema: {
+                                ...objectValue(candidate.schema),
+                                description: event.target.value,
+                              },
+                            }
+                          : candidate,
+                    );
+                    setOutputsError(null);
+                    commitDefinitionFields({ outputs });
+                  }}
+                  rows={3}
+                  style={textareaStyle}
+                />
+              </EditorField>
+            ))}
+            {(currentDefinition?.outputs ?? []).length === 0 ? (
+              <div style={hintStyle}>{t("agentEditor.noTypedResults")}</div>
+            ) : null}
           </Section>
 
           <Section title={t("agentEditor.modelSelection")}>
@@ -1103,361 +984,719 @@ export function AgentEditor({
             </div>
           </Section>
 
-          <Section title={t("agentEditor.runtimeControls")}>
-            <div style={fieldGridStyle}>
-              <EditorField label={t("agentEditor.temperature")}>
-                <input
-                  type="number"
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  value={values.temperature}
-                  onChange={(event) =>
-                    changeOptionalNumber("temperature", event.target.value, {
-                      min: 0,
-                      max: 2,
-                    })
-                  }
-                  placeholder={t("agentEditor.defaultValue")}
-                  style={inputStyle}
-                />
-                {numberErrors.temperature ? (
-                  <ErrorText>{numberErrors.temperature}</ErrorText>
-                ) : null}
-              </EditorField>
-              <EditorField label={t("agentEditor.maxTokens")}>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={values.max_tokens}
-                  onChange={(event) =>
-                    changeOptionalNumber("max_tokens", event.target.value, {
-                      integer: true,
-                      min: 1,
-                    })
-                  }
-                  placeholder={t("agentEditor.defaultValue")}
-                  style={inputStyle}
-                />
-                {numberErrors.max_tokens ? (
-                  <ErrorText>{numberErrors.max_tokens}</ErrorText>
-                ) : null}
-              </EditorField>
-              <EditorField label={t("agentEditor.retries")}>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={values.retries}
-                  onChange={(event) =>
-                    changeOptionalNumber("retries", event.target.value, {
-                      integer: true,
-                      min: 0,
-                    })
-                  }
-                  placeholder={t("agentEditor.defaultValue")}
-                  style={inputStyle}
-                />
-                {numberErrors.retries ? (
-                  <ErrorText>{numberErrors.retries}</ErrorText>
-                ) : null}
-              </EditorField>
-              <EditorField label={t("agentEditor.timeoutSeconds")}>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={values.timeout_s}
-                  onChange={(event) =>
-                    changeOptionalNumber("timeout_s", event.target.value, {
-                      integer: true,
-                      min: 1,
-                    })
-                  }
-                  placeholder={t("agentEditor.defaultValue")}
-                  style={inputStyle}
-                />
-                {numberErrors.timeout_s ? (
-                  <ErrorText>{numberErrors.timeout_s}</ErrorText>
-                ) : null}
-              </EditorField>
-              <EditorField label={t("agentEditor.concurrencyLimit")}>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={values.concurrency}
-                  onChange={(event) => {
-                    const concurrency = event.target.value;
-                    setValues((current) => ({ ...current, concurrency }));
-                    const concurrencyError = validateNumberInput(
-                      concurrency,
-                      t("agentEditor.concurrencyLimit"),
-                      { integer: true, min: 1 },
-                      t,
-                    );
-                    setNumberErrors((current) => {
-                      const next = { ...current };
-                      if (concurrencyError) next.concurrency = concurrencyError;
-                      else delete next.concurrency;
-                      return next;
-                    });
-                    if (concurrency.trim() === "") {
-                      commit({ concurrency: null });
-                      return;
+          <details
+            style={{
+              borderTop: "1px solid var(--border)",
+              background: "var(--panel)",
+            }}
+          >
+            <summary
+              style={{
+                padding: "16px",
+                cursor: "pointer",
+                color: "var(--text-2)",
+                fontSize: 12,
+                fontWeight: 650,
+              }}
+            >
+              {t("agentEditor.advancedSettings")}
+            </summary>
+            <div style={{ ...hintStyle, padding: "0 16px 10px" }}>
+              {t("agentEditor.advancedSettingsHelp")}
+            </div>
+            <Section title={t("agentEditor.identity")}>
+              <div style={fieldGridStyle}>
+                <EditorField label={t("agentEditor.name")}>
+                  <input
+                    value={values.name}
+                    onChange={(event) => {
+                      const name = event.target.value;
+                      setValues((current) => ({ ...current, name }));
+                      commit({ name });
+                    }}
+                    placeholder={t("agentEditor.namePlaceholder")}
+                    style={inputStyle}
+                  />
+                </EditorField>
+                <EditorField label={t("agentEditor.actor")}>
+                  <select
+                    value={values.actor}
+                    onChange={(event) => {
+                      const actor = event.target.value as AgentActor;
+                      setValues((current) => ({ ...current, actor }));
+                      commit({ actor });
+                    }}
+                    style={inputStyle}
+                  >
+                    <option value="Agent">
+                      {t("agentEditor.automatedAgent")}
+                    </option>
+                    <option value="Human">{t("agentEditor.humanTask")}</option>
+                  </select>
+                </EditorField>
+                <EditorField label={t("agentEditor.stage")}>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={values.stage}
+                    onChange={(event) => {
+                      const stage = event.target.value;
+                      setValues((current) => ({ ...current, stage }));
+                      const stageError = validateNumberInput(
+                        stage,
+                        t("agentEditor.stage"),
+                        {
+                          integer: true,
+                          min: 0,
+                          required: true,
+                        },
+                        t,
+                      );
+                      setNumberErrors((current) => {
+                        const next = { ...current };
+                        if (stageError) next.stage = stageError;
+                        else delete next.stage;
+                        return next;
+                      });
+                      const parsed = Number(stage);
+                      if (!stageError) commit({ stage: parsed });
+                    }}
+                    style={inputStyle}
+                  />
+                  {numberErrors.stage ? (
+                    <ErrorText>{numberErrors.stage}</ErrorText>
+                  ) : null}
+                </EditorField>
+                <EditorField label={t("agentEditor.agentTemplate")}>
+                  <select
+                    value={stringValue(currentDefinition?.template)}
+                    onChange={(event) =>
+                      commitDefinitionFields({
+                        template: event.target.value || null,
+                      })
                     }
-                    const maximum = Number(concurrency);
-                    if (concurrencyError) return;
-                    const current = definitionRef.current?.concurrency;
-                    const base =
-                      current &&
-                      typeof current === "object" &&
-                      !Array.isArray(current)
-                        ? (current as Record<string, unknown>)
-                        : {};
+                    style={inputStyle}
+                  >
+                    <option value="">{t("agentEditor.unspecified")}</option>
+                    <option value="blank">
+                      {t("agentEditor.templateBlank")}
+                    </option>
+                    <option value="classify">
+                      {t("agentEditor.templateClassify")}
+                    </option>
+                    <option value="extract">
+                      {t("agentEditor.templateExtract")}
+                    </option>
+                    <option value="rag">{t("agentEditor.templateRag")}</option>
+                    <option value="loop">
+                      {t("agentEditor.templateLoop")}
+                    </option>
+                    <option value="human">
+                      {t("agentEditor.templateHuman")}
+                    </option>
+                  </select>
+                </EditorField>
+                <EditorField label={t("agentEditor.promptOwnership")}>
+                  <select
+                    value={
+                      typeof currentDefinition?.generated === "boolean"
+                        ? String(currentDefinition.generated)
+                        : ""
+                    }
+                    onChange={(event) =>
+                      commitDefinitionFields({
+                        generated:
+                          event.target.value === ""
+                            ? null
+                            : event.target.value === "true",
+                      })
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="">
+                      {t("agentEditor.inheritManifestBehavior")}
+                    </option>
+                    <option value="true">
+                      {t("agentEditor.manifestGeneratedPrompt")}
+                    </option>
+                    <option value="false">
+                      {t("agentEditor.tenantPromptRegistry")}
+                    </option>
+                  </select>
+                </EditorField>
+              </div>
+            </Section>
+
+            <Section title={t("agentEditor.triggeredBySection")}>
+              <textarea
+                value={values.triggers}
+                onChange={(event) => {
+                  const triggers = event.target.value;
+                  setValues((current) => ({ ...current, triggers }));
+                  commit({ triggers: parseList(triggers) });
+                }}
+                placeholder="EVENT_A, EVENT_B"
+                rows={2}
+                style={textareaStyle}
+              />
+              <EventDictHint
+                events={events}
+                prefix={t("agentEditor.available")}
+              />
+            </Section>
+
+            <Section title={t("agentEditor.triggeredEventSection")}>
+              <textarea
+                value={values.emits}
+                onChange={(event) => {
+                  const emits = event.target.value;
+                  setValues((current) => ({ ...current, emits }));
+                  commit({ emits: parseList(emits) });
+                }}
+                placeholder="EVENT_A, EVENT_B"
+                rows={2}
+                style={textareaStyle}
+              />
+              <EventDictHint
+                events={events}
+                prefix={t("agentEditor.available")}
+              />
+            </Section>
+
+            <AutomaticLinkSummary summary={automaticLinks} />
+
+            <Section title={t("agentEditor.userPromptTemplate")}>
+              <EditorField label={t("agentEditor.userPromptTemplate")}>
+                <textarea
+                  value={values.user_prompt_template}
+                  onChange={(event) => {
+                    const user_prompt_template = event.target.value;
+                    setValues((current) => ({
+                      ...current,
+                      user_prompt_template,
+                    }));
                     commit({
-                      concurrency: {
-                        ...base,
-                        enabled: true,
-                        max_concurrent_executions: maximum,
-                      },
+                      user_prompt_template:
+                        user_prompt_template === ""
+                          ? null
+                          : user_prompt_template,
                     });
                   }}
-                  placeholder={t("agentEditor.defaultValue")}
-                  style={inputStyle}
-                />
-                {numberErrors.concurrency ? (
-                  <ErrorText>{numberErrors.concurrency}</ErrorText>
-                ) : null}
-              </EditorField>
-              <EditorField label={t("agentEditor.concurrencyEnabled")}>
-                <select
-                  value={
-                    typeof concurrency.enabled === "boolean"
-                      ? String(concurrency.enabled)
-                      : ""
-                  }
-                  onChange={(event) =>
-                    patchDefinitionObject("concurrency", {
-                      enabled:
-                        event.target.value === ""
-                          ? null
-                          : event.target.value === "true",
-                      max_concurrent_executions:
-                        concurrency.max_concurrent_executions ?? 1,
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.inherit")}</option>
-                  <option value="true">{t("agentEditor.enabled")}</option>
-                  <option value="false">{t("agentEditor.disabled")}</option>
-                </select>
-              </EditorField>
-              <EditorField label={t("agentEditor.concurrencyKey")}>
-                <input
-                  value={stringValue(concurrency.key)}
-                  onChange={(event) =>
-                    patchDefinitionObject("concurrency", {
-                      key: event.target.value || null,
-                      max_concurrent_executions:
-                        concurrency.max_concurrent_executions ?? 1,
-                    })
-                  }
-                  placeholder={t("agentEditor.concurrencyKeyPlaceholder")}
-                  style={inputStyle}
+                  placeholder={t("agentEditor.userPromptPlaceholder")}
+                  rows={6}
+                  style={textareaStyle}
                 />
               </EditorField>
-              <EditorField label={t("agentEditor.responseVerbosity")}>
-                <select
-                  value={stringValue(currentDefinition?.verbosity)}
+            </Section>
+
+            <Section title={t("agentEditor.typedInputsOutputs")}>
+              <EditorField label={t("agentEditor.inputsJson")}>
+                <textarea
+                  aria-label={t("agentEditor.inputsJsonAria")}
+                  value={values.inputs}
                   onChange={(event) =>
-                    commitDefinitionFields({
-                      verbosity: event.target.value || null,
-                    })
+                    changeJson("inputs", event.target.value, setInputsError)
                   }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.providerDefault")}</option>
-                  {TEXT_VERBOSITIES.map((verbosity) => (
-                    <option key={verbosity} value={verbosity}>
-                      {verbosity}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={
+                    '[{"id":"request","kind":"value","required":true,"schema":{"type":"object"}}]'
+                  }
+                  rows={8}
+                  spellCheck={false}
+                  style={jsonTextareaStyle}
+                />
+                {inputsError ? <ErrorText>{inputsError}</ErrorText> : null}
               </EditorField>
-              <EditorField label={t("agentEditor.providerStorage")}>
-                <select
-                  value={
-                    typeof currentDefinition?.store === "boolean"
-                      ? String(currentDefinition.store)
-                      : ""
-                  }
+              <EditorField label={t("agentEditor.outputsJson")}>
+                <textarea
+                  aria-label={t("agentEditor.outputsJsonAria")}
+                  value={values.outputs}
                   onChange={(event) =>
-                    commitDefinitionFields({
-                      store:
-                        event.target.value === ""
-                          ? null
-                          : event.target.value === "true",
-                    })
+                    changeJson("outputs", event.target.value, setOutputsError)
                   }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.providerDefault")}</option>
-                  <option value="true">
-                    {t("agentEditor.allowProviderStorage")}
-                  </option>
-                  <option value="false">{t("agentEditor.doNotStore")}</option>
-                </select>
+                  placeholder={
+                    '[{"id":"result","required":true,"schema":{"type":"object"}}]'
+                  }
+                  rows={8}
+                  spellCheck={false}
+                  style={jsonTextareaStyle}
+                />
+                {outputsError ? <ErrorText>{outputsError}</ErrorText> : null}
               </EditorField>
-            </div>
-            <details style={advancedDetailsStyle}>
-              <summary style={advancedSummaryStyle}>
-                {t("agentEditor.advancedRuntime")}
-              </summary>
-              <div style={{ ...fieldGridStyle, marginTop: 11 }}>
-                <EditorField label={t("agentEditor.reasoningMode")}>
-                  <select
-                    value={stringValue(reasoning.mode)}
+              <div style={hintStyle}>{t("agentEditor.typedPortsHelp")}</div>
+            </Section>
+
+            <Section title={t("agentEditor.actions")}>
+              <textarea
+                aria-label={t("agentEditor.actionsJsonAria")}
+                value={values.actions}
+                onChange={(event) =>
+                  changeJson("actions", event.target.value, setActionsError)
+                }
+                rows={12}
+                spellCheck={false}
+                style={jsonTextareaStyle}
+              />
+              {actionsError ? <ErrorText>{actionsError}</ErrorText> : null}
+              <div style={hintStyle}>{t("agentEditor.jsonArrayHelp")}</div>
+            </Section>
+
+            <Section title={t("agentEditor.tools")}>
+              <textarea
+                aria-label={t("agentEditor.toolUseJsonAria")}
+                value={values.tool_use}
+                onChange={(event) =>
+                  changeJson("tool_use", event.target.value, setToolsError)
+                }
+                placeholder={'[{"name":"meta.ping","config":{}}]'}
+                rows={8}
+                spellCheck={false}
+                style={jsonTextareaStyle}
+              />
+              {toolsError ? <ErrorText>{toolsError}</ErrorText> : null}
+              <div style={hintStyle}>{t("agentEditor.toolsHelp")}</div>
+            </Section>
+
+            <Section title={t("agentEditor.handoffBindings")}>
+              <BindingJsonEditor
+                key={agent.kebabId}
+                definition={currentDefinition}
+                onChange={commitDefinitionFields}
+                onValidityChange={setBindingsError}
+              />
+            </Section>
+
+            <Section title={t("agentEditor.runtimeControls")}>
+              <div style={fieldGridStyle}>
+                <EditorField label={t("agentEditor.temperature")}>
+                  <input
+                    type="number"
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    value={values.temperature}
                     onChange={(event) =>
-                      patchDefinitionObject("reasoning", {
-                        mode: event.target.value || null,
+                      changeOptionalNumber("temperature", event.target.value, {
+                        min: 0,
+                        max: 2,
                       })
                     }
+                    placeholder={t("agentEditor.defaultValue")}
                     style={inputStyle}
-                  >
-                    <option value="">{t("agentEditor.modelDefault")}</option>
-                    {REASONING_MODES.map((mode) => (
-                      <option key={mode} value={mode}>
-                        {mode}
-                      </option>
-                    ))}
-                  </select>
+                  />
+                  {numberErrors.temperature ? (
+                    <ErrorText>{numberErrors.temperature}</ErrorText>
+                  ) : null}
                 </EditorField>
-                <EditorField label={t("agentEditor.reasoningEffort")}>
-                  <select
-                    value={stringValue(reasoning.effort)}
-                    onChange={(event) =>
-                      patchDefinitionObject("reasoning", {
-                        effort: event.target.value || null,
-                      })
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="">{t("agentEditor.modelDefault")}</option>
-                    {REASONING_EFFORTS.map((effort) => (
-                      <option key={effort} value={effort}>
-                        {effort}
-                      </option>
-                    ))}
-                  </select>
-                </EditorField>
-                <EditorField label={t("agentEditor.reasoningSummary")}>
-                  <select
-                    value={stringValue(reasoning.summary)}
-                    onChange={(event) =>
-                      patchDefinitionObject("reasoning", {
-                        summary: event.target.value || null,
-                      })
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="">{t("agentEditor.modelDefault")}</option>
-                    {REASONING_SUMMARIES.map((summary) => (
-                      <option key={summary} value={summary}>
-                        {summary}
-                      </option>
-                    ))}
-                  </select>
-                </EditorField>
-                <EditorField label={t("agentEditor.reasoningContext")}>
-                  <select
-                    value={stringValue(reasoning.context)}
-                    onChange={(event) =>
-                      patchDefinitionObject("reasoning", {
-                        context: event.target.value || null,
-                      })
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="">{t("agentEditor.modelDefault")}</option>
-                    {REASONING_CONTEXTS.map((context) => (
-                      <option key={context} value={context}>
-                        {context}
-                      </option>
-                    ))}
-                  </select>
-                </EditorField>
-                <EditorField label={t("agentEditor.toolLoopMax")}>
+                <EditorField label={t("agentEditor.maxTokens")}>
                   <input
                     type="number"
                     min={1}
-                    max={100}
                     step={1}
-                    value={numberValue(toolLoop.max_iterations)}
+                    value={values.max_tokens}
+                    onChange={(event) =>
+                      changeOptionalNumber("max_tokens", event.target.value, {
+                        integer: true,
+                        min: 1,
+                      })
+                    }
+                    placeholder={t("agentEditor.defaultValue")}
+                    style={inputStyle}
+                  />
+                  {numberErrors.max_tokens ? (
+                    <ErrorText>{numberErrors.max_tokens}</ErrorText>
+                  ) : null}
+                </EditorField>
+                <EditorField label={t("agentEditor.retries")}>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={values.retries}
+                    onChange={(event) =>
+                      changeOptionalNumber("retries", event.target.value, {
+                        integer: true,
+                        min: 0,
+                      })
+                    }
+                    placeholder={t("agentEditor.defaultValue")}
+                    style={inputStyle}
+                  />
+                  {numberErrors.retries ? (
+                    <ErrorText>{numberErrors.retries}</ErrorText>
+                  ) : null}
+                </EditorField>
+                <EditorField label={t("agentEditor.timeoutSeconds")}>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={values.timeout_s}
+                    onChange={(event) =>
+                      changeOptionalNumber("timeout_s", event.target.value, {
+                        integer: true,
+                        min: 1,
+                      })
+                    }
+                    placeholder={t("agentEditor.defaultValue")}
+                    style={inputStyle}
+                  />
+                  {numberErrors.timeout_s ? (
+                    <ErrorText>{numberErrors.timeout_s}</ErrorText>
+                  ) : null}
+                </EditorField>
+                <EditorField label={t("agentEditor.concurrencyLimit")}>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={values.concurrency}
                     onChange={(event) => {
-                      const value = event.target.value;
-                      patchDefinitionObject("tool_loop", {
-                        max_iterations: value ? Number(value) : null,
+                      const concurrency = event.target.value;
+                      setValues((current) => ({ ...current, concurrency }));
+                      const concurrencyError = validateNumberInput(
+                        concurrency,
+                        t("agentEditor.concurrencyLimit"),
+                        { integer: true, min: 1 },
+                        t,
+                      );
+                      setNumberErrors((current) => {
+                        const next = { ...current };
+                        if (concurrencyError)
+                          next.concurrency = concurrencyError;
+                        else delete next.concurrency;
+                        return next;
+                      });
+                      if (concurrency.trim() === "") {
+                        commit({ concurrency: null });
+                        return;
+                      }
+                      const maximum = Number(concurrency);
+                      if (concurrencyError) return;
+                      const current = definitionRef.current?.concurrency;
+                      const base =
+                        current &&
+                        typeof current === "object" &&
+                        !Array.isArray(current)
+                          ? (current as Record<string, unknown>)
+                          : {};
+                      commit({
+                        concurrency: {
+                          ...base,
+                          enabled: true,
+                          max_concurrent_executions: maximum,
+                        },
                       });
                     }}
-                    placeholder="8"
+                    placeholder={t("agentEditor.defaultValue")}
                     style={inputStyle}
                   />
+                  {numberErrors.concurrency ? (
+                    <ErrorText>{numberErrors.concurrency}</ErrorText>
+                  ) : null}
                 </EditorField>
-                <EditorField label={t("agentEditor.cronSchedule")}>
-                  <input
-                    value={stringValue(currentDefinition?.cron)}
-                    onChange={(event) =>
-                      commitDefinitionFields({
-                        cron: event.target.value || null,
-                      })
-                    }
-                    placeholder="0 9 * * 1-5"
-                    style={inputStyle}
-                  />
-                </EditorField>
-                <EditorField label={t("agentEditor.cronTimezone")}>
-                  <input
-                    value={stringValue(currentDefinition?.cron_timezone)}
-                    onChange={(event) =>
-                      commitDefinitionFields({
-                        cron_timezone: event.target.value || null,
-                      })
-                    }
-                    placeholder="Asia/Singapore"
-                    style={inputStyle}
-                  />
-                </EditorField>
-                <EditorField label={t("agentEditor.traceLevel")}>
+                <EditorField label={t("agentEditor.concurrencyEnabled")}>
                   <select
-                    value={stringValue(observability.trace_level)}
+                    value={
+                      typeof concurrency.enabled === "boolean"
+                        ? String(concurrency.enabled)
+                        : ""
+                    }
                     onChange={(event) =>
-                      patchDefinitionObject("observability", {
-                        trace_level: event.target.value || null,
+                      patchDefinitionObject("concurrency", {
+                        enabled:
+                          event.target.value === ""
+                            ? null
+                            : event.target.value === "true",
+                        max_concurrent_executions:
+                          concurrency.max_concurrent_executions ?? 1,
                       })
                     }
                     style={inputStyle}
                   >
-                    <option value="">{t("agentEditor.standard")}</option>
-                    <option value="minimal">{t("agentEditor.minimal")}</option>
-                    <option value="standard">
-                      {t("agentEditor.standard")}
-                    </option>
-                    <option value="debug">{t("agentEditor.debug")}</option>
+                    <option value="">{t("agentEditor.inherit")}</option>
+                    <option value="true">{t("agentEditor.enabled")}</option>
+                    <option value="false">{t("agentEditor.disabled")}</option>
                   </select>
                 </EditorField>
-                <EditorField label={t("agentEditor.reasoningSummaries")}>
+                <EditorField label={t("agentEditor.concurrencyKey")}>
+                  <input
+                    value={stringValue(concurrency.key)}
+                    onChange={(event) =>
+                      patchDefinitionObject("concurrency", {
+                        key: event.target.value || null,
+                        max_concurrent_executions:
+                          concurrency.max_concurrent_executions ?? 1,
+                      })
+                    }
+                    placeholder={t("agentEditor.concurrencyKeyPlaceholder")}
+                    style={inputStyle}
+                  />
+                </EditorField>
+                <EditorField label={t("agentEditor.responseVerbosity")}>
+                  <select
+                    value={stringValue(currentDefinition?.verbosity)}
+                    onChange={(event) =>
+                      commitDefinitionFields({
+                        verbosity: event.target.value || null,
+                      })
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="">{t("agentEditor.providerDefault")}</option>
+                    {TEXT_VERBOSITIES.map((verbosity) => (
+                      <option key={verbosity} value={verbosity}>
+                        {verbosity}
+                      </option>
+                    ))}
+                  </select>
+                </EditorField>
+                <EditorField label={t("agentEditor.providerStorage")}>
                   <select
                     value={
-                      typeof observability.reasoning_summary === "boolean"
-                        ? String(observability.reasoning_summary)
+                      typeof currentDefinition?.store === "boolean"
+                        ? String(currentDefinition.store)
                         : ""
                     }
                     onChange={(event) =>
-                      patchDefinitionObject("observability", {
-                        reasoning_summary:
+                      commitDefinitionFields({
+                        store:
+                          event.target.value === ""
+                            ? null
+                            : event.target.value === "true",
+                      })
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="">{t("agentEditor.providerDefault")}</option>
+                    <option value="true">
+                      {t("agentEditor.allowProviderStorage")}
+                    </option>
+                    <option value="false">{t("agentEditor.doNotStore")}</option>
+                  </select>
+                </EditorField>
+              </div>
+              <details style={advancedDetailsStyle}>
+                <summary style={advancedSummaryStyle}>
+                  {t("agentEditor.advancedRuntime")}
+                </summary>
+                <div style={{ ...fieldGridStyle, marginTop: 11 }}>
+                  <EditorField label={t("agentEditor.reasoningMode")}>
+                    <select
+                      value={stringValue(reasoning.mode)}
+                      onChange={(event) =>
+                        patchDefinitionObject("reasoning", {
+                          mode: event.target.value || null,
+                        })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{t("agentEditor.modelDefault")}</option>
+                      {REASONING_MODES.map((mode) => (
+                        <option key={mode} value={mode}>
+                          {mode}
+                        </option>
+                      ))}
+                    </select>
+                  </EditorField>
+                  <EditorField label={t("agentEditor.reasoningEffort")}>
+                    <select
+                      value={stringValue(reasoning.effort)}
+                      onChange={(event) =>
+                        patchDefinitionObject("reasoning", {
+                          effort: event.target.value || null,
+                        })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{t("agentEditor.modelDefault")}</option>
+                      {REASONING_EFFORTS.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {effort}
+                        </option>
+                      ))}
+                    </select>
+                  </EditorField>
+                  <EditorField label={t("agentEditor.reasoningSummary")}>
+                    <select
+                      value={stringValue(reasoning.summary)}
+                      onChange={(event) =>
+                        patchDefinitionObject("reasoning", {
+                          summary: event.target.value || null,
+                        })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{t("agentEditor.modelDefault")}</option>
+                      {REASONING_SUMMARIES.map((summary) => (
+                        <option key={summary} value={summary}>
+                          {summary}
+                        </option>
+                      ))}
+                    </select>
+                  </EditorField>
+                  <EditorField label={t("agentEditor.reasoningContext")}>
+                    <select
+                      value={stringValue(reasoning.context)}
+                      onChange={(event) =>
+                        patchDefinitionObject("reasoning", {
+                          context: event.target.value || null,
+                        })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{t("agentEditor.modelDefault")}</option>
+                      {REASONING_CONTEXTS.map((context) => (
+                        <option key={context} value={context}>
+                          {context}
+                        </option>
+                      ))}
+                    </select>
+                  </EditorField>
+                  <EditorField label={t("agentEditor.toolLoopMax")}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={numberValue(toolLoop.max_iterations)}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        patchDefinitionObject("tool_loop", {
+                          max_iterations: value ? Number(value) : null,
+                        });
+                      }}
+                      placeholder="8"
+                      style={inputStyle}
+                    />
+                  </EditorField>
+                  <EditorField label={t("agentEditor.cronSchedule")}>
+                    <input
+                      value={stringValue(currentDefinition?.cron)}
+                      onChange={(event) =>
+                        commitDefinitionFields({
+                          cron: event.target.value || null,
+                        })
+                      }
+                      placeholder="0 9 * * 1-5"
+                      style={inputStyle}
+                    />
+                  </EditorField>
+                  <EditorField label={t("agentEditor.cronTimezone")}>
+                    <input
+                      value={stringValue(currentDefinition?.cron_timezone)}
+                      onChange={(event) =>
+                        commitDefinitionFields({
+                          cron_timezone: event.target.value || null,
+                        })
+                      }
+                      placeholder="Asia/Singapore"
+                      style={inputStyle}
+                    />
+                  </EditorField>
+                  <EditorField label={t("agentEditor.traceLevel")}>
+                    <select
+                      value={stringValue(observability.trace_level)}
+                      onChange={(event) =>
+                        patchDefinitionObject("observability", {
+                          trace_level: event.target.value || null,
+                        })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{t("agentEditor.standard")}</option>
+                      <option value="minimal">
+                        {t("agentEditor.minimal")}
+                      </option>
+                      <option value="standard">
+                        {t("agentEditor.standard")}
+                      </option>
+                      <option value="debug">{t("agentEditor.debug")}</option>
+                    </select>
+                  </EditorField>
+                  <EditorField label={t("agentEditor.reasoningSummaries")}>
+                    <select
+                      value={
+                        typeof observability.reasoning_summary === "boolean"
+                          ? String(observability.reasoning_summary)
+                          : ""
+                      }
+                      onChange={(event) =>
+                        patchDefinitionObject("observability", {
+                          reasoning_summary:
+                            event.target.value === ""
+                              ? null
+                              : event.target.value === "true",
+                        })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{t("agentEditor.defaultValue")}</option>
+                      <option value="true">{t("agentEditor.capture")}</option>
+                      <option value="false">
+                        {t("agentEditor.doNotCapture")}
+                      </option>
+                    </select>
+                  </EditorField>
+                  <EditorField label={t("agentEditor.persistRenderedPrompts")}>
+                    <select
+                      value={
+                        typeof observability.persist_rendered_prompts ===
+                        "boolean"
+                          ? String(observability.persist_rendered_prompts)
+                          : ""
+                      }
+                      onChange={(event) =>
+                        patchDefinitionObject("observability", {
+                          persist_rendered_prompts:
+                            event.target.value === ""
+                              ? null
+                              : event.target.value === "true",
+                        })
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">{t("agentEditor.defaultValue")}</option>
+                      <option value="true">{t("agentEditor.persist")}</option>
+                      <option value="false">
+                        {t("agentEditor.doNotPersist")}
+                      </option>
+                    </select>
+                  </EditorField>
+                  <EditorField label={t("agentEditor.traceRetention")}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={3650}
+                      step={1}
+                      value={numberValue(observability.retention_days)}
+                      onChange={(event) =>
+                        patchDefinitionObject("observability", {
+                          retention_days: event.target.value
+                            ? Number(event.target.value)
+                            : null,
+                        })
+                      }
+                      placeholder="30"
+                      style={inputStyle}
+                    />
+                  </EditorField>
+                </div>
+              </details>
+            </Section>
+
+            <Section title={t("agentEditor.outputPolicy")}>
+              <div style={fieldGridStyle}>
+                <EditorField label={t("agentEditor.strictJsonOutput")}>
+                  <select
+                    value={
+                      typeof outputConfig.strict === "boolean"
+                        ? String(outputConfig.strict)
+                        : ""
+                    }
+                    onChange={(event) =>
+                      patchDefinitionObject("output_config", {
+                        strict:
                           event.target.value === ""
                             ? null
                             : event.target.value === "true",
@@ -1466,195 +1705,125 @@ export function AgentEditor({
                     style={inputStyle}
                   >
                     <option value="">{t("agentEditor.defaultValue")}</option>
-                    <option value="true">{t("agentEditor.capture")}</option>
-                    <option value="false">
-                      {t("agentEditor.doNotCapture")}
-                    </option>
+                    <option value="true">{t("agentEditor.strict")}</option>
+                    <option value="false">{t("agentEditor.bestEffort")}</option>
                   </select>
                 </EditorField>
-                <EditorField label={t("agentEditor.persistRenderedPrompts")}>
-                  <select
-                    value={
-                      typeof observability.persist_rendered_prompts ===
-                      "boolean"
-                        ? String(observability.persist_rendered_prompts)
-                        : ""
-                    }
-                    onChange={(event) =>
-                      patchDefinitionObject("observability", {
-                        persist_rendered_prompts:
-                          event.target.value === ""
-                            ? null
-                            : event.target.value === "true",
-                      })
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="">{t("agentEditor.defaultValue")}</option>
-                    <option value="true">{t("agentEditor.persist")}</option>
-                    <option value="false">
-                      {t("agentEditor.doNotPersist")}
-                    </option>
-                  </select>
-                </EditorField>
-                <EditorField label={t("agentEditor.traceRetention")}>
+                <EditorField label={t("agentEditor.outputRepairAttempts")}>
                   <input
                     type="number"
-                    min={1}
-                    max={3650}
+                    min={0}
+                    max={3}
                     step={1}
-                    value={numberValue(observability.retention_days)}
+                    value={numberValue(outputConfig.repair_attempts)}
                     onChange={(event) =>
-                      patchDefinitionObject("observability", {
-                        retention_days: event.target.value
+                      patchDefinitionObject("output_config", {
+                        repair_attempts: event.target.value
                           ? Number(event.target.value)
                           : null,
                       })
                     }
-                    placeholder="30"
+                    placeholder="1"
                     style={inputStyle}
                   />
                 </EditorField>
+                <EditorField label={t("agentEditor.unwrapSingleOutput")}>
+                  <select
+                    value={
+                      typeof outputConfig.unwrap_single_output === "boolean"
+                        ? String(outputConfig.unwrap_single_output)
+                        : ""
+                    }
+                    onChange={(event) =>
+                      patchDefinitionObject("output_config", {
+                        unwrap_single_output:
+                          event.target.value === ""
+                            ? null
+                            : event.target.value === "true",
+                      })
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="">{t("agentEditor.defaultValue")}</option>
+                    <option value="true">
+                      {t("agentEditor.returnSingleValue")}
+                    </option>
+                    <option value="false">
+                      {t("agentEditor.returnKeyedObject")}
+                    </option>
+                  </select>
+                </EditorField>
+                <EditorField label={t("agentEditor.artifactFilename")}>
+                  <input
+                    value={stringValue(artifactPolicy.filename)}
+                    onChange={(event) =>
+                      patchOutputArtifact({
+                        filename: event.target.value || null,
+                      })
+                    }
+                    placeholder="output.json"
+                    style={inputStyle}
+                  />
+                </EditorField>
+                <EditorField label={t("agentEditor.persistIndividualOutputs")}>
+                  <select
+                    value={
+                      typeof artifactPolicy.persist_individual_outputs ===
+                      "boolean"
+                        ? String(artifactPolicy.persist_individual_outputs)
+                        : ""
+                    }
+                    onChange={(event) =>
+                      patchOutputArtifact({
+                        persist_individual_outputs:
+                          event.target.value === ""
+                            ? null
+                            : event.target.value === "true",
+                      })
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="">{t("agentEditor.defaultValue")}</option>
+                    <option value="true">
+                      {t("agentEditor.persistEachOutput")}
+                    </option>
+                    <option value="false">
+                      {t("agentEditor.aggregateOnly")}
+                    </option>
+                  </select>
+                </EditorField>
+                <EditorField label={t("agentEditor.persistRawResponse")}>
+                  <select
+                    value={
+                      typeof artifactPolicy.persist_raw_response === "boolean"
+                        ? String(artifactPolicy.persist_raw_response)
+                        : ""
+                    }
+                    onChange={(event) =>
+                      patchOutputArtifact({
+                        persist_raw_response:
+                          event.target.value === ""
+                            ? null
+                            : event.target.value === "true",
+                      })
+                    }
+                    style={inputStyle}
+                  >
+                    <option value="">{t("agentEditor.defaultValue")}</option>
+                    <option value="true">
+                      {t("agentEditor.persistRawResponseOption")}
+                    </option>
+                    <option value="false">
+                      {t("agentEditor.validatedOutputOnly")}
+                    </option>
+                  </select>
+                </EditorField>
               </div>
-            </details>
-          </Section>
-
-          <Section title={t("agentEditor.outputPolicy")}>
-            <div style={fieldGridStyle}>
-              <EditorField label={t("agentEditor.strictJsonOutput")}>
-                <select
-                  value={
-                    typeof outputConfig.strict === "boolean"
-                      ? String(outputConfig.strict)
-                      : ""
-                  }
-                  onChange={(event) =>
-                    patchDefinitionObject("output_config", {
-                      strict:
-                        event.target.value === ""
-                          ? null
-                          : event.target.value === "true",
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.defaultValue")}</option>
-                  <option value="true">{t("agentEditor.strict")}</option>
-                  <option value="false">{t("agentEditor.bestEffort")}</option>
-                </select>
-              </EditorField>
-              <EditorField label={t("agentEditor.outputRepairAttempts")}>
-                <input
-                  type="number"
-                  min={0}
-                  max={3}
-                  step={1}
-                  value={numberValue(outputConfig.repair_attempts)}
-                  onChange={(event) =>
-                    patchDefinitionObject("output_config", {
-                      repair_attempts: event.target.value
-                        ? Number(event.target.value)
-                        : null,
-                    })
-                  }
-                  placeholder="1"
-                  style={inputStyle}
-                />
-              </EditorField>
-              <EditorField label={t("agentEditor.unwrapSingleOutput")}>
-                <select
-                  value={
-                    typeof outputConfig.unwrap_single_output === "boolean"
-                      ? String(outputConfig.unwrap_single_output)
-                      : ""
-                  }
-                  onChange={(event) =>
-                    patchDefinitionObject("output_config", {
-                      unwrap_single_output:
-                        event.target.value === ""
-                          ? null
-                          : event.target.value === "true",
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.defaultValue")}</option>
-                  <option value="true">
-                    {t("agentEditor.returnSingleValue")}
-                  </option>
-                  <option value="false">
-                    {t("agentEditor.returnKeyedObject")}
-                  </option>
-                </select>
-              </EditorField>
-              <EditorField label={t("agentEditor.artifactFilename")}>
-                <input
-                  value={stringValue(artifactPolicy.filename)}
-                  onChange={(event) =>
-                    patchOutputArtifact({
-                      filename: event.target.value || null,
-                    })
-                  }
-                  placeholder="output.json"
-                  style={inputStyle}
-                />
-              </EditorField>
-              <EditorField label={t("agentEditor.persistIndividualOutputs")}>
-                <select
-                  value={
-                    typeof artifactPolicy.persist_individual_outputs ===
-                    "boolean"
-                      ? String(artifactPolicy.persist_individual_outputs)
-                      : ""
-                  }
-                  onChange={(event) =>
-                    patchOutputArtifact({
-                      persist_individual_outputs:
-                        event.target.value === ""
-                          ? null
-                          : event.target.value === "true",
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.defaultValue")}</option>
-                  <option value="true">
-                    {t("agentEditor.persistEachOutput")}
-                  </option>
-                  <option value="false">
-                    {t("agentEditor.aggregateOnly")}
-                  </option>
-                </select>
-              </EditorField>
-              <EditorField label={t("agentEditor.persistRawResponse")}>
-                <select
-                  value={
-                    typeof artifactPolicy.persist_raw_response === "boolean"
-                      ? String(artifactPolicy.persist_raw_response)
-                      : ""
-                  }
-                  onChange={(event) =>
-                    patchOutputArtifact({
-                      persist_raw_response:
-                        event.target.value === ""
-                          ? null
-                          : event.target.value === "true",
-                    })
-                  }
-                  style={inputStyle}
-                >
-                  <option value="">{t("agentEditor.defaultValue")}</option>
-                  <option value="true">
-                    {t("agentEditor.persistRawResponseOption")}
-                  </option>
-                  <option value="false">
-                    {t("agentEditor.validatedOutputOnly")}
-                  </option>
-                </select>
-              </EditorField>
-            </div>
-            <div style={hintStyle}>{t("agentEditor.completeSettingsHelp")}</div>
-          </Section>
+              <div style={hintStyle}>
+                {t("agentEditor.completeSettingsHelp")}
+              </div>
+            </Section>
+          </details>
         </>
       ) : (
         <section
@@ -1791,6 +1960,228 @@ function EditorModeTab({
     >
       {children}
     </button>
+  );
+}
+
+/** Plain task editing only changes the selected LLM action's instruction. */
+export function editableTaskActions(
+  actions: unknown[],
+): Array<{ action: Record<string, unknown>; index: number }> {
+  return actions.flatMap((value, index) => {
+    const action = objectValue(value);
+    return action.type === "logic" || action.type === "llmCall"
+      ? [{ action, index }]
+      : [];
+  });
+}
+
+export function patchTaskInstruction(
+  actions: unknown[],
+  index: number,
+  instruction: string,
+): unknown[] {
+  return actions.map((action, actionIndex) =>
+    actionIndex === index
+      ? { ...objectValue(action), action_prompt: instruction }
+      : action,
+  );
+}
+
+export interface WorkflowInputReference {
+  inputId: string;
+  sourceAgentId: string;
+  sourceTitle: string;
+  outputId: string;
+  event: string;
+  reference: string;
+  binding: string;
+}
+
+/** Include the actual binding so advanced overrides never look automatic. */
+export function workflowInputReferences(
+  definition: CompleteAgentDefinition | undefined,
+  agents: DagAgent[],
+): WorkflowInputReference[] {
+  return (definition?.inputs ?? []).flatMap((input) => {
+    const source = objectValue(input.workflow_handoff);
+    if (
+      typeof source.source_agent_id !== "string" ||
+      typeof source.source_output_id !== "string" ||
+      typeof source.event !== "string"
+    )
+      return [];
+    if (!definition?.trigger.includes(source.event)) return [];
+    const binding = definition.trigger_bindings?.[source.event]?.[input.id];
+    const sourceAgent = agents.find(
+      (agent) => agent.kebabId === source.source_agent_id,
+    );
+    return [
+      {
+        inputId: input.id,
+        sourceAgentId: source.source_agent_id,
+        sourceTitle:
+          sourceAgent?.title || sourceAgent?.name || source.source_agent_id,
+        outputId: source.source_output_id,
+        event: source.event,
+        reference: `{{inputs.${input.id}}}`,
+        binding: binding ? JSON.stringify(binding) : "",
+      },
+    ];
+  });
+}
+
+function WorkflowInputSummary({
+  definition,
+  workflowAgents,
+}: {
+  definition: CompleteAgentDefinition | undefined;
+  workflowAgents: DagAgent[];
+}) {
+  const { t } = useI18n();
+  const references = workflowInputReferences(definition, workflowAgents);
+  return (
+    <Section title={t("agentEditor.previousResults")}>
+      <div style={{ ...hintStyle, marginBottom: 10 }}>
+        {t("agentEditor.previousResultsHelp")}
+      </div>
+      {references.length === 0 ? (
+        <div style={hintStyle}>{t("agentEditor.connectToReceive")}</div>
+      ) : (
+        <div style={{ display: "grid", gap: 9 }}>
+          {references.map((reference) => (
+            <div
+              key={`${reference.event}:${reference.inputId}`}
+              style={{
+                padding: "10px 12px",
+                borderLeft: "2px solid var(--signal)",
+                background: "var(--panel-2)",
+                display: "grid",
+                gap: 7,
+              }}
+            >
+              <div
+                style={{
+                  color: "var(--text)",
+                  fontSize: 12,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                <strong>{reference.sourceTitle}</strong>
+                <span style={{ color: "var(--text-3)" }}> · </span>
+                {reference.outputId}
+              </div>
+              <code
+                style={{
+                  color: "var(--accent-text)",
+                  fontFamily: "var(--mono)",
+                  fontSize: 11,
+                  overflowWrap: "anywhere",
+                  userSelect: "all",
+                }}
+              >
+                {reference.reference}
+              </code>
+              <div style={{ ...hintStyle, marginTop: 0 }}>
+                {reference.binding
+                  ? t("agentEditor.resultAvailable")
+                  : t("agentEditor.resultBindingMissing")}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+export function parseHandoffBindings(
+  raw: string,
+  key: "trigger_bindings" | "output_bindings",
+): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(raw);
+  (key === "trigger_bindings"
+    ? AgentTriggerBindingsV2Schema
+    : AgentOutputBindingsV2Schema
+  ).parse(parsed);
+  return parsed as Record<string, unknown>;
+}
+
+function BindingJsonEditor({
+  definition,
+  onChange,
+  onValidityChange,
+}: {
+  definition: CompleteAgentDefinition | undefined;
+  onChange: (patch: Record<string, unknown>) => void;
+  onValidityChange: (error: string | null) => void;
+}) {
+  const { t } = useI18n();
+  const incoming = JSON.stringify(definition?.trigger_bindings ?? {}, null, 2);
+  const outgoing = JSON.stringify(definition?.output_bindings ?? {}, null, 2);
+  const [text, setText] = useState({
+    trigger_bindings: incoming,
+    output_bindings: outgoing,
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setText((current) => ({
+      trigger_bindings: errors.trigger_bindings
+        ? current.trigger_bindings
+        : incoming,
+      output_bindings: errors.output_bindings
+        ? current.output_bindings
+        : outgoing,
+    }));
+  }, [incoming, outgoing, errors]);
+  useEffect(() => {
+    onValidityChange(Object.values(errors).join(" · ") || null);
+  }, [errors, onValidityChange]);
+  useEffect(() => () => onValidityChange(null), [onValidityChange]);
+  return (
+    <>
+      <div style={hintStyle}>{t("agentEditor.handoffBindingsHelp")}</div>
+      {(["trigger_bindings", "output_bindings"] as const).map((key) => (
+        <EditorField
+          key={key}
+          label={t(
+            key === "trigger_bindings"
+              ? "agentEditor.inputBindings"
+              : "agentEditor.outputBindings",
+          )}
+        >
+          <textarea
+            aria-label={t(
+              key === "trigger_bindings"
+                ? "agentEditor.inputBindings"
+                : "agentEditor.outputBindings",
+            )}
+            value={text[key]}
+            rows={7}
+            spellCheck={false}
+            style={jsonTextareaStyle}
+            onChange={(event) => {
+              const raw = event.target.value;
+              setText((current) => ({ ...current, [key]: raw }));
+              try {
+                const parsed = parseHandoffBindings(raw, key);
+                setErrors((current) => {
+                  const next = { ...current };
+                  delete next[key];
+                  return next;
+                });
+                onChange({ [key]: parsed });
+              } catch {
+                setErrors((current) => ({
+                  ...current,
+                  [key]: t("agentEditor.invalidBindings"),
+                }));
+              }
+            }}
+          />
+          {errors[key] ? <ErrorText>{errors[key]}</ErrorText> : null}
+        </EditorField>
+      ))}
+    </>
   );
 }
 
@@ -2267,7 +2658,9 @@ function editorValues(
   const definitionActor = Array.isArray(definition?.actor)
     ? definition.actor[0]
     : undefined;
-  const actions = draftValue(draft, "actions", definition?.actions ?? []);
+  const actions = definition
+    ? definition.actions
+    : draftValue(draft, "actions", []);
   const tools = draftValue(draft, "tool_use", definition?.tool_use);
   const inputs = draftValue(draft, "inputs", definition?.inputs);
   const outputs = draftValue(draft, "outputs", definition?.outputs);
@@ -2287,14 +2680,14 @@ function editorValues(
       draftValue(draft, "name", stringValue(definition?.name) || agent.name),
     ),
     title: stringValue(
-      draftValue(draft, "title", stringValue(definition?.title) || agent.title),
+      definition
+        ? (definition.title ?? agent.title)
+        : draftValue(draft, "title", agent.title),
     ),
     description: stringValue(
-      draftValue(
-        draft,
-        "description",
-        definition?.description ?? completeAgent.description,
-      ),
+      definition
+        ? definition.description
+        : draftValue(draft, "description", completeAgent.description),
     ),
     actor: actor === "Human" ? "Human" : "Agent",
     stage: numberValue(
@@ -2303,11 +2696,9 @@ function editorValues(
     triggers: definitionArray(triggers, []).join(", "),
     emits: definitionArray(emits, []).join(", "),
     ontology_instructions: stringValue(
-      draftValue(
-        draft,
-        "ontology_instructions",
-        definition?.ontology_instructions,
-      ),
+      definition
+        ? definition.ontology_instructions
+        : draftValue(draft, "ontology_instructions", undefined),
     ),
     user_prompt_template: stringValue(
       draftValue(

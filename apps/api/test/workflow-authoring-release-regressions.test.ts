@@ -6,6 +6,8 @@ import {
   CreateWorkflowBodySchema,
   SaveWorkflowBodySchema,
   WorkflowDetailSchema,
+  connectWorkflowAgents,
+  normalizeWorkflowManifest,
   type WorkflowManifestV2,
 } from "@agentic/contracts";
 import {
@@ -510,6 +512,20 @@ describe("workflow authoring release regressions", () => {
       extensions?: Record<string, unknown>;
     };
     manifest.agents[0]!.title = "Selected release candidate";
+    const source = manifest.agents[0]!;
+    const connectionEvent = source.triggered_event[0]!;
+    const target = {
+      ...structuredClone(source),
+      id: "release-handoff-receiver",
+      name: "releaseHandoffReceiver",
+      title: "Receives the published result",
+      trigger: [connectionEvent],
+      triggered_event: ["RELEASE_HANDOFF_COMPLETED"],
+      trigger_bindings: {},
+      output_bindings: { RELEASE_HANDOFF_COMPLETED: { result: { output: "result" } } },
+    };
+    const connection = connectWorkflowAgents(source, target, connectionEvent);
+    manifest.agents = [connection.source, connection.target];
     manifest.extensions = {
       ...(manifest.extensions ?? {}),
       releaseRegression: { selected: "original" },
@@ -636,6 +652,9 @@ describe("workflow authoring release regressions", () => {
       selected: "original",
     });
     expect(JSON.stringify(persisted)).not.toContain("ao_live_literal_secret");
+    const publishedReceiver = normalizeWorkflowManifest(persisted).agents[1]!;
+    expect(publishedReceiver.inputs).toEqual(created.manifest.agents[1]!.inputs);
+    expect(publishedReceiver.trigger_bindings).toEqual(created.manifest.agents[1]!.trigger_bindings);
 
     const disk = JSON.parse(
       await readFile(publishedBody.data!.file_written, "utf8"),
@@ -644,10 +663,16 @@ describe("workflow authoring release regressions", () => {
     expect(disk.extensions?.releaseRegression).toEqual({
       selected: "original",
     });
+    const diskReceiver = normalizeWorkflowManifest(disk).agents[1]!;
+    expect(diskReceiver.inputs).toEqual(publishedReceiver.inputs);
+    expect(diskReceiver.trigger_bindings).toEqual(publishedReceiver.trigger_bindings);
     expect(
       isInngestFunctionRegistered(
         `${tenant.tenantSlug}.${created.manifest.agents[0]!.name}`,
       ),
+    ).toBe(true);
+    expect(
+      isInngestFunctionRegistered(`${tenant.tenantSlug}.${publishedReceiver.name}`),
     ).toBe(true);
 
     // The publish route already completed a hot re-registration. Bootstrap

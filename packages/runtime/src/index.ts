@@ -385,6 +385,13 @@ export {
   type FinalizedAgentExecution,
 } from "./agent-execution";
 export {
+  WorkflowAgentHarness,
+  workflowAgentContext,
+  type WorkflowAgentContext,
+  type WorkflowHandoffReceipt,
+  type PreparedWorkflowAgentExecution,
+} from "./agent-harness";
+export {
   appendRuntimeTrace,
   createBufferedTraceSink,
   createFilteredTraceSink,

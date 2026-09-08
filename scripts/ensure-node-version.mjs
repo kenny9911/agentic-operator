@@ -38,17 +38,11 @@ try {
     process.exit(1);
   }
 
-  // Major-version match (not exact): every Node 26.x shares the same native
-  // ABI (MODULE_VERSION 147) that better-sqlite3 is compiled against, and our
-  // ground truth (.nvmrc, CLAUDE.md) is "Node 26". `required` (e.g. 26.5.0) is
-  // the documented target; any installed 26.x runs the workspace correctly, so
-  // pinning to an exact patch would fail-closed on ABI-compatible runtimes
-  // (e.g. a dev box on 26.3.0) for no benefit.
-  const requiredMajor = required.split(".")[0];
-  const runtimeMajor = String(process.versions.node).split(".")[0];
-  if (runtimeMajor !== requiredMajor) {
+  // Match pnpm's exact engine requirement even when another patch shares
+  // the native-module ABI. Direct script invocations must enforce it too.
+  if (process.versions.node !== required) {
     console.error(
-      `[ensure-node] Node ${requiredMajor}.x is required (repository pin ${required}); current runtime is ${process.version}.`,
+      `[ensure-node] Node ${required} is required; current runtime is ${process.version}.`,
     );
     console.error(
       `[ensure-node] Run: nvm install ${required} && nvm use ${required}`,
@@ -57,7 +51,7 @@ try {
   }
 
   console.log(
-    `[ensure-node] Node ${process.version} satisfies the repository pin (${required}, major ${requiredMajor}).`,
+    `[ensure-node] Node ${process.version} matches the repository pin (${required}).`,
   );
 } catch (error) {
   console.error(

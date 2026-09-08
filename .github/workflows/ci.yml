@@ -37,9 +37,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Pinned to .nvmrc — the native sqlite binding is compiled per Node
-  # major. Any bump here also requires regenerating better-sqlite3.
-  NODE_VERSION: "26.5.0"
+  # Exact repository pin from .nvmrc and package.json#engines.node.
+  NODE_VERSION: "26.8.1"
   PNPM_VERSION: "11.21.0"
   # Tests assume the mock provider so no real API keys are needed.
   LLM_DEFAULT_PROVIDER: mock
@@ -47,12 +46,11 @@ env:
   # Set NODE_ENV=test to opt into the test-time logging level. (apps/api
   # picks this up in src/server.ts.)
   NODE_ENV: test
-  # node:26.5.0-slim (the repository's pinned Node), as a digest. Refresh by
+  # node:26.8.1-slim (the repository's pinned Node), as a digest. Refresh by
   # resolving the tag with `docker buildx imagetools inspect
-  # docker.io/library/node:<tag>` when the Node pin moves (26.5.1 fixes
-  # CVE-2026-56848 in the node binary; bump .nvmrc/engines/NODE_VERSION and
-  # apps/api/Dockerfile together with this digest).
-  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:715e55e4b84e4bb0ff48e49b398a848f08e55daed8eb6a0ea1839ae53bc57583
+  # docker.io/library/node:<tag>` when the Node pin moves. Update .nvmrc,
+  # engines, NODE_VERSION, and app Dockerfiles together with this digest.
+  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
   # Explicit, test-only bootstrap identity. Production seed has no built-in
   # email/name/password; CI supplies all three like any other deployment.
   AGENTIC_BOOTSTRAP_ADMIN_EMAIL: ci-bootstrap-admin@agentic.invalid

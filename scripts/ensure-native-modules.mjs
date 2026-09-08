@@ -20,7 +20,7 @@
 // sticks for the lifetime of the process and a re-dlopen of the same
 // path returns the cached handle. So we re-verify in a child process.
 //
-// Runs after the exact Node 26.5.0 guard as part of postinstall and every
+// Runs after the exact repository Node guard as part of postinstall and every
 // runtime-sensitive pre-script, so the next command always sees a correctly
 // versioned runtime and natively-loadable modules. Idempotent and ~50ms when
 // everything is healthy.
@@ -196,7 +196,7 @@ for (const { mod, pkgDir, nodePath } of toRebuild) {
   const built = rebuildPackage(pkgDir);
   if (!built.ok) {
     console.error(
-      `[ensure-native] rebuild failed for ${mod}. Run \`nvm install 26.5.0 && nvm use 26.5.0\` and retry.`,
+      `[ensure-native] rebuild failed for ${mod}. Run \`nvm install && nvm use\` from the repository root to select .nvmrc, then retry.`,
     );
     process.exit(1);
   }

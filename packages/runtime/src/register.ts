@@ -71,13 +71,10 @@ import {
 import {
   AgentInputValidationError,
   OutputSchemaValidationError,
-  bindTriggerInputs,
   canonicalJson,
   normalizeAgentForExecution,
-  parseValidateAndRepairOutput,
-  resolveAgentEmissions,
-  validateAgentInputs,
 } from "./agent-execution";
+import { WorkflowAgentHarness, workflowAgentContext } from "./agent-harness";
 import {
   createFilteredTraceSink,
   type RuntimeTraceSink,
@@ -1243,6 +1240,7 @@ export function registerAgent(
     normalizedExecution = null;
   }
   const usesV2Definition = normalizedExecution?.compatibilityMode === "v2";
+  const agentHarness = usesV2Definition ? new WorkflowAgentHarness(agent) : null;
   const observability = normalizedExecution?.definition.observability;
   const traceSinkForRun = (): RuntimeTraceSink =>
     createFilteredTraceSink(ctx.traceSink ?? createDbTraceSink(ctx.tenantId), {
@@ -1828,12 +1826,14 @@ export function registerAgent(
       if (usesV2Definition) {
         try {
           executionInputs = await step.run("validate-inputs", async () => {
-            const bound = bindTriggerInputs(agent, {
-              name: bareTenantEventName(tenantSlug, event.name),
-              data: boundData,
-              subject,
+            const prepared = await agentHarness!.prepare({
+              event: {
+                name: bareTenantEventName(tenantSlug, event.name),
+                data: boundData,
+                subject,
+              },
+              compilePrompts: false,
             });
-            const validated = validateAgentInputs(agent, bound);
             try {
               await traceSink.append({
                 runId,
@@ -1841,8 +1841,8 @@ export function registerAgent(
                 level: "standard",
                 name: "input.validation",
                 status: "ok",
-                summary: `Validated ${Object.keys(validated.values).length} named input(s)`,
-                data: { inputIds: Object.keys(validated.values) },
+                summary: `Validated ${Object.keys(prepared.inputs).length} named input(s)`,
+                data: { inputIds: Object.keys(prepared.inputs), handoffs: prepared.handoffs },
                 visibility: "user",
               });
             } catch (err) {
@@ -1850,7 +1850,7 @@ export function registerAgent(
                 err: String(err),
               });
             }
-            return validated.values;
+            return prepared.inputs;
           });
           inputValid = true;
         } catch (error) {
@@ -1874,6 +1874,12 @@ export function registerAgent(
           throw error;
         }
       }
+
+      const workflowContext = agentHarness
+        ? workflowAgentContext(agentHarness.normalized.definition, executionInputs, {
+            name: bareTenantEventName(tenantSlug, event.name), data: boundData, subject,
+          }).context
+        : undefined;
 
       for (let i = 0; i < agent.actions.length; i++) {
         const action = agent.actions[i]!;
@@ -1943,6 +1949,14 @@ export function registerAgent(
           await abortForInputBindings(availableStepBindings);
 
         const actionBinding = action.input_binding;
+        const actionLastResult = i === 0 && lastResult == null
+          ? workflowContext?.previousResult ?? lastResult
+          : lastResult;
+        const accumulateActionResult = (candidate: unknown): unknown => agentHarness
+          ? agentHarness.accumulateActionResult(lastResult, candidate, {
+              terminal: i === agent.actions.length - 1,
+            })
+          : mergeStepResults(lastResult, candidate);
         // v2 agents see the validated named-input set on every action.
         let actionData: Record<string, unknown> = usesV2Definition
           ? { ...boundData, inputs: executionInputs }
@@ -1962,7 +1976,7 @@ export function registerAgent(
         const stepScope = {
           event: { name: event.name, data: actionData },
           subject: subject ?? undefined,
-          lastResult,
+          lastResult: actionLastResult,
           results: stepResults,
         };
 
@@ -2113,7 +2127,7 @@ export function registerAgent(
             invokeInput: a.invoke_input,
             forwardLastResult: a.forward_last_result,
             forwardResults: a.forward_results,
-            lastResult,
+            lastResult: actionLastResult,
             results: stepResults,
             subject,
             correlationId,
@@ -2256,7 +2270,7 @@ export function registerAgent(
             const handled = resolveActionFailureOutcome(action, failure);
             applyFailureEmission(handled);
             stepResults[actionKey] = handled.data ?? null;
-            lastResult = mergeStepResults(lastResult, handled.data ?? null);
+            lastResult = accumulateActionResult(handled.data ?? null);
             await writeRunLog(logCtx, "WARN", "step.invoke-continue", {
               ord,
               name: action.name,
@@ -2269,7 +2283,7 @@ export function registerAgent(
           }
           await completeInvoke("ok", invoked.data ?? null, null);
           stepResults[actionKey] = invoked.data ?? null;
-          lastResult = mergeStepResults(lastResult, invoked.data ?? null);
+          lastResult = accumulateActionResult(invoked.data ?? null);
           await writeRunLog(
             logCtx,
             invoked.softFailed ? "WARN" : "INFO",
@@ -2729,7 +2743,7 @@ export function registerAgent(
             },
           );
           stepResults[actionKey] = delayResult;
-          lastResult = mergeStepResults(lastResult, delayResult);
+          lastResult = accumulateActionResult(delayResult);
           continue;
         }
 
@@ -2788,7 +2802,7 @@ export function registerAgent(
                   writeArtifact(runId, `step-${ord}-input.json`, {
                     action,
                     action_data: actionData,
-                    last_result: lastResult,
+                    last_result: actionLastResult,
                     prior_step_results: stepResults,
                   }),
               );
@@ -2886,10 +2900,8 @@ export function registerAgent(
               : undefined;
             const collection = resolveConditionPath(
               {
-                lastResult,
-                results: stepResults,
-                event: { name: event.name, data: boundData },
-                input: boundData,
+                ...stepScope,
+                input: actionData,
               },
               a.items_from ?? "",
             );
@@ -3032,7 +3044,7 @@ export function registerAgent(
                   }
 
                   const childEventData = {
-                    ...boundData,
+                    ...actionData,
                     ...frame.locals,
                     _foreach: {
                       parentStepId: actionKey,
@@ -3318,7 +3330,7 @@ export function registerAgent(
               ),
             };
             stepResults[actionKey] = aggregate;
-            lastResult = mergeStepResults(lastResult, aggregate);
+            lastResult = accumulateActionResult(aggregate);
             // #RUN-EVIDENCE (D6) — foreach bodies are no longer an uncovered
             // coverage hole: every body step ran through `runChildDurable`,
             // whose per-call records were folded into `runToolLedger` above.
@@ -3363,7 +3375,7 @@ export function registerAgent(
             // returning recorded nothing — exactly like a top-level action
             // that threw. No blanket coverage gap remains to declare.
             stepResults[actionKey] = handled.data ?? null;
-            lastResult = mergeStepResults(lastResult, handled.data ?? null);
+            lastResult = accumulateActionResult(handled.data ?? null);
             await writeRunLog(logCtx, "WARN", "step.foreach-continue", {
               ord,
               name: action.name,
@@ -3433,7 +3445,7 @@ export function registerAgent(
                       agent,
                       action,
                       subject,
-                      preparedContext: lastResult,
+                      preparedContext: actionLastResult,
                       eventData: actionData,
                     }),
                     ...(actionBinding?.kind === "human_input"
@@ -3488,7 +3500,7 @@ export function registerAgent(
                 action,
                 task_id: initStep.taskId,
                 subject,
-                prepared_context: lastResult,
+                prepared_context: actionLastResult,
                 input_binding: actionBinding ?? null,
               },
             );
@@ -3752,17 +3764,15 @@ export function registerAgent(
             throw new Error("rejected by human");
           }
 
-          // v2 exposes the stable resolution envelope EXACTLY (strict output
-          // contracts validate against it); legacy manifests keep the
-          // historical payload/binding carry-forward shape.
+          // A terminal v2 manual action exposes the exact stable resolution
+          // envelope; an intermediate checkpoint keeps useful action carry.
+          // Legacy manifests retain their payload/binding envelope.
           const manualResult = usesV2Definition
             ? manualResolutionEnvelope
             : actionBinding?.kind === "human_input"
               ? { [actionBinding.field]: boundData[actionBinding.field] }
               : (resolution.payload ?? null);
-          lastResult = usesV2Definition
-            ? manualResolutionEnvelope
-            : mergeStepResults(lastResult, manualResult);
+          lastResult = accumulateActionResult(manualResult);
           stepResults[actionKey] = manualResult;
           await writeRunLog(logCtx, "INFO", "step.ok", {
             name: action.name,
@@ -3883,7 +3893,7 @@ export function registerAgent(
                     action,
                     action_data: actionData,
                     named_inputs: executionInputs,
-                    last_result: lastResult ?? null,
+                    last_result: actionLastResult ?? null,
                     prior_step_results: stepResults,
                     trigger_event: event.name,
                     subject: subject ?? null,
@@ -3929,7 +3939,9 @@ export function registerAgent(
                         name: event.name,
                         data: actionData,
                       },
-                      lastResult,
+                      lastResult: actionLastResult,
+                      inputs: workflowContext?.inputs,
+                      upstream: workflowContext?.upstream,
                       results: stepResults,
                       // #P0-1 — durable scoped memory reaches tenant tools (the production code path), not
                       // just generated code. Same handle threaded via StepInput.memory for generated code.
@@ -4510,7 +4522,7 @@ export function registerAgent(
           if (lookupIssues.length) await abortForInputBindings(lookupIssues);
         }
         stepResults[actionKey] = stepOutcome.data;
-        lastResult = mergeStepResults(lastResult, stepOutcome.data);
+        lastResult = accumulateActionResult(stepOutcome.data);
 
         // Phase 1a — record a condition step's verdict so downstream depends_on actions branch on it.
         if (action.type === "condition") {
@@ -4577,15 +4589,16 @@ export function registerAgent(
       if (unresolvedBindings.length)
         await abortForInputBindings(unresolvedBindings);
 
-      // Agent Studio v2 — validate (and once repair) the terminal output
-      // against the compiled output-port schema when no step already did.
-      if (usesV2Definition && lastOutputValid !== true) {
+      // Recheck the actual terminal value after mappings and accumulation.
+      // A model-step receipt describes that step's pre-mapping value and
+      // cannot authorize a different aggregate to cross an agent boundary.
+      // This is local schema validation; no second model call is performed.
+      if (usesV2Definition) {
         try {
           const finalValidation = await step.run(
             "validate-final-output",
             async () =>
-              parseValidateAndRepairOutput({
-                definition: agent,
+              agentHarness!.validateOutput({
                 candidate: lastResult,
                 trace: traceSink,
                 runId,
@@ -4593,7 +4606,7 @@ export function registerAgent(
           );
           lastResult = finalValidation.value;
           lastOutputValid = finalValidation.valid;
-          lastRawResponse = finalValidation.rawResponse;
+          lastRawResponse ??= finalValidation.rawResponse;
         } catch (error) {
           if (error instanceof OutputSchemaValidationError) {
             lastOutputValid = false;
@@ -4636,9 +4649,9 @@ export function registerAgent(
       // Legacy manifests keep the explicit-emit/first-declared selection.
       const v2SuppressedEmissions: string[] = [];
       const v2PortsByEvent: Record<string, string[]> = {};
+      const legacyEnvelopeEvents = new Set<string>();
       if (usesV2Definition) {
-        const resolvedEmissions = resolveAgentEmissions({
-          definition: agent,
+        const resolvedEmissions = agentHarness!.resolveEmissions({
           inputs: executionInputs,
           outputs: lastResult,
           source: {
@@ -4648,6 +4661,9 @@ export function registerAgent(
             correlationId,
           },
           suppress: isTest,
+          explicitEmits: emitIntents,
+          suppressImplicit: suppressImplicitEmit,
+          incoming: data,
         });
         for (const emission of resolvedEmissions) {
           if (emission.suppressed) {
@@ -4677,6 +4693,7 @@ export function registerAgent(
             payload: emission.payload,
           });
           v2PortsByEvent[emission.name] = emission.outputPortIds;
+          if (emission.legacyEnvelope) legacyEnvelopeEvents.add(emission.name);
         }
         // v2 emissions are fully authored; the implicit triggered_event[0]
         // fallback must not double-fire beside them.
@@ -4716,6 +4733,7 @@ export function registerAgent(
         assembled: assembleEmitPayload({
           incoming: usesV2Definition ? {} : data,
           lastResult: intent.payload ?? lastResult,
+          lastResultIsEnvelope: legacyEnvelopeEvents.has(intent.event),
           meta: {
             subject: subject ?? undefined,
             correlationId,

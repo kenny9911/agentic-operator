@@ -17,6 +17,7 @@ export * from "./agents";
 export * from "./deployments";
 export * from "./workflows";
 export * from "./workflow-authoring";
+export * from "./workflow-handoffs";
 export * from "./webhooks";
 export * from "./reads";
 export * from "./providers";

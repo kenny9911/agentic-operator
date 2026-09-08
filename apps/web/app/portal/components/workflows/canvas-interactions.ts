@@ -1,5 +1,7 @@
 import {
   clampCanvasPosition,
+  MAX_CANVAS_H,
+  MAX_CANVAS_W,
   type CanvasPoint,
 } from "@/app/portal/components/workflows/layout";
 
@@ -68,9 +70,82 @@ export function connectionEventName(
 export function workflowEdgePath(
   source: CanvasPoint,
   target: CanvasPoint,
+  offset: CanvasPoint = { x: 0, y: 0 },
 ): string {
   const distance = Math.max(40, Math.abs(target.x - source.x) * 0.5);
-  return `M ${source.x} ${source.y} C ${source.x + distance} ${source.y}, ${
-    target.x - distance
-  } ${target.y}, ${target.x} ${target.y}`;
+  // Both control points have a weight of 3/8 at t=1/2. Moving them
+  // together by 4/3 of the offset moves the midpoint by exactly the offset.
+  const controlX = (offset.x * 4) / 3;
+  const controlY = (offset.y * 4) / 3;
+  return `M ${source.x} ${source.y} C ${source.x + distance + controlX} ${source.y + controlY}, ${
+    target.x - distance + controlX
+  } ${target.y + controlY}, ${target.x} ${target.y}`;
+}
+
+export interface CanvasBounds {
+  width: number;
+  height: number;
+}
+
+export function workflowEdgeMidpoint(
+  source: CanvasPoint,
+  target: CanvasPoint,
+  offset: CanvasPoint = { x: 0, y: 0 },
+): CanvasPoint {
+  return {
+    x: (source.x + target.x) / 2 + offset.x,
+    y: (source.y + target.y) / 2 + offset.y,
+  };
+}
+
+/** Keep the routing handle inside the canvas, including its pointer target. */
+export function clampEdgeOffset(
+  source: CanvasPoint,
+  target: CanvasPoint,
+  offset: CanvasPoint,
+  bounds: CanvasBounds = { width: MAX_CANVAS_W, height: MAX_CANVAS_H },
+): CanvasPoint {
+  const midpoint = workflowEdgeMidpoint(source, target);
+  const clampAxis = (
+    origin: number,
+    value: number,
+    extent: number,
+    max: number,
+  ) => {
+    const size = Number.isFinite(extent)
+      ? Math.max(0, Math.min(max, extent))
+      : max;
+    const margin = Math.min(14, size / 2);
+    const finiteOffset = Number.isFinite(value) ? value : 0;
+    return (
+      Math.max(margin, Math.min(size - margin, origin + finiteOffset)) - origin
+    );
+  };
+  return {
+    x: clampAxis(midpoint.x, offset.x, bounds.width, MAX_CANVAS_W),
+    y: clampAxis(midpoint.y, offset.y, bounds.height, MAX_CANVAS_H),
+  };
+}
+
+/** Route movement uses screen-space deltas so zoom does not change the grab. */
+export function edgeOffsetFromPointer(
+  source: CanvasPoint,
+  target: CanvasPoint,
+  origin: CanvasPoint,
+  start: ClientPoint,
+  current: ClientPoint,
+  zoom: number,
+  bounds?: CanvasBounds,
+  scrollDelta: CanvasPoint = { x: 0, y: 0 },
+): CanvasPoint {
+  const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  return clampEdgeOffset(
+    source,
+    target,
+    {
+      x: origin.x + (current.clientX - start.clientX + scrollDelta.x) / scale,
+      y: origin.y + (current.clientY - start.clientY + scrollDelta.y) / scale,
+    },
+    bounds,
+  );
 }

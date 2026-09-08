@@ -108,6 +108,9 @@ export interface AssembleInput {
   incoming?: Record<string, unknown>;
   /** this agent's final step output. */
   lastResult?: unknown;
+  /** A migrated v1 emission is already an assembled logical envelope. Apply
+   * normal field offloading while retaining its original last_result value. */
+  lastResultIsEnvelope?: boolean;
   /** provenance to stamp on the outbound event. */
   meta: EnvelopeMeta;
   /** OPTIONAL declared contract fields (the emit event's event_data) that MUST be present — a
@@ -243,6 +246,9 @@ export function assembleEmitPayload(input: AssembleInput): AssembleResult {
       if (ref) lrCopy[k] = ref;
     }
     lastResultOut = lrCopy;
+  }
+  if (input.lastResultIsEnvelope && asRecord(lastResultOut)) {
+    lastResultOut = (lastResultOut as Record<string, unknown>).last_result;
   }
 
   const payload: Record<string, unknown> = {

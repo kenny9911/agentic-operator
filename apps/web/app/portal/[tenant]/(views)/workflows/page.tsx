@@ -80,7 +80,16 @@ import { NewWorkflowModal } from "@/app/portal/components/workflows/NewWorkflowM
 import { ConfirmPublishOverwriteModal } from "@/app/portal/components/workflows/ConfirmPublishOverwriteModal";
 import { ImportManifestModal } from "@/app/portal/components/import-manifest/ImportManifestModal";
 import { AgentEditor } from "@/app/portal/components/workflows/AgentEditor";
+import { removeWorkflowAgent } from "@/app/portal/components/workflows/workflow-handoff-draft";
 import { WorkflowHelp } from "@/app/portal/components/workflows/WorkflowHelp";
+import { WorkflowEdge } from "@/app/portal/components/workflows/WorkflowEdge";
+import {
+  canvasLayoutStorageKey,
+  deserializeCanvasLayout,
+  emptyCanvasLayout,
+  workflowEdgeKey,
+  type CanvasLayout,
+} from "@/app/portal/components/workflows/canvas-layout";
 import { WorkflowRunConsole } from "@/app/portal/components/workflows/WorkflowRunConsole";
 import {
   applyDraft,
@@ -112,6 +121,7 @@ import {
 } from "@/app/portal/components/workflows/inspector-layout";
 import {
   WORKFLOW_AGENT_DRAG_TYPE,
+  clampEdgeOffset,
   clientPointToCanvas,
   connectionEventName,
   nodePositionFromPointer,
@@ -180,6 +190,7 @@ interface NodeDragState {
   pointerId: number;
   origin: CanvasPoint;
   start: { clientX: number; clientY: number };
+  scroll: { left: number; top: number };
   position: CanvasPoint;
   moved: boolean;
 }
@@ -360,6 +371,70 @@ export default function WorkflowsPage() {
   // lets us scroll the leftmost node into view after data loads so the
   // user actually sees their imported workflow.
   const canvasScrollRef = useRef<HTMLDivElement | null>(null);
+  // Display-only adjustments are scoped separately from publishable drafts.
+  const layoutStorageKey = canvasLayoutStorageKey(
+    tenant,
+    selectedWorkflow ?? "__none__",
+    dagQuery.data?.workflowVersionId ?? workflowVersion,
+  );
+  const [savedLayout, setSavedLayout] = useState<{
+    key: string | null;
+    layout: CanvasLayout;
+  }>(() => ({ key: null, layout: emptyCanvasLayout() }));
+  const displayLayout = useMemo(
+    () => savedLayout.key === layoutStorageKey
+      ? savedLayout.layout
+      : emptyCanvasLayout(),
+    [layoutStorageKey, savedLayout],
+  );
+
+  useEffect(() => {
+    let layout = emptyCanvasLayout();
+    try {
+      layout = deserializeCanvasLayout(window.localStorage.getItem(layoutStorageKey));
+    } catch {
+      // Keep movement available when browser storage is unavailable.
+    }
+    setSavedLayout({ key: layoutStorageKey, layout });
+  }, [layoutStorageKey]);
+
+  useEffect(() => {
+    if (savedLayout.key !== layoutStorageKey || !selectedWorkflow) return;
+    try {
+      window.localStorage.setItem(layoutStorageKey, JSON.stringify(savedLayout.layout));
+    } catch {
+      // The in-memory layout still works when storage is unavailable/full.
+    }
+  }, [layoutStorageKey, savedLayout, selectedWorkflow]);
+
+  useEffect(() => {
+    setNodeDrag(null);
+    setLinkDrag(null);
+    suppressedNodeClickRef.current = null;
+  }, [layoutStorageKey, editing, tool]);
+
+  function updateDisplayLayout(update: (current: CanvasLayout) => CanvasLayout) {
+    setSavedLayout((current) => ({
+      key: layoutStorageKey,
+      layout: update(current.key === layoutStorageKey ? current.layout : emptyCanvasLayout()),
+    }));
+  }
+
+  function commitNodePosition(id: string, position: CanvasPoint) {
+    if (editing) {
+      setDraft((current) => moveAgent(current, id, position));
+      setValidation(null);
+    } else {
+      updateDisplayLayout((current) => ({
+        ...current,
+        nodes: Object.assign(
+          Object.create(null) as CanvasLayout["nodes"],
+          current.nodes,
+          { [id]: position },
+        ),
+      }));
+    }
+  }
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const inspectorRestoreWidthRef = useRef(WORKFLOW_INSPECTOR_DEFAULT_WIDTH);
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
@@ -686,12 +761,14 @@ export default function WorkflowsPage() {
       out.set(
         agent.kebabId,
         clampCanvasPosition(
+          (editing ? draft.agents[agent.kebabId]?.position : undefined) ??
+          displayLayout.nodes[agent.kebabId] ??
           agent.position ?? nodePos(agent.kebabId, autoFallback),
         ),
       );
     }
     return out;
-  }, [agents, autoFallback]);
+  }, [agents, autoFallback, displayLayout.nodes, draft.agents, editing]);
 
   const renderedPositions = useMemo(() => {
     if (!nodeDrag) return positions;
@@ -699,11 +776,6 @@ export default function WorkflowsPage() {
     out.set(nodeDrag.id, nodeDrag.position);
     return out;
   }, [nodeDrag, positions]);
-
-  const canvasSize = useMemo(
-    () => dynamicCanvasSize(renderedPositions.values()),
-    [renderedPositions],
-  );
 
   // Derive headers from rendered columns rather than only declared stages.
   // This keeps topology-packed stage-99 workflows and local draft additions
@@ -748,6 +820,23 @@ export default function WorkflowsPage() {
       ),
     [agents, renderedPositions],
   );
+  const canvasPoints = useMemo(() => [
+    ...renderedPositions.values(),
+    ...edges.map((edge) => {
+      const source = renderedPositions.get(edge.src)!;
+      const target = renderedPositions.get(edge.dst)!;
+      const offset = clampEdgeOffset(
+        { x: source.x + NODE_W, y: source.y + NODE_H / 2 },
+        { x: target.x, y: target.y + NODE_H / 2 },
+        displayLayout.edges[workflowEdgeKey(edge.src, edge.dst, edge.event)] ?? { x: 0, y: 0 },
+      );
+      return {
+        x: (source.x + NODE_W + target.x) / 2 + offset.x,
+        y: (source.y + target.y + NODE_H) / 2 + offset.y,
+      };
+    }),
+  ], [displayLayout.edges, edges, renderedPositions]);
+  const canvasSize = useMemo(() => dynamicCanvasSize(canvasPoints), [canvasPoints]);
   const previousDerivedEdgesRef = useRef<{
     context: string;
     edges: Map<string, (typeof edges)[number]>;
@@ -1330,7 +1419,8 @@ export default function WorkflowsPage() {
   }
 
   function nextAgentId(actor: "Agent" | "Human"): string {
-    const prefix = actor === "Human" ? "human-review" : "automated-step";
+    const workflowPrefix = selectedWorkflow ?? "workflow";
+    const prefix = `${workflowPrefix}-${actor === "Human" ? "human-review" : "automated-step"}`;
     const taken = new Set(agents.map((agent) => agent.kebabId));
     let index = 1;
     while (taken.has(`${prefix}-${index}`)) index += 1;
@@ -1373,25 +1463,25 @@ export default function WorkflowsPage() {
       actor === "Human"
         ? createHumanAgentDefinition({
             ...options,
-            title: t("workflowPage.newNodeDefaults.humanTitle"),
-            description: t("workflowPage.newNodeDefaults.humanDescription"),
+            title: t("inspectors.newNodeDefaults.humanTitle"),
+            description: t("inspectors.newNodeDefaults.humanDescription"),
             actionDescription: t(
-              "workflowPage.newNodeDefaults.humanActionDescription",
+              "inspectors.newNodeDefaults.humanActionDescription",
             ),
           })
         : createAutomatedAgentDefinition({
             ...options,
-            title: t("workflowPage.newNodeDefaults.automatedTitle"),
-            description: t("workflowPage.newNodeDefaults.automatedDescription"),
+            title: t("inspectors.newNodeDefaults.automatedTitle"),
+            description: t("inspectors.newNodeDefaults.automatedDescription"),
             actionDescription: t(
-              "workflowPage.newNodeDefaults.automatedActionDescription",
+              "inspectors.newNodeDefaults.automatedActionDescription",
             ),
             actionPrompt: t(
-              "workflowPage.newNodeDefaults.automatedActionPrompt",
+              "inspectors.newNodeDefaults.automatedActionPrompt",
             ),
             ontologyInstructions: t(
-              "workflowPage.newNodeDefaults.automatedOntologyInstructions",
-              { title: t("workflowPage.newNodeDefaults.automatedTitle") },
+              "inspectors.newNodeDefaults.automatedOntologyInstructions",
+              { title: t("inspectors.newNodeDefaults.automatedTitle") },
             ),
           });
     setDraft((current) => addAgentToDraft(current, definition));
@@ -1500,16 +1590,21 @@ export default function WorkflowsPage() {
     event: ReactPointerEvent<HTMLButtonElement>,
     id: string,
   ) {
-    if (!editing || tool !== "select" || event.button !== 0) return;
+    if ((editing && tool !== "select") || event.button !== 0) return;
     const origin = renderedPositions.get(id);
     if (!origin) return;
     event.stopPropagation();
+    suppressedNodeClickRef.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
     setNodeDrag({
       id,
       pointerId: event.pointerId,
       origin,
       start: { clientX: event.clientX, clientY: event.clientY },
+      scroll: {
+        left: canvasScrollRef.current?.scrollLeft ?? 0,
+        top: canvasScrollRef.current?.scrollTop ?? 0,
+      },
       position: origin,
       moved: false,
     });
@@ -1521,7 +1616,10 @@ export default function WorkflowsPage() {
       const position = nodePositionFromPointer(
         current.origin,
         current.start,
-        { clientX: event.clientX, clientY: event.clientY },
+        {
+          clientX: event.clientX + (canvasScrollRef.current?.scrollLeft ?? 0) - current.scroll.left,
+          clientY: event.clientY + (canvasScrollRef.current?.scrollTop ?? 0) - current.scroll.top,
+        },
         zoom,
       );
       const distance = Math.hypot(
@@ -1541,14 +1639,23 @@ export default function WorkflowsPage() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    const completed = nodeDrag;
+    const completed = {
+      ...nodeDrag,
+      position: nodePositionFromPointer(nodeDrag.origin, nodeDrag.start, {
+        clientX: event.clientX + (canvasScrollRef.current?.scrollLeft ?? 0) - nodeDrag.scroll.left,
+        clientY: event.clientY + (canvasScrollRef.current?.scrollTop ?? 0) - nodeDrag.scroll.top,
+      }, zoom),
+      moved: nodeDrag.moved || Math.hypot(
+        event.clientX - nodeDrag.start.clientX,
+        event.clientY - nodeDrag.start.clientY,
+      ) >= 5,
+    };
     setNodeDrag(null);
     if (!completed.moved) return;
     suppressedNodeClickRef.current = completed.id;
     setSelectedAgent(completed.id);
     setSelectedEvent(null);
-    setDraft((current) => moveAgent(current, completed.id, completed.position));
-    setValidation(null);
+    commitNodePosition(completed.id, completed.position);
     setCanvasAnnouncement(
       t("workflowPage.announcement.moved", {
         agent: completed.id,
@@ -1559,7 +1666,7 @@ export default function WorkflowsPage() {
   }
 
   function nudgeNode(event: ReactKeyboardEvent<HTMLButtonElement>, id: string) {
-    if (!editing || tool !== "select") return;
+    if (editing && tool !== "select") return;
     const direction: Record<string, CanvasPoint> = {
       ArrowLeft: { x: -1, y: 0 },
       ArrowRight: { x: 1, y: 0 },
@@ -1576,8 +1683,7 @@ export default function WorkflowsPage() {
       x: current.x + vector.x * step,
       y: current.y + vector.y * step,
     });
-    setDraft((value) => moveAgent(value, id, position));
-    setValidation(null);
+    commitNodePosition(id, position);
     setCanvasAnnouncement(
       t("workflowPage.announcement.moved", {
         agent: id,
@@ -1651,6 +1757,7 @@ export default function WorkflowsPage() {
     function cancelActiveInteraction(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (!nodeDrag && !linkDrag && !connectFrom) return;
+      if (nodeDrag) suppressedNodeClickRef.current = nodeDrag.id;
       setNodeDrag(null);
       setLinkDrag(null);
       setConnectFrom(null);
@@ -1693,7 +1800,7 @@ export default function WorkflowsPage() {
 
   function zoomToFit() {
     const canvas = canvasScrollRef.current;
-    const all = Array.from(positions.values());
+    const all = canvasPoints;
     if (!canvas || all.length === 0) return;
     const minX = Math.min(...all.map((position) => position.x));
     const minY = Math.min(...all.map((position) => position.y));
@@ -2093,11 +2200,26 @@ export default function WorkflowsPage() {
       >
         {/* Canvas */}
         <div className={styles.canvasShell} id="workflow-canvas-region">
-          {editing && (
-            <div className={styles.canvasCoach}>
-              <Icon name="workflow" size={12} />
-              <span>{t("workflowPage.canvasCoach")}</span>
-              <kbd>Esc</kbd>
+          <div className={styles.canvasCoach}>
+            <Icon name="workflow" size={12} />
+            <span>{t(editing ? "workflowPage.canvasCoach" : "workflowPage.canvasViewCoach")}</span>
+            <kbd>Esc</kbd>
+          </div>
+          {!editing && (
+            <div className={styles.layoutControls}>
+              <Button small onClick={zoomToFit}>
+                {t("workflowPage.fitLayout")}
+              </Button>
+              <Button
+                small
+                disabled={Object.keys(displayLayout.nodes).length === 0 && Object.keys(displayLayout.edges).length === 0}
+                onClick={() => {
+                  updateDisplayLayout(() => emptyCanvasLayout());
+                  setCanvasAnnouncement(t("workflowPage.layoutReset"));
+                }}
+              >
+                {t("workflowPage.resetLayout")}
+              </Button>
             </div>
           )}
           {canvasDropActive && (
@@ -2244,7 +2366,7 @@ export default function WorkflowsPage() {
               <svg
                 width={canvasSize.width}
                 height={canvasSize.height}
-                role="img"
+                role="group"
                 aria-label={t("workflowPage.dagAria", {
                   agents: agents.length,
                   edges: edges.length,
@@ -2279,72 +2401,45 @@ export default function WorkflowsPage() {
                   const sy = s.y + NODE_H / 2;
                   const dx = d.x;
                   const dy = d.y + NODE_H / 2;
-                  const path = workflowEdgePath(
-                    { x: sx, y: sy },
-                    { x: dx, y: dy },
-                  );
+                  const edgeKey = workflowEdgeKey(e.src, e.dst, e.event);
                   const color = colorVar(evColor[e.event] ?? "muted");
                   const isHi = highlighted.edges.has(i) || hoveredEdge === i;
                   const opacity = dim ? (isHi ? 1 : 0.1) : isHi ? 1 : 0.55;
                   return (
-                    <g
-                      key={JSON.stringify([e.src, e.dst, e.event])}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={t("workflowPage.edgeAria", {
+                    <WorkflowEdge
+                      key={`${layoutStorageKey}:${edgeKey}`}
+                      contextKey={`${layoutStorageKey}:${editing}:${tool}`}
+                      edgeKey={edgeKey}
+                      eventName={e.event}
+                      source={{ x: sx, y: sy }}
+                      target={{ x: dx, y: dy }}
+                      offset={displayLayout.edges[edgeKey] ?? { x: 0, y: 0 }}
+                      color={color}
+                      markerEnd={`url(#arrow-${evColor[e.event] ?? "muted"})`}
+                      highlighted={isHi}
+                      opacity={opacity}
+                      animate={liveStream && (isHi || (!dim && live.activeEventNames.has(e.event)))}
+                      animationIndex={i}
+                      zoom={zoom}
+                      bounds={canvasSize}
+                      getScrollPosition={() => ({
+                        left: canvasScrollRef.current?.scrollLeft ?? 0,
+                        top: canvasScrollRef.current?.scrollTop ?? 0,
+                      })}
+                      enabled={!editing || tool === "select"}
+                      ariaLabel={t("workflowPage.edgeAria", {
                         event: e.event,
                         source: e.src,
                         target: e.dst,
                       })}
-                      style={{ pointerEvents: "auto" }}
-                      onKeyDown={(ev) => {
-                        if (ev.key === "Enter" || ev.key === " ") {
-                          ev.preventDefault();
-                          setSelectedEvent(e.event);
-                        }
-                      }}
-                    >
-                      <path
-                        d={path}
-                        stroke={color}
-                        strokeWidth={isHi ? 2 : 1.25}
-                        fill="none"
-                        opacity={opacity}
-                        markerEnd={`url(#arrow-${evColor[e.event] ?? "muted"})`}
-                        style={{
-                          cursor: "pointer",
-                          transition: "opacity 0.15s, stroke-width 0.15s",
-                        }}
-                        onMouseEnter={() => setHoveredEdge(i)}
-                        onMouseLeave={() => setHoveredEdge(null)}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedEvent(e.event);
-                        }}
-                      />
-                      {/* §G4 — a dot travels an edge only while its event
-                          name actually pulsed on the SSE stream within the
-                          last few seconds (or the edge is highlighted).
-                          Replaces the former index-modulo decoration. */}
-                      {liveStream &&
-                        (isHi ||
-                          (!dim && live.activeEventNames.has(e.event))) && (
-                          <circle
-                            className={styles.animatedEdgeDot}
-                            r="3"
-                            fill={color}
-                            opacity={isHi ? 1 : 0.85}
-                            aria-hidden="true"
-                          >
-                            <animateMotion
-                              dur={`${2.5 + (i % 5) * 0.4}s`}
-                              repeatCount="indefinite"
-                              begin={`${(i * 0.13) % 2}s`}
-                              path={path}
-                            />
-                          </circle>
-                        )}
-                    </g>
+                      moveHint={t("workflowPage.edgeMoveHint")}
+                      onSelect={() => setSelectedEvent(e.event)}
+                      onHover={(hovered) => setHoveredEdge(hovered ? i : null)}
+                      onOffsetChange={(offset) => updateDisplayLayout((current) => ({
+                        ...current,
+                        edges: { ...current.edges, [edgeKey]: offset },
+                      }))}
+                    />
                   );
                 })}
                 {linkDrag &&
@@ -2373,8 +2468,9 @@ export default function WorkflowsPage() {
                   })()}
               </svg>
 
-              {/* Agent nodes */}
+              {/* Gaps in the node layer must let pointer events reach SVG edges. */}
               <div
+                className={styles.nodeLayer}
                 style={{
                   position: "absolute",
                   top: 30,
@@ -2460,6 +2556,7 @@ export default function WorkflowsPage() {
                         onPointerMove={updateNodeDrag}
                         onPointerUp={finishNodeDrag}
                         onPointerCancel={() => setNodeDrag(null)}
+                        onLostPointerCapture={() => setNodeDrag(null)}
                         onKeyDown={(event) => nudgeNode(event, a.kebabId)}
                         onClick={(event) => {
                           event.stopPropagation();
@@ -2503,7 +2600,7 @@ export default function WorkflowsPage() {
                           cursor:
                             editing && tool === "connect"
                               ? "crosshair"
-                              : editing && tool === "select"
+                              : !editing || tool === "select"
                                 ? isDragging
                                   ? "grabbing"
                                   : "grab"
@@ -2670,24 +2767,7 @@ export default function WorkflowsPage() {
               canResize={inspectorCanResize}
               isWide={inspectorIsWide}
               onRemove={() => {
-                setDraft((prev) => {
-                  const isAdded = prev.added.has(selectedAgent);
-                  const nextAgents = { ...prev.agents };
-                  delete nextAgents[selectedAgent];
-                  return {
-                    agents: nextAgents,
-                    added: isAdded
-                      ? new Set(
-                          Array.from(prev.added).filter(
-                            (id) => id !== selectedAgent,
-                          ),
-                        )
-                      : prev.added,
-                    removed: isAdded
-                      ? prev.removed
-                      : new Set([...prev.removed, selectedAgent]),
-                  };
-                });
+                setDraft((prev) => removeWorkflowAgent(prev, agents, selectedAgent));
                 setValidation(null);
                 setEditorErrors((current) => {
                   const next = { ...current };

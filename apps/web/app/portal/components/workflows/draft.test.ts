@@ -15,6 +15,7 @@ import {
   mergeAgentDefinitionIntoDraft,
   moveAgent,
   patchAgentDefinition,
+  repairGeneratedAgentDefaults,
   serializeDraft,
   toManifest,
   type CompleteAgentDefinition,
@@ -121,6 +122,26 @@ function fullAgent(
 }
 
 describe("lossless definition editing", () => {
+  it("repairs only exact broken generated starter translation tokens", () => {
+    const original = createAutomatedAgentDefinition({
+      id: "old-node",
+      title: "workflowPage.newNodeDefaults.automatedTitle",
+      actionPrompt: "workflowPage.newNodeDefaults.automatedActionPrompt",
+    });
+    const repaired = repairGeneratedAgentDefaults(original);
+    expect(repaired.title).toBe("New automated step");
+    expect(repaired.actions[0]?.action_prompt).not.toContain("workflowPage.");
+    expect(original.title).toBe("workflowPage.newNodeDefaults.automatedTitle");
+    const custom = {
+      ...original,
+      title: "Discuss workflowPage.newNodeDefaults.automatedTitle",
+      actions: [],
+    };
+    expect(repairGeneratedAgentDefaults(custom).title).toBe(custom.title);
+    expect(
+      repairGeneratedAgentDefaults({ ...original, generated: false }).title,
+    ).toBe(original.title);
+  });
   it("preserves every complete and unknown field on a no-op round trip", () => {
     const original = definition("research");
     const [saved] = toManifest([fullAgent("research", original)]);
@@ -382,6 +403,37 @@ describe("canvas draft operations", () => {
       emits: ["EXISTING", "FLOW_READY"],
     });
     expect(twice.agents.target?.triggers).toEqual(["FLOW_READY"]);
+  });
+
+  it("retains generated handoffs after prior sparse input edits and serialization", () => {
+    const source = fullAgent(
+      "source",
+      createAutomatedAgentDefinition({ id: "source" }),
+    );
+    const targetDefinition = createAutomatedAgentDefinition({ id: "target" });
+    const target = fullAgent("target", targetDefinition);
+    const initial = emptyDraft();
+    initial.agents.target = { id: "target", inputs: targetDefinition.inputs };
+    const connected = connectAgents(
+      initial,
+      [source, target],
+      "source",
+      "target",
+      "READY",
+    );
+    const restored = deserializeDraft(serializeDraft(connected));
+    const saved = toManifest(applyDraft([source, target], restored));
+    const receiver = saved.find((entry) => entry.id === "target")!;
+    const ports = receiver.inputs as Array<{
+      id: string;
+      workflow_handoff?: unknown;
+    }>;
+    const input = ports.find((entry) => entry.workflow_handoff)!;
+    expect(input).toBeDefined();
+    expect(receiver.trigger_bindings).toMatchObject({
+      READY: { [input.id]: { path: expect.any(String) } },
+    });
+    expect(WorkflowManifest.safeParse(saved).success).toBe(true);
   });
 
   it("derives a live edge from trigger and emitted-event draft edits", () => {

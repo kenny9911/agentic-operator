@@ -520,7 +520,9 @@ describe("tenant document extraction, research, and generation", () => {
         : {
             result: {
               summary: `Stage ${index + 1} complete`,
-              result: { request_id: "req-1" },
+              result: index === 0
+                ? { brief: "Review request req-1", rules: [], open_questions: [] }
+                : { outcome: "Request req-1 reviewed", evidence: [], unresolved: [] },
               confidence: 0.9,
               assumptions: [],
               needs_review: false,
@@ -989,9 +991,20 @@ describe("tenant document extraction, research, and generation", () => {
       expect(first.output_bindings?.CANONICAL_BRIEF_READY).toEqual({
         brief: { output: "brief" },
       });
-      expect(second.trigger_bindings?.CANONICAL_BRIEF_READY).toEqual({
+      expect(second.trigger_bindings?.CANONICAL_BRIEF_READY).toMatchObject({
         brief: { path: "$.brief" },
       });
+      const connectedInput = second.inputs.find((port) => port.workflow_handoff);
+      expect(connectedInput).toMatchObject({
+        schema: first.outputs[0]!.schema,
+        workflow_handoff: {
+          source_agent_id: first.id,
+          source_output_id: "brief",
+          event: "CANONICAL_BRIEF_READY",
+        },
+      });
+      expect(second.trigger_bindings?.CANONICAL_BRIEF_READY?.[connectedInput!.id])
+        .toEqual({ path: "$.brief" });
       expect(second.output_bindings?.CANONICAL_COMPLETED).toEqual({
         outcome: { output: "outcome" },
       });

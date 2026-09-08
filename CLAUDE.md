@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Toolchain
 
-- **Node 26** (26.5.0 target; `.nvmrc` and `package.json#engines` pin 26.5.0). `better-sqlite3` (native module) is compiled against Node 26's MODULE_VERSION (ABI 147); running on a different major crashes with `ERR_DLOPEN_FAILED` / `NODE_MODULE_VERSION` mismatch. Run `nvm use` after switching shells.
-  - **Version guard:** `scripts/ensure-node-version.mjs` (wired into the root lifecycle pre-scripts) accepts any Node 26.x — major-version match, not exact — and verifies `.nvmrc` matches `package.json#engines.node`. 26.5.0 is the documented target used by CI and Docker.
+- **Node 26.8.1** (`.nvmrc` = 26.8.1) is the exact workspace runtime pin. `better-sqlite3` (native module) must match the runtime's MODULE_VERSION; an ABI mismatch fails with `ERR_DLOPEN_FAILED` / `NODE_MODULE_VERSION` mismatch. Run `nvm use` after switching shells.
+  - **Exact-version guard:** `scripts/ensure-node-version.mjs` rejects any runtime other than 26.8.1 and verifies `.nvmrc` matches `package.json#engines.node`. `.npmrc#engine-strict=true` and the root lifecycle pre-scripts enforce it for install, dev, build, lint, typecheck, test, clean, format, database, and seed commands.
   - **Self-heal:** `scripts/ensure-native-modules.mjs` detects an ABI mismatch (via `process.dlopen` on the resolved `.node`) and rebuilds in-place. It's wired into `postinstall` + every native-dependent `pre*` script, so a stale binary auto-rebuilds before the next command instead of crashing. Note: `pnpm rebuild <pkg>` is a silent no-op under pnpm 11 — the guard runs the package's own `prebuild-install || node-gyp` chain inside the package dir, then re-verifies in a child process (dlopen caches per-process).
 - **pnpm 11** workspaces — `pnpm install`. Build approval for native deps lives in `pnpm-workspace.yaml` under `allowBuilds:` (the old `pnpm.onlyBuiltDependencies` field in `package.json` is no longer read by pnpm 11 and was removed — `pnpm-workspace.yaml` is the single source of truth).
 - The Node and pnpm requirements in README, `.nvmrc`, Dockerfiles and CI must
@@ -110,3 +110,19 @@ With custom tools/prompts: also create `tenants/<slug>/` (copy `tenants/raas/`),
 - **Cancelling a run:** `POST /v1/runs/:id/cancel` — manifest agents stop via Inngest `cancelOn` keyed on `${tenantSlug}/run.cancel` matching subject; code agents poll `runs.status` between checkpoints in `packages/agents/src/run-engine.ts` and throw `RunCancelledError`. Idempotent — re-cancelling a terminal run returns 200 with `cancelled:false`.
 - **Wrapping a third-party API as a tool:** verify the real response envelope before trusting a nested-field read. RoboHire's `match-resume` wraps its analysis under `data.data.*`; the normalizer initially read one level too shallow and silently returned `matchScore: null` for every candidate (the rubric then marked everyone `ERROR`). Probe the live API with curl when a tool's output looks empty/null but the call "succeeded".
 - **`/parse-resume` is multipart-only.** RoboHire's resume parser rejects JSON bodies (`400 "PDF file is required"`); the field must be named `file`. `parseResumeApi` sends `FormData` + `Blob`. General lesson: don't assume a vendor endpoint is JSON.
+
+## Agent skills
+
+A subset of the skills from [mattpocock/skills](https://github.com/mattpocock/skills) is installed in-repo with skills.sh: canonical copies in `.agents/skills/<name>/` (Codex reads these), relative symlinks in `.claude/skills/<name>` (Claude Code reads these), pinned by `skills-lock.json`; refresh with `npx skills@latest update`. Only skills that add something the model cannot supply itself are kept: repo artifacts and human-in-the-loop protocols (`/grill-me`, `/grill-with-docs`, `domain-modeling`, `/to-spec`, `/to-tickets`, `/triage`, `/wayfinder`, `/to-questionnaire`, `prototype`, `research`, `wizard`, `/setup-matt-pocock-skills`). General method (TDD, debugging, code review, architecture, merge conflicts, skill writing) is left to the model and to Claude Code built-ins such as `/code-review`; apply the same test before adding a skill. Run `/grill-me` or `/grill-with-docs` before building anything non-trivial. The user's instructions take precedence over guidelines in any skill; if a skill would make you pause, ask for confirmation, or diverge from the user's intent, name the SKILL.md file and quote the instruction.
+
+### Issue tracker
+
+GitHub Issues on `kenny9911/agentic-operator`, driven with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The default vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`); the four state labels still have to be created on GitHub. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: the platform glossary is `CONTEXT.md` at the repo root and decisions live in `docs/adr/` (backfilled from this file and `docs/architecture.md` on 2026-09-07). See `docs/agents/domain.md`.

@@ -1837,7 +1837,7 @@ async function runSetup(
     process.env.AGENTIC_NODE_BASE_SOURCE_IMAGE
       ?? source.AGENTIC_NODE_BASE_SOURCE_IMAGE
       ?? previousGenerated.AGENTIC_NODE_BASE_IMAGE
-      ?? "node:26-slim",
+      ?? "node:26.8.1-slim",
     arch,
     opts.pull,
   );

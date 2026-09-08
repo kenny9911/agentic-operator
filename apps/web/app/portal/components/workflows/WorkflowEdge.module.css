@@ -1,0 +1,40 @@
+.edge {
+  pointer-events: none;
+  outline: none;
+}
+
+.hitArea {
+  pointer-events: stroke;
+}
+
+.route {
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    stroke-width 0.15s;
+}
+
+.handle {
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.edge:focus-visible .handle {
+  stroke: var(--signal);
+  stroke-width: 3;
+}
+
+.animatedDot {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route,
+  .handle {
+    transition: none;
+  }
+
+  .animatedDot {
+    display: none;
+  }
+}

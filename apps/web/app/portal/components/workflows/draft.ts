@@ -22,7 +22,7 @@
  */
 
 import type { DagAgent } from "@/lib/hooks/useAgents";
-import type { AgentSpec } from "@agentic/contracts";
+import { connectWorkflowAgents, type AgentSpec } from "@agentic/contracts";
 
 export type AgentActor = "Agent" | "Human";
 
@@ -225,7 +225,57 @@ export function patchAgentDefinition(
     optionalField(out, "concurrency", patch.concurrency);
   }
 
-  return out as CompleteAgentDefinition;
+  return repairGeneratedAgentDefaults(out as CompleteAgentDefinition);
+}
+
+/** Repair only the exact translation tokens accidentally saved by the old
+ * new-node button. User-authored prose and non-generated agents are untouched. */
+export function repairGeneratedAgentDefaults(
+  original: CompleteAgentDefinition,
+): CompleteAgentDefinition {
+  if (original.generated !== true) return original;
+  const prefix = "workflowPage.newNodeDefaults.";
+  const replacements: Record<string, string> = {
+    [`${prefix}automatedTitle`]: "New automated step",
+    [`${prefix}automatedDescription`]:
+      "Process the incoming workflow request and return a verified result.",
+    [`${prefix}automatedActionDescription`]:
+      "Process the request and verify the result before emitting success.",
+    [`${prefix}automatedActionPrompt`]:
+      "Use the agent instructions and supplied inputs. Do not invent missing facts. Return a concise, verifiable result.",
+    [`${prefix}automatedOntologyInstructions`]:
+      "Validate the incoming data, perform only the requested work, and report uncertainty or missing information explicitly.",
+  };
+  const replace = (value: unknown) =>
+    typeof value === "string" && Object.hasOwn(replacements, value)
+      ? replacements[value]
+      : value;
+  let changed = false;
+  const definition = { ...original };
+  for (const field of [
+    "title",
+    "description",
+    "ontology_instructions",
+  ] as const) {
+    const next = replace(original[field]);
+    if (next !== original[field]) {
+      definition[field] = next as string;
+      changed = true;
+    }
+  }
+  definition.actions = original.actions.map((action) => {
+    const description = replace(action.description) as string;
+    const prompt = replace(action.action_prompt) as string | undefined;
+    if (description === action.description && prompt === action.action_prompt)
+      return action;
+    changed = true;
+    return {
+      ...action,
+      description,
+      ...(prompt === undefined ? {} : { action_prompt: prompt }),
+    };
+  });
+  return changed ? definition : original;
 }
 
 export interface NewAgentDefinitionOptions {
@@ -281,6 +331,50 @@ export function createAutomatedAgentDefinition(
       "Process the incoming workflow request and return a verified result.",
     actor: ["Agent"],
     trigger: options.triggers ?? [`${prefix}_REQUESTED`],
+    inputs: [
+      {
+        id: "prompt",
+        label: "Request",
+        kind: "prompt",
+        required: false,
+        schema: { type: "string" },
+        sensitivity: "none",
+        default:
+          "Carry out your task using the supplied request and connected agents' results.",
+      },
+      {
+        id: "payload",
+        label: "Request data",
+        kind: "value",
+        required: false,
+        schema: { type: "object" },
+        sensitivity: "none",
+      },
+    ],
+    outputs: [
+      {
+        id: "result",
+        label: "Result",
+        required: true,
+        schema: { type: "string" },
+        description:
+          "The completed work, with evidence and any missing information stated clearly.",
+        sensitivity: "none",
+      },
+    ],
+    output_config: {
+      format: "json",
+      strict: true,
+      repair_attempts: 1,
+      unwrap_single_output: false,
+      artifact: {
+        filename: "output.json",
+        persist_individual_outputs: false,
+        persist_run_input: true,
+        persist_run_record: true,
+        persist_raw_response: false,
+      },
+    },
     actions: [
       {
         order: "1",
@@ -644,8 +738,8 @@ export function mergeAgentDefinitionIntoDraft(
 }
 
 /**
- * Connect two effective agents by adding one emitted/listened event. Repeated
- * connections are idempotent and preserve every other draft field.
+ * Compile event delivery and typed handoff mappings together. Repeated
+ * connections are idempotent and preserve every advanced mapping.
  */
 export function connectAgents(
   draft: WorkflowDraft,
@@ -660,18 +754,46 @@ export function connectAgents(
   const target = effectiveAgents.find((agent) => agent.kebabId === targetId);
   if (!source) throw new Error(`Unknown source agent: ${sourceId}`);
   if (!target) throw new Error(`Unknown target agent: ${targetId}`);
+  if (sourceId === targetId)
+    throw new Error("An agent cannot connect to itself.");
+
+  const currentAgents = applyDraft(effectiveAgents, draft);
+  const definitions = toManifest(
+    currentAgents.filter(
+      (agent) => agent.kebabId === sourceId || agent.kebabId === targetId,
+    ),
+  );
+  const connected = connectWorkflowAgents(
+    definitions.find((definition) => definition.id === sourceId),
+    definitions.find((definition) => definition.id === targetId),
+    event,
+  );
 
   const agents = { ...draft.agents };
   const sourcePatch = agents[sourceId] ?? { id: sourceId };
   agents[sourceId] = {
     ...sourcePatch,
     id: sourceId,
+    definition: connected.source as CompleteAgentDefinition,
+    inputs: connected.source.inputs,
+    outputs: connected.source.outputs,
+    title: connected.source.title,
+    description: connected.source.description,
+    ontology_instructions: connected.source.ontology_instructions,
+    actions: connected.source.actions,
     emits: dedupeEvents([...(sourcePatch.emits ?? source.emits), event]),
   };
   const targetPatch = agents[targetId] ?? { id: targetId };
   agents[targetId] = {
     ...targetPatch,
     id: targetId,
+    definition: connected.target as CompleteAgentDefinition,
+    inputs: connected.target.inputs,
+    outputs: connected.target.outputs,
+    title: connected.target.title,
+    description: connected.target.description,
+    ontology_instructions: connected.target.ontology_instructions,
+    actions: connected.target.actions,
     triggers: dedupeEvents([
       ...(targetPatch.triggers ?? target.triggers),
       event,

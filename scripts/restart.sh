@@ -2,9 +2,9 @@
 #
 # restart.sh — the documented entry point for restarting the local dev stack.
 #
-#   ./restart.sh            gracefully stop the current stack, then `pnpm dev`
+#   ./scripts/restart.sh    gracefully stop the current stack, then `pnpm dev`
 #                           under the pinned Node version
-#   ./restart.sh --check    validate the restart harness and report the port
+#   ./scripts/restart.sh --check  validate the restart harness and report the port
 #                           contract WITHOUT touching any running process
 #
 # The actual stop/start logic lives in scripts/restart-dev.sh + scripts/stop-dev.sh;
@@ -19,7 +19,7 @@
 
 set -Eeuo pipefail
 
-readonly REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$REPO_ROOT"
 
 readonly BOLD=$'\033[1m' RED=$'\033[31m' GREEN=$'\033[32m' YELLOW=$'\033[33m' DIM=$'\033[2m' RESET=$'\033[0m'
@@ -27,7 +27,7 @@ CHECK_FAILURES=0
 
 usage() {
   cat <<'EOF'
-Usage: ./restart.sh [--check] [--help]
+Usage: ./scripts/restart.sh [--check] [--help]
 
   (no flags)  Stop the running dev stack, then start it via `pnpm dev`
               under the Node version pinned in .nvmrc.
@@ -179,10 +179,10 @@ do_check() {
 
   printf '\n'
   if [ "$CHECK_FAILURES" -eq 0 ]; then
-    printf '%sharness ok — ./restart.sh is safe to run%s\n' "$GREEN" "$RESET"
+    printf '%sharness ok — ./scripts/restart.sh is safe to run%s\n' "$GREEN" "$RESET"
     return 0
   fi
-  printf '%s%d check(s) failed — fix these before relying on ./restart.sh%s\n' "$RED" "$CHECK_FAILURES" "$RESET"
+  printf '%s%d check(s) failed — fix these before relying on ./scripts/restart.sh%s\n' "$RED" "$CHECK_FAILURES" "$RESET"
   return 1
 }
 

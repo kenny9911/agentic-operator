@@ -35,7 +35,7 @@
 # override this global arg with a reviewed docker.io/library/node@sha256:<index
 # digest>, which pins the build, runtime and sandbox-common roots to the same
 # bytes.
-ARG NODE_BASE_IMAGE=node:26.5.0-slim
+ARG NODE_BASE_IMAGE=node:26.8.1-slim
 
 # --- base ----------------------------------------------------------------
 FROM ${NODE_BASE_IMAGE} AS base
@@ -51,7 +51,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update \
       ca-certificates \
       tini \
  && rm -rf /var/lib/apt/lists/*
-# node:26.5.0-slim does NOT ship corepack; install pnpm via npm to keep the
+# node:26.8.1-slim does NOT ship corepack; install pnpm via npm to keep the
 # layer reproducible (avoids `corepack: not found`).
 RUN npm install --global pnpm@11.21.0
 WORKDIR /app

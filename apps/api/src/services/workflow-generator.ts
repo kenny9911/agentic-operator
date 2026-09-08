@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   WorkflowManifestV2Schema,
+  connectWorkflowAgents,
   normalizeWorkflowManifest,
   workflowManualTaskResolutionOutputContract,
   type AgentDefinitionV2,
@@ -1021,6 +1022,24 @@ function ensureConnectedManifest(
         bindings[port.id] ??= { output: port.id };
       }
       agent.output_bindings[event] = bindings;
+    }
+  }
+  // Every generated edge receives the same typed handoff contract as a
+  // connection drawn on the canvas. Preserve the authored payload mappings
+  // while adding named inputs that the runtime harness can validate/reference.
+  for (let sourceIndex = 0; sourceIndex < copy.agents.length; sourceIndex += 1) {
+    for (let targetIndex = 0; targetIndex < copy.agents.length; targetIndex += 1) {
+      if (sourceIndex === targetIndex) continue;
+      const events = copy.agents[sourceIndex]!.triggered_event.filter((event) =>
+        copy.agents[targetIndex]!.trigger.includes(event),
+      );
+      for (const event of events) {
+        const connected = connectWorkflowAgents(
+          copy.agents[sourceIndex]!, copy.agents[targetIndex]!, event,
+        );
+        copy.agents[sourceIndex] = connected.source;
+        copy.agents[targetIndex] = connected.target;
+      }
     }
   }
   return WorkflowManifestV2Schema.parse(copy);

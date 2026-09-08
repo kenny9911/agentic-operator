@@ -6,15 +6,15 @@ MetaERP 生产调用、真实预警通知和自动业务审批仍然是 `denied`
 
 ## 1. 准备运行时
 
-仓库要求精确的 Node.js `26.5.0` 和 pnpm `11.21.0`：
+仓库要求精确的 Node.js `26.8.1` 和 pnpm `11.21.0`：
 
 ```bash
-nvm use 26.5.0
+nvm use 26.8.1
 node --version
 pnpm --version
 ```
 
-预期分别为 `v26.5.0` 和 `11.21.0`。
+预期分别为 `v26.8.1` 和 `11.21.0`。
 
 ## 2. 创建 Business Domain
 

@@ -11,6 +11,7 @@ import { makeId } from "@agentic/shared";
 import {
   WorkflowManifestV2Schema,
   normalizeWorkflowManifest,
+  validateWorkflowHandoffs,
   type CreateWorkflowBody,
   type ProviderId,
   type SaveWorkflowBody,
@@ -1033,6 +1034,7 @@ export function validateWorkflowManifest(
 
   const issues: WorkflowValidationIssue[] = [];
   const promptScores: WorkflowPromptScore[] = [];
+  issues.push(...validateWorkflowHandoffs(manifest.agents));
   issues.push(
     ...findWorkflowSecretPolicyIssues(
       manifest,

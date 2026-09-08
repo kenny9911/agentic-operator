@@ -20,11 +20,9 @@ import type { TenantRegistry } from "@agentic/agent-kit";
 import {
   AgentInputValidationError,
   OutputSchemaValidationError,
+  WorkflowAgentHarness,
   buildManualTaskResolution,
   canonicalJson,
-  finalizeAgentExecution,
-  prepareAgentExecution,
-  resolveAgentEmissions,
   runAction,
   type ActionSpec,
 } from "@agentic/runtime";
@@ -380,6 +378,7 @@ async function executeAgent(
     input.definition,
     input.body.toolPolicy,
   );
+  const harness = new WorkflowAgentHarness(definition);
   const steps: WorkflowTestStepResult[] = [];
   const actor = definition.actor.includes("Human") ? "Human" : "Agent";
   let preparedInputs: Record<string, unknown> = {};
@@ -388,11 +387,11 @@ async function executeAgent(
   let model: string | null = null;
   let tokensIn = 0;
   let tokensOut = 0;
-  let outputAlreadyValidated = false;
+  const explicitEmits: unknown[] = [];
+  let suppressImplicit = false;
 
   try {
-    const prepared = await prepareAgentExecution({
-      definition,
+    const prepared = await harness.prepare({
       event: {
         name: input.event.name,
         data: input.event.data,
@@ -443,10 +442,15 @@ async function executeAgent(
       const typedAction = action as ActionSpec;
       const stepStarted = Date.now();
       const stepId = makeId("stp");
+      const actionLastResult =
+        index === 0 && lastResult === null
+          ? prepared.context.previousResult ?? null
+          : lastResult;
       const stepInput = {
         event: input.event.data,
         inputs: preparedInputs,
-        lastResult,
+        upstream: prepared.context.upstream,
+        lastResult: actionLastResult,
       };
       let simulation: string | null = null;
       try {
@@ -461,11 +465,11 @@ async function executeAgent(
         }
 
         if (action.type === "manual") {
-          lastResult = buildManualTaskResolution({
+          lastResult = harness.accumulateActionResult(lastResult, buildManualTaskResolution({
             taskId: makeId("tsk"),
             decision: input.body.humanDecision,
             payload: input.body.humanPayload,
-          });
+          }), { terminal: index === definition.actions.length - 1 });
           simulation = `Human wait auto-resolved as ${input.body.humanDecision}`;
           const endedAt = Date.now();
           steps.push({
@@ -507,6 +511,8 @@ async function executeAgent(
             subject: input.event.subject ?? undefined,
             correlationId: runId,
             tenantSlug: input.tenantSlug,
+            inputs: prepared.context.inputs,
+            upstream: prepared.context.upstream,
             event: {
               name: input.event.name,
               data: {
@@ -514,7 +520,7 @@ async function executeAgent(
                 inputs: preparedInputs,
               },
             },
-            lastResult,
+            lastResult: actionLastResult,
           },
           action: executionAction as ActionSpec,
           agent: {
@@ -526,7 +532,7 @@ async function executeAgent(
           autoResolveManual: true,
           finalOutput: index === definition.actions.length - 1,
           // Chat continuity for the draft run. This MUST ride the runAction
-          // call, not the prepareAgentExecution call above — that call's
+          // call, not the harness.prepare call above — that call's
           // compiled messages are discarded and only `prepared.inputs` is
           // consumed, so history wired there would ship dead. From here it
           // flows StepInput.conversationHistory -> runTenantPrompt ->
@@ -552,6 +558,10 @@ async function executeAgent(
         model = outcome.model ?? model;
         tokensIn += outcome.tokensIn ?? 0;
         tokensOut += outcome.tokensOut ?? 0;
+        if (Array.isArray(outcome.meta?.emitted)) {
+          explicitEmits.push(...outcome.meta.emitted);
+        }
+        suppressImplicit ||= outcome.meta?.suppressImplicitEmit === true;
         const attempts =
           typeof outcome.meta?.actionAttempts === "number"
             ? Math.max(1, Math.floor(outcome.meta.actionAttempts))
@@ -599,10 +609,9 @@ async function executeAgent(
             stepError?.details,
           );
         }
-        lastResult = outcome.data;
-        outputAlreadyValidated =
-          index === definition.actions.length - 1 &&
-          outcome.meta?.outputValid === true;
+        lastResult = harness.accumulateActionResult(lastResult, outcome.data, {
+          terminal: index === definition.actions.length - 1,
+        });
 
         if (branchTarget) {
           const targetIndex = definition.actions.findIndex(
@@ -660,22 +669,16 @@ async function executeAgent(
       subject: input.event.subject,
       correlationId: runId,
     };
-    const finalized = outputAlreadyValidated
-      ? {
-          output: { value: lastResult, valid: true },
-          emissions: resolveAgentEmissions({
-            definition,
-            inputs: preparedInputs,
-            outputs: lastResult,
-            source,
-          }),
-        }
-      : await finalizeAgentExecution({
-          definition,
-          candidate: lastResult,
-          inputs: preparedInputs,
-          source,
-        });
+    // Validate the actual terminal value after mappings and accumulation.
+    // A step's earlier validation receipt does not cover subsequent reshaping.
+    const finalized = await harness.finalize({
+      candidate: lastResult,
+      inputs: preparedInputs,
+      source,
+      incoming: input.event.data,
+      explicitEmits,
+      suppressImplicit,
+    });
     const emissions = finalized.emissions.map((emission) => ({
       id: makeId("evt"),
       name: emission.name,

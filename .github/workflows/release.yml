@@ -28,13 +28,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "26.5.0"
+  NODE_VERSION: "26.8.1"
   PNPM_VERSION: "11.21.0"
   REGISTRY: ghcr.io
   IMAGE_PREFIX: agentic
-  # Reviewed 2026-07-16. Dependabot/operations must update this digest through
-  # a normal code review; release never resolves the mutable 26-slim tag.
-  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:715e55e4b84e4bb0ff48e49b398a848f08e55daed8eb6a0ea1839ae53bc57583
+  # Resolved from node:26.8.1-slim on 2026-09-09. Update this digest through
+  # a normal code review; release never resolves a mutable Node tag.
+  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
 
 jobs:
   build-push:

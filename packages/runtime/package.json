@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./agent-execution": "./src/agent-execution.ts",
+    "./agent-harness": "./src/agent-harness.ts",
     "./client": "./src/client.ts",
     "./execution-trace": "./src/execution-trace.ts",
     "./manifest": "./src/manifest.ts",

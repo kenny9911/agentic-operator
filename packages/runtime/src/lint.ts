@@ -27,6 +27,7 @@
  */
 
 import type { AgentSpec, WorkflowManifest } from "./manifest.js";
+import { validateWorkflowHandoffs } from "@agentic/contracts";
 
 export interface LintIssue {
   path: string;
@@ -164,6 +165,12 @@ function hasInlineManualTaskDefinition(agent: AgentSpec): boolean {
 export function lint(manifest: WorkflowManifest, ctx: LintContext): LintResult {
   const issues: LintIssue[] = [];
   const conflicts: LintConflict[] = [];
+  // The direct manifest-import route must enforce the same graph contract as
+  // the canvas publish route. Leave unconnected legacy manifests untouched.
+  if (manifest.some((agent) => Array.isArray(agent.inputs) &&
+    agent.inputs.some((input) => input && typeof input === "object" && "workflow_handoff" in input))) {
+    issues.push(...validateWorkflowHandoffs(manifest));
+  }
 
   // ── Pre-compute the indices we'll reuse across checks ──────────────────
   // O(N + E) total: every map/set is filled once with a flat sweep so no

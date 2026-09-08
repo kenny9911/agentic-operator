@@ -123,11 +123,11 @@ import {
   canonicalJson,
   normalizeAgentForExecution,
   parseValidateAndRepairOutput,
-  prepareAgentExecution,
   resolveRestrictedJsonPath,
   validateValueAgainstJsonSchema,
   type AgentConversationTurn,
 } from "./agent-execution";
+import { WorkflowAgentHarness, workflowAgentContext } from "./agent-harness";
 import { appendRuntimeTrace, type RuntimeTraceSink } from "./execution-trace";
 import { isRequiredStepEvidenceFailure } from "./step-evidence";
 import type { ToolCallLedgerEntry } from "./run-completion-reconciliation";
@@ -1003,6 +1003,8 @@ async function callLLM(
           toolCalls.length > 0
             ? toolCalls[toolCalls.length - 1]!.output
             : ctx?.lastResult,
+        inputs: ctx?.inputs,
+        upstream: ctx?.upstream,
         config: toolConfig,
         memory: ctx?.memory, // #P0-1 — durable memory reaches each tool in the tool-use loop
       };
@@ -2110,8 +2112,7 @@ async function runTenantPrompt(
       ) {
         suppliedInputs[promptPort.id] = eventData.prompt;
       }
-      const prepared = await prepareAgentExecution({
-        definition: agent,
+      const prepared = await new WorkflowAgentHarness(agent).prepare({
         // Register and Studio both inject their already-validated input set
         // under event.data.inputs. Prefer it here so per-action input_mapping
         // is not discarded by re-applying the original trigger bindings.
@@ -2612,11 +2613,13 @@ function applyActionInputMapping(
   const mapped = mapActionRecord(mapping, {
     event: eventData,
     inputs: nestedInputs,
+    upstream: ctx.upstream ?? {},
     lastResult: ctx.lastResult,
     run: { subject: ctx.subject, correlationId: ctx.correlationId },
   });
   return {
     ...ctx,
+    inputs: action.type === "logic" ? { ...nestedInputs, ...mapped } : ctx.inputs,
     event: {
       name: ctx.event?.name ?? `action:${action.name}`,
       data:
@@ -2642,6 +2645,7 @@ function applyActionOutputMapping(
     lastResult: result.data,
     event: eventData,
     inputs: nestedInputs,
+    upstream: ctx.upstream ?? {},
     run: { subject: ctx.subject, correlationId: ctx.correlationId },
   });
   // Branch/gate control fields are runtime state, not ordinary mapped output.
@@ -2652,10 +2656,12 @@ function applyActionOutputMapping(
       if (Object.hasOwn(result.data, key)) mapped[key] = result.data[key];
     }
   }
+  const mappedMeta: Record<string, unknown> = { ...result.meta, outputMapped: true };
+  delete mappedMeta.outputValid;
   return {
     ...result,
     data: mapped,
-    meta: { ...result.meta, outputMapped: true },
+    meta: mappedMeta,
   };
 }
 
@@ -2843,6 +2849,8 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
               // boundary. The handler receives the selected arguments, not a
               // second implicit route to the entire preceding carry.
               lastResult: undefined,
+              inputs: undefined,
+              upstream: undefined,
               results: undefined,
               locals: undefined,
             }
@@ -4592,16 +4600,48 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
   return result;
 }
 
+function withWorkflowReferences(input: StepInput): StepInput {
+  // Preserve validated workflow references when a tool receives its own
+  // argument payload. The named set remains separate from model-authored args.
+  const eventData = input.ctx.event?.data ?? {};
+  const namedInputs = input.ctx.inputs ??
+    (isPlainSchema(eventData.inputs) ? eventData.inputs : undefined);
+  if (namedInputs && input.agent) {
+    let normalized: ReturnType<typeof normalizeAgentForExecution> | undefined;
+    try { normalized = normalizeAgentForExecution(input.agent); } catch { /* legacy carrier */ }
+    if (normalized?.compatibilityMode === "v2") {
+      const prefix = `${input.ctx.tenantSlug}/`;
+      const rawName = input.ctx.event?.name ?? "";
+      const references = workflowAgentContext(normalized.definition, namedInputs, {
+        name: rawName.startsWith(prefix) ? rawName.slice(prefix.length) : rawName,
+        data: eventData,
+        subject: input.ctx.subject,
+      });
+      input = { ...input, ctx: {
+        ...input.ctx,
+        inputs: references.context.inputs,
+        upstream: references.context.upstream,
+      } };
+    }
+  }
+  return input;
+}
+
 /**
  * Execute every in-process action kind behind the same manifest deadline.
  * Tool/LLM handlers receive an AbortSignal; isolated CodeAct workers receive
  * the exact millisecond budget and are hard-terminated by their worker host.
  */
 export async function runAction(input: StepInput): Promise<StepOutput> {
+  input = withWorkflowReferences(input);
+  const authoredMapping = applyActionInputMapping(input.ctx, input.action);
+  if (authoredMapping !== input.ctx) {
+    input = withWorkflowReferences({ ...input, ctx: authoredMapping });
+  }
   // v2 declarative per-action input mapping reshapes the context this action
   // sees; billing attribution gains the durable function identity. Both are
   // no-ops for legacy manifests.
-  const mappedCtx = applyActionInputMapping(input.ctx, input.action);
+  const mappedCtx = input.ctx;
   const usageAttribution = mergeUsageAttribution(input.usageAttribution, {
     correlationId: mappedCtx.correlationId,
     functionName: `manifest.${mappedCtx.tenantSlug ?? "unknown"}.${mappedCtx.agentName ?? input.agent?.name ?? "unknown"}.${input.action.name}`,

@@ -1,0 +1,5 @@
+# `AGENTIC_DATA_ROOT` stays unpinned in the root env file; artifacts are pinned cwd-relative
+
+The filesystem tools resolve their root as `AGENTIC_DATA_ROOT`, else a walk-up to `pnpm-workspace.yaml`, else `<cwd>/data`. The API dev script loads `apps/api/.env.local` and then the root `.env`, and with multiple env files the later file wins on duplicate keys. Decision (2026-07-15): keep `AGENTIC_DATA_ROOT` out of the root `.env` so the workspace walk-up is the live mechanism, and pin artifacts instead with an identical, cwd-relative `AGENTIC_ARTIFACTS_DIR=../../data/artifacts` in both files. A root pin of `./data` would win the layering and resolve against the API's working directory to `apps/api/data/`, which is the exact stranding bug pinning was meant to prevent. This supersedes the older instruction in `AGENTS.md` to keep the data root pinned; any value that is re-pinned must be correct from the API's cwd and identical in both files.
+
+_Backfilled 2026-09-07 from `CLAUDE.md` ("`fs.*` data root") and `docs/architecture.md` §9._

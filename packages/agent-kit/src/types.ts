@@ -58,6 +58,10 @@ export interface ToolContext {
    * pipe data forward without explicit wiring in the manifest.
    */
   lastResult?: unknown;
+  /** Validated workflow inputs retained when a tool receives its own args. */
+  inputs?: Record<string, unknown>;
+  /** Connected outputs, addressed by producer agent id and output port id. */
+  upstream?: Record<string, Record<string, unknown>>;
   /**
    * Raw outputs of all completed plan steps, keyed by their stable `stepId` /
    * manifest `result_key`. Unlike `lastResult`, this survives intervening steps
