@@ -462,3 +462,26 @@ R1-02 说「以需求到货日期为终点按配置的标准周期逐级倒排�
 ——定级用的是模型记忆里的数，不是 `queryAlertThresholdConfig` 返回的配置。契约已改为必填。
 
 **平台侧现状**：两条都写进了 `overlays/hc-procurement.json` 的输出契约。
+
+---
+
+## C-13 调拨单的行结构在 swagger 里没有定义
+
+**现状**：方案③落地调用 `createTransactionOrder`。真实 ERP 拒绝时点名了 6 个必填字段，
+其中 `lineList` 的元素类型是 `OrderCreatePubLineDTO`——而该 schema 在 swagger 里标着
+`x-unresolved: true`，**没有任何字段定义**。
+
+**已解决的部分**：
+- `uniqueSequenceNumber` 由运行时用 runId 填充。ERP 自己要求这个字段，正好是它的幂等键：
+  编译出的外部动作每次运行只发一次该写调用，runId 稳定且唯一，Inngest 重放拿到同一个值，
+  由 ERP 拒掉重复建单，而不是造出第二张单。
+- `sourceSystemCode` / `txnOrderTypeCode` / `transactionTypeCode` / `autoSubmit` 是 ERP
+  **实例**配置值（swagger 里既无枚举也无说明），改由环境变量提供，未配置则整字段省略——
+  让 ERP 点名报缺，好过我们编一个值建出错误的单据类型。
+
+**仍缺**：
+- `lineList` 的行字段（swagger `x-unresolved`）——**需向接口方索取**，与 `queryPoLine`
+  的入参是同一类缺口。
+- 上面三个 *Code 的合法取值。
+- `submittedBy` 在 `OrderCreateDTO` 里是 `integer(int64)`，即用户 ID 而非姓名；
+  当前链路里拿到的是登录名（如 admin），需要一次 ID 映射。

@@ -44,6 +44,14 @@ export interface MetaerpRoute {
    * 才能把不可回滚的动作限制在真正需要的那一个上。
    */
   allow_real_write?: boolean;
+  /**
+   * 让运行时把稳定的幂等键写进这个字段。
+   *
+   * ERP 自己要求 uniqueSequenceNumber，这正好解决 Inngest 重放的问题：编译出的外部
+   * 动作每次运行只发一次这个写调用，所以 runId 就是稳定且唯一的键——重放拿到同一个
+   * 值，ERP 据此拒掉重复建单，而不是造出第二张单。
+   */
+  idempotency_field?: string;
   note?: string;
 }
 
@@ -100,6 +108,10 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
     ...(routeDefaults ? { defaults: routeDefaults as Record<string, unknown> } : {}),
     ...((raw as { allow_real_write?: unknown }).allow_real_write === true
       ? { allow_real_write: true }
+      : {}),
+    ...(typeof (raw as { idempotency_field?: unknown }).idempotency_field === "string" &&
+    (raw as { idempotency_field: string }).idempotency_field.trim()
+      ? { idempotency_field: (raw as { idempotency_field: string }).idempotency_field.trim() }
       : {}),
     ...(typeof raw.env === "string" && raw.env.trim() ? { env: raw.env.trim() } : {}),
     ...(typeof raw.note === "string" ? { note: raw.note } : {}),
@@ -168,11 +180,39 @@ export interface ResolvedRoute extends MetaerpRoute {
  * stay on the mock — which is how the platform keeps simulating the reads the
  * real ERP has no interface for.
  */
+/**
+ * 展开 defaults 里的 `{"$env":"NAME"}`。
+ *
+ * txnOrderTypeCode 这类是 ERP **实例**的配置值，不同环境不同，不该硬写进版本库，
+ * 更不该由模型猜——猜错了轻则再被拒，重则在真实 ERP 里建出错误的单据类型。
+ * 环境变量没配就整个字段省略：ERP 自己的报错会点名缺哪个字段，比我们编一个值好。
+ */
+function expandDefaults(
+  defaults: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!defaults) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(defaults)) {
+    if (value && typeof value === "object" && !Array.isArray(value) && "$env" in value) {
+      const name = (value as { $env?: unknown }).$env;
+      const resolved =
+        typeof name === "string" ? process.env[name]?.trim() : undefined;
+      if (resolved) out[key] = resolved;
+      continue;
+    }
+    out[key] = value;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 export function resolveRoute(
   operation: string,
   kind: "query" | "write",
 ): ResolvedRoute {
-  const declared = loadMetaerpRoutes().get(operation) ?? { transport: "mock" as const };
+  const stored = loadMetaerpRoutes().get(operation);
+  const declared: MetaerpRoute = stored
+    ? { ...stored, ...(stored.defaults ? { defaults: expandDefaults(stored.defaults) } : {}) }
+    : { transport: "mock" as const };
   if (declared.transport === "mock") return declared;
   if (metaerpTransportMode() !== "real") {
     return {

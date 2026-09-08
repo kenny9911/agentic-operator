@@ -369,6 +369,18 @@ export const metaerpInvoke = defineTool({
 
     if (route.transport !== "mock") {
       const credentials = resolveMetaerpCredentials(route.env);
+      // 幂等键：ERP 自己要求 uniqueSequenceNumber，而编译出的外部动作每次运行只发
+      // 一次这个写调用——所以 runId 就是稳定且唯一的键。Inngest 重放拿到同一个值，
+      // 由 ERP 拒掉重复建单，而不是造出第二张单。没有 runId 就不填：宁可让 ERP 报
+      // 缺字段，也不要用一个每次都不同的值把幂等性悄悄变成空话。
+      const idempotencyKey = route.idempotency_field && ctx.runId ? ctx.runId : null;
+      const routeDefaults =
+        route.defaults || idempotencyKey
+          ? {
+              ...(route.defaults ?? {}),
+              ...(idempotencyKey ? { [route.idempotency_field!]: idempotencyKey } : {}),
+            }
+          : undefined;
       const call =
         route.transport === "openapi" ? callMetaerpOpenapi : callMetaerpUiapi;
       const result = await call({
@@ -377,7 +389,7 @@ export const metaerpInvoke = defineTool({
         payload,
         credentials,
         timeoutMs,
-        ...(route.defaults ? { defaults: route.defaults } : {}),
+        ...(routeDefaults ? { defaults: routeDefaults } : {}),
       });
       return {
         data: result.data,
