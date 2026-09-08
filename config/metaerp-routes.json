@@ -118,6 +118,9 @@
         },
         "autoSubmit": {
           "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
+        },
+        "submittedBy": {
+          "$env": "METAERP_TRANSFER_SUBMITTED_BY"
         }
       },
       "note": "演示「执行调拨」需要在真实 ERP 落一张调拨单，故单独放行写操作；uniqueSequenceNumber 由运行时用 runId 填充（重放稳定，防重复建单）；三个 *Code 是 ERP 实例配置值，取自环境变量，未配置则省略该字段"

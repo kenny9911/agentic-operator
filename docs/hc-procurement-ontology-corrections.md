@@ -479,9 +479,22 @@ R1-02 说「以需求到货日期为终点按配置的标准周期逐级倒排�
   **实例**配置值（swagger 里既无枚举也无说明），改由环境变量提供，未配置则整字段省略——
   让 ERP 点名报缺，好过我们编一个值建出错误的单据类型。
 
-**仍缺**：
-- `lineList` 的行字段（swagger `x-unresolved`）——**需向接口方索取**，与 `queryPoLine`
-  的入参是同一类缺口。
-- 上面三个 *Code 的合法取值。
-- `submittedBy` 在 `OrderCreateDTO` 里是 `integer(int64)`，即用户 ID 而非姓名；
-  当前链路里拿到的是登录名（如 admin），需要一次 ID 映射。
+**行结构已由实测反推出来**（swagger 帮不上忙，是拿 ERP 自己的报错一层层逼出来的）：
+
+```
+lineList[]: itemCode, organizationCode, storehouseCode,
+            transactionQuantity, transactionUomCode,
+            requiredDate,                 ← 行上也必须有，与头同名同值
+            sourceObjectNumber, sourceObjectLineId
+```
+
+期间纠正的两处：`autoSubmit` 是 **Y/N** 不是 `Yes`（430437「长度不得超过 1」）；
+行的日期字段叫 `requiredDate`，不是 `requirementDate` 或 `needByDate`。
+
+**已确认可用的配置值**：`sourceSystemCode=LYY2`、`txnOrderTypeCode=在途交易出货`、
+`autoSubmit=Y`、`submittedBy=1`。
+
+**唯一仍缺**：`transactionTypeCode` 的合法取值。`在途` 被拒（430008 The transaction
+type code in the order is invalid），另试 在途交易出货 / 在途出货 / 在途调拨 /
+调拨出库 / TRANSIT / TRANSFER_OUT 均被同一错误拒绝。这是 ERP 里配置的值，**需向接口方
+索取**——它是这张调拨单落地前的最后一个未知量。
