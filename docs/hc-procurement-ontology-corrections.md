@@ -510,27 +510,33 @@ lineList[]: itemCode, organizationCode, storehouseCode,
     sourceObjectNumber, sourceObjectLineId
 ```
 
-**行的调入库位仍缺**。字段名确认是 `transferStorehouseCode`（头与其余行字段都已跑通），
-但取值没有可用的：
+**调拨是跨库存组织的，不是组织内换库位**——这是本轮最关键的发现，靠 ERP 自己的报错
+逼出来的：给 `transferStorehouseCode` 填同组织下的另一个库位（Stage / 100000）时返回
+`transfer organization code is same with organization code.`。
 
-- `transferStorehouseCode` = `300000`（与调出库相同）→ `The transfer storehouse code is invalid.`
-- `transferStorehouseCode` = `LYY1` / `LYY2` → 同一错误
-- `storehouseCode`（调出库）= `LYY1` / `LYY2` → `storehouse code is invalid`
+`INOT` + `INTRANSIT_ISSUE` = 在途交易出货，出/入必须是**不同的库存组织**。
+`LYY1` / `LYY2` 正是库存组织编码（不是库位编码，也不是 sourceSystemCode 那个 LYY2）。
 
-即 **LYY1 / LYY2 不是库位编码**（`LYY2` 是 sourceSystemCode，两者不是一回事）。
+调入方要的是**一整套镜像字段**，只给一个编码过不了校验：
 
-直接查库存确认：管理单元 1000 / 库存组织 YF1 下，7 个演示物料**全部只存放在
-`300000 成品库` 一个库位**，没有第二个库位。调拨需要一出一入两个库位，所以这不是
-字段名或编码问题，而是 **v15 演示数据里缺一个可调入的库位**。
+```
+transferOrganizationCode, transferStorehouseCode, transferLocatorCode,
+transferPropertyType/Code/TxnCode, transferPrivateType/Code/TxnCode,
+transferStorehouseType, transferInventoryStatusCode, transferLotNumber
+```
 
-> 一次判读教训：早前一轮把 5 个假设塞进同一张单的 5 行，其中一行的
-> `organizationCode` 非法，ERP 把整批报成了同一个错误（"querying limit between item
-> and storehouse limit"），导致误判「LYY1 是合法库位、只差限额配置」。**每行只改一个
-> 变量**之后才看清真实原因。批量探测要保证每行只有一个自变量。
+字段全集来自 `OrderLineDTO`（OrderOpenAPI yaml，57 字段）——请求用的
+`OrderCreatePubLineDTO` 标着 `x-unresolved`，但两者结构一致，可直接照用。
 
-**需业务侧在 v15 补的数据**：库存组织 YF1 下新增一个库位，并为演示物料
-（10000007/8/9）在该库位上配置库存限额；或给出一个已存在的、可作为调入方的库位编码。
+沿途还确认了一条业务约束：`source and target asset storehouse flag not same.`
+——资产存储库与非资产存储库之间不能互调（成品库=资产，费用库=非资产）。
 
-**探测残留**：v15 中留下 5 张只有头、行为 FAILED 的调拨单
+**唯一仍缺**：物料在**目标库存组织**下的配置。填齐上述字段后报错变为
+`An error occurred when querying limit between item and storehouse limit`，
+即演示物料（10000008 等）在 LYY1/LYY2 下没有建立物料-库位关系/库存限额。
+属 ERP 主数据，需业务侧补。
+
+**探测残留**：v15 中共 8 张只有头、行为 FAILED 的调拨单
 （1992656320092771594 / 1992657793393300749 / 1992656606487975180 /
-1992656320092837130 / 1992657793393366285），演示前建议清理。
+1992656320092837130 / 1992657793393366285 / 1992656606488040716 /
+1992657793393431821 / 1992656321485542667），演示前建议清理。
