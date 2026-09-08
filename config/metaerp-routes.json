@@ -10,7 +10,19 @@
     "queryPbpHeader": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
-      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值"
+      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值",
+      "tenant_overrides": {
+        "hc-digital-worker": {
+          "transport": "mock",
+          "overrides": {
+            "pbpHeaderIdList": [
+              "PBP-2027-0101",
+              "PBP-2027-0102"
+            ]
+          },
+          "note": "演示锚点：只处理这两份已审批的采购计划。放 overrides 而不是 defaults——defaults 只在调用方没给时才补，挡不住模型自己编一个过滤条件；场景一实测里它编过一个不存在的单号，整条链路建立在虚构数据上。第三份 PBP-2027-0199 是草稿，本就不该进扫描范围，锚点一并把它挡在外面（它没有 APPROVED_AT，会让逐行投影整批失败）。"
+        }
+      }
     },
     "queryOpenPbpHeader": {
       "transport": "openapi",
@@ -19,7 +31,19 @@
     },
     "queryPbpLine": {
       "transport": "openapi",
-      "path": "/hsrm/srm/openapi/v1/queryPbpLine"
+      "path": "/hsrm/srm/openapi/v1/queryPbpLine",
+      "tenant_overrides": {
+        "hc-digital-worker": {
+          "transport": "mock",
+          "overrides": {
+            "pbpHeaderIdList": [
+              "PBP-2027-0101",
+              "PBP-2027-0102"
+            ]
+          },
+          "note": "演示锚点：只处理这两份已审批的采购计划。放 overrides 而不是 defaults——defaults 只在调用方没给时才补，挡不住模型自己编一个过滤条件；场景一实测里它编过一个不存在的单号，整条链路建立在虚构数据上。第三份 PBP-2027-0199 是草稿，本就不该进扫描范围，锚点一并把它挡在外面（它没有 APPROVED_AT，会让逐行投影整批失败）。"
+        }
+      }
     },
     "queryOpenPbpLine": {
       "transport": "openapi",

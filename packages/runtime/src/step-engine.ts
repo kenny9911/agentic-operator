@@ -2381,16 +2381,50 @@ async function runTenantPrompt(
     validationMeta = { rawResponse: result.text };
   } else if (agent?.generated === true && !prompt.output) {
     // Ontology-compiled generated agents (redesign 2026-08-19 §G1) publish
-    // their logic result as the emitted-event payload and downstream steps
-    // address into it (`emit_payload_from: results.<id>`, condition paths
-    // like `input.gap_report.…`). Mirror the v2 behaviour: prefer structured
-    // JSON when the model returned it, keep raw text otherwise. Legacy
-    // (non-generated) v1 agents keep the historical raw-text result.
+    // their logic result as the emitted-event payload, and downstream steps
+    // address INTO it (`emit_payload_from: results.<id>`, conditions like
+    // `input.gap_report.…`). Prefer structured JSON; keep raw text otherwise,
+    // which some generated agents legitimately return.
+    //
+    // An ARRAY is the one shape that can never be an answer here: nothing
+    // downstream can address into it. Accepting one is how a live scan agent
+    // published a quoted TOOL RESULT as its own output — the model ran out of
+    // tool-loop turns, answered in prose that quoted the rows it had just
+    // projected, and the extractor returned the first balanced slice in that
+    // prose (the quoted array). Four downstream agents then ran "ok" on it,
+    // every one reading undefined. Fail here, where the reason is still
+    // legible, rather than three hops later as empty fields.
+    let parsedOutput: unknown;
     try {
-      validated = parseStructuredJson(result.text);
+      parsedOutput = parseStructuredJson(result.text);
     } catch {
-      validated = result.text;
+      parsedOutput = result.text;
     }
+    if (Array.isArray(parsedOutput)) {
+      return {
+        ok: false,
+        type: "logic",
+        data: result.text,
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        model: result.model,
+        provider: result.provider,
+        meta: {
+          error: "generated_output_is_an_array",
+          detail:
+            `本步的输出必须是一个 JSON 对象（顶层键即输出契约里的字段名），` +
+            `实际解析出的是数组（长度 ${parsedOutput.length}），下游无法按字段寻址。` +
+            `常见原因：工具循环轮次用尽后模型改用散文作答，提取器抓到的是它在文中` +
+            `引述的工具返回。`,
+          terminalError: result.terminalError,
+          turns: result.turns,
+          prompt: prompt.name,
+          toolCalls: result.toolCalls,
+          sandboxDispatches,
+        },
+      };
+    }
+    validated = parsedOutput;
     validationMeta = { rawResponse: result.text };
   } else if (prompt.output) {
     try {

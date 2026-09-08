@@ -254,3 +254,39 @@ plan_line_id 等标识。
 
 **平台侧现状**：示例补 `scan_date=2027-01-05`；`DEMAND_PLAN_APPROVED` 先指向 mock 的
 `PBP-2027-0101`。切回真实 ERP 时改回 `100020260903000006`。
+
+## D-16 扫描步骤跑了 9 分 20 秒，输出却是它引述的工具返回
+
+**实跑**（run-749509352229，2026-09-09 07:25→07:34）：单步 65 次工具调用、
+16 次 queryPbpHeader、9 次 queryPbpLine，**39 次 records.project 里 37 次报错**。
+第 16 轮（轮次上限）模型才作答，而且是散文夹 JSON。四条根因：
+
+1. `records.project` 过严：草稿计划 `PBP-2027-0199` 没有 `APPROVED_AT`，逐行投影
+   直接整批失败。模型在最后那段文字里自己说出了困境——「由于草稿行缺少这个字段导致
+   records.project 失败……records.project 没有过滤功能」。
+2. 报错不可执行：上一次投影失败后，它的错误信封成了下一次的 `lastResult`，报错只说
+   「上一个结果的顶层为 [error]」，模型原样重试了 11 次。
+3. 演示范围没钉住：路由表的 `defaults`/`overrides` 只在真实通道生效，mock 分支直接
+   把调用方载荷原样发出——于是全量扫描，草稿计划也进了范围。
+4. 轮次耗尽后模型改用散文作答，`parseStructuredJson` 取的是散文里**第一个**配平的
+   JSON 片段——正是它引述的工具返回行数组。这个数组成了本步输出，
+   `analyzeDemandMerge` / `verifyInventoryAvailability` / `derivePurchaseSchedule` /
+   `generateExecutionPlanDraft` 四个下游全部「成功」跑在 `{value:[...]}` 上，
+   每一个读到的都是 undefined。
+
+**平台侧现状**：
+- `records.project`：字段只在部分行缺失时填 null 并在 `missing_fields` 里点名；
+  整列都找不到才报错（那是映射写错）。上一个工具失败时，报错改成「重试本工具不会有
+  任何变化——请先重新调用对应的 query」。
+- `metaerp.invoke`：mock 分支同样应用路由表的 `defaults`/`overrides`。演示锚点是
+  「这次演示只处理哪几单」的声明，不该因为服务端换成 mock 就失效。行级注入
+  （`line_defaults`/`line_overrides`）仍只对真实通道生效——它注入的是 metaERP 的
+  单据行编码。
+- `queryPbpHeader`/`queryPbpLine` 对 hc-digital-worker 钉在 `PBP-2027-0101` /
+  `PBP-2027-0102`（放 `overrides`，调用方不可覆盖），草稿计划一并挡在范围外。
+- 运行时：generated 步骤解析出**数组**时判失败（`generated_output_is_an_array`）。
+  数组无法被 `results.<id>.<field>` 寻址，不可能是本步答案；接受它就等于让四个下游
+  跑在垃圾数据上，而失败要在原因还看得见的地方发生。纯文本仍然放行——部分 generated
+  智能体确实以文本作答。
+- 合约补「取数纪律」：三个查询第一轮并发发出，每个查询紧跟一次投影，全程 6 轮以内；
+  最终答复必须是且只是一个 JSON 对象。

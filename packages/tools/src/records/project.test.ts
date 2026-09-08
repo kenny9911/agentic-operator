@@ -57,16 +57,20 @@ describe("projectRecords", () => {
       .toThrow(/不是数组[\s\S]*totalRecords, records/);
   });
 
-  it("names the row and key when a line lacks a mapped field", () => {
-    const broken = {
+  it("reports a cell that only some rows carry, rather than failing the batch", () => {
+    const partial = {
       records: [{ prNumber: "P1", prLineList: [{ prLineId: "1", itemCode: "a" }, { prLineId: "2" }] }],
     };
-    expect(() =>
-      projectRecords(broken, {
-        source: "records[0].prLineList",
-        fields: { id: "prLineId", item: "itemCode" },
-      }),
-    ).toThrow(/第 1 行没有字段 "itemCode"/);
+    const out = projectRecords(partial, {
+      source: "records[0].prLineList",
+      fields: { id: "prLineId", item: "itemCode" },
+    });
+    expect(out.rows).toEqual([
+      { id: "1", item: "a" },
+      { id: "2", item: null },
+    ]);
+    // 「哪一列有缺」必须说出来，否则 null 分不清是「没有」还是「映射写错了」。
+    expect(out.missing_fields).toEqual(["item"]);
   });
 
   it("refuses to run without a previous tool result", () => {
@@ -75,5 +79,45 @@ describe("projectRecords", () => {
 
   it("requires a non-empty field map", () => {
     expect(() => projectRecords(PR_RESPONSE, { source: "records", fields: {} })).toThrow(/fields/);
+  });
+});
+
+describe("部分行缺字段不该毁掉整批投影", () => {
+  /** 三份计划头，其中一份是草稿——草稿没有审批时间。 */
+  const HEADERS = {
+    rows: [
+      { PBP_HEADER_ID: "PBP-2027-0101", PLAN_NO: "PBP-2027-0101", STATUS: "已批准", APPROVED_AT: "2026-11-28T16:30:00+08:00" },
+      { PBP_HEADER_ID: "PBP-2027-0102", PLAN_NO: "PBP-2027-0102", STATUS: "已批准", APPROVED_AT: "2026-11-29T10:10:00+08:00" },
+      { PBP_HEADER_ID: "PBP-2027-0199", PLAN_NO: "PBP-2027-0199", STATUS: "草稿" },
+    ],
+  };
+  const FIELDS = { plan_id: "PBP_HEADER_ID", plan_no: "PLAN_NO", status: "STATUS", approved_at: "APPROVED_AT" };
+
+  it("fills the absent cell with null and names the field, instead of throwing", () => {
+    // 实跑里这一条让整批投影失败，模型原样重试了 8 次。
+    const out = projectRecords(HEADERS, { source: "rows", fields: FIELDS });
+    expect(out.row_count).toBe(3);
+    expect(out.rows[2]).toEqual({
+      plan_id: "PBP-2027-0199",
+      plan_no: "PBP-2027-0199",
+      status: "草稿",
+      approved_at: null,
+    });
+    expect(out.missing_fields).toEqual(["approved_at"]);
+  });
+
+  it("still fails closed when a column is absent from every row", () => {
+    // 整列缺失是映射写错了——静默返回一列 null 比报错糟得多。
+    expect(() =>
+      projectRecords(HEADERS, { source: "rows", fields: { planner: "PLANNER" } }),
+    ).toThrow(/没有任何一行带这些字段[\s\S]*PLANNER/);
+  });
+
+  it("tells the model to re-query instead of retrying, when the previous call failed", () => {
+    // 上一次调用失败时，它的错误信封就是这一次的 lastResult；原来的报错让模型
+    // 原样重试了 11 次。
+    expect(() =>
+      projectRecords({ error: "metaerp.invoke: ... 返回 status=ERROR" }, { fields: FIELDS }),
+    ).toThrow(/请先重新调用对应的 query 操作/);
   });
 });

@@ -643,6 +643,15 @@ export const metaerpInvoke = defineTool({
       };
     }
 
+    // 路由表的 defaults / overrides 对 mock 同样生效：演示锚点是「这次演示只处理
+    // 哪几单」的声明，不该因为服务端换成 mock 就失效。实测场景二对着 mock 全量扫，
+    // 模型在三份计划头（含一份草稿）上反复投影、重试 37 次，单步跑了 7.5 分钟。
+    // 行级注入（line_defaults / line_overrides）仍只对真实通道生效——它注入的是
+    // metaERP 的单据行编码，mock 不需要也不认。
+    const scopedMockPayload =
+      route.defaults || route.overrides
+        ? { ...(route.defaults ?? {}), ...payload, ...(route.overrides ?? {}) }
+        : payload;
     const baseUrl = resolveBaseUrl(config);
     const url = `${baseUrl}${entry.path}`;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -655,7 +664,7 @@ export const metaerpInvoke = defineTool({
       response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(scopedMockPayload),
         signal,
       });
     } catch (error) {
