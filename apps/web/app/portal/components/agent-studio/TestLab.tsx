@@ -89,6 +89,9 @@ import {
   testModelOptions,
 } from "./test-model-selector";
 import { studioLocale, studioUi, type StudioTranslate } from "./copy";
+import { RunInputPanel } from "@/app/portal/components/RunInputPanel";
+import { useRunInput } from "@/lib/hooks/useRunInput";
+import { hasRunInputAttachmentText, runInputPrompt } from "@/lib/run-input";
 
 type ResultTab = "chat" | "trace" | "output" | "logs" | "artifacts";
 const RUN_PROVIDERS = ["", ...PROVIDER_IDS];
@@ -937,6 +940,10 @@ export function TestLab({
   });
   const cancelRun = useCancelRun();
   const effectiveProvider = provider || definition.provider;
+  const runInput = useRunInput({
+    provider: effectiveProvider || undefined,
+    model: model.trim() || (!provider || provider === definition.provider ? definition.model : undefined),
+  });
   const availableModels = useAvailableModels(effectiveProvider);
   const hadDraft = useRef(Boolean(draft));
   const dispatchInFlightRef = useRef(false);
@@ -1221,7 +1228,8 @@ export function TestLab({
       : !liveVersionId;
   const submitDisabled =
     !canRun ||
-    !prompt.trim() ||
+    runInput.blocked ||
+    (!prompt.trim() && !hasRunInputAttachmentText(runInput.value?.attachments)) ||
     missingRequired.length > 0 ||
     runtimeOverridesInvalid ||
     draftNotReady ||
@@ -1260,7 +1268,9 @@ export function TestLab({
   async function run() {
     if (submitDisabled || dispatchInFlightRef.current) return;
     dispatchInFlightRef.current = true;
-    const submittedPrompt = prompt;
+    const submittedPrompt = prompt.trim() ? prompt : runInputPrompt(
+      prompt, runInput.value?.attachments, t("runInput.fileOnlyPrompt"),
+    );
     const requestedTarget: CreateAgentRunRequest["target"] | null = sessionId
       ? conversationTarget
       : target === "draft" && draft
@@ -1291,6 +1301,7 @@ export function TestLab({
             ? { triggerEvent: requestedTriggerEvent }
             : {}),
           prompt: submittedPrompt,
+          runInput: runInput.value,
           inputs,
           toolPolicy,
           runtimeOverrides: {
@@ -1616,6 +1627,7 @@ export function TestLab({
                 )}
               </div>
             )}
+            <RunInputPanel editor={runInput} disabled={conversationBusy} hidePrompt />
             {triggerEvents.length > 0 && (
               <Field
                 label={studioUi(t, "Trigger event")}

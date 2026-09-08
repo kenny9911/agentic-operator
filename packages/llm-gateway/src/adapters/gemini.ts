@@ -21,6 +21,7 @@ import {
   type ProviderAdapter,
 } from "../types";
 import { LLMError, classifyHttpError } from "../errors";
+import { assertMediaMessages } from "../media";
 
 const DEFAULT_MODEL = "gemini-3.5-flash";
 
@@ -100,6 +101,7 @@ function partitionForGemini(messages: ChatMessage[]): {
   systemInstruction: string | undefined;
   contents: Content[];
 } {
+  assertMediaMessages(messages, "gemini");
   const systemParts: string[] = [];
   const contents: Content[] = [];
   const toolNamesById = new Map<string, string>();
@@ -116,6 +118,8 @@ function partitionForGemini(messages: ChatMessage[]): {
       for (const block of m.content) {
         if (block.type === "text") {
           parts.push({ text: block.text });
+        } else if (block.type === "image" || block.type === "document") {
+          parts.push({ inlineData: { mimeType: block.mimeType, data: block.data } });
         } else if (block.type === "tool_use") {
           toolNamesById.set(block.id, block.name);
           parts.push({

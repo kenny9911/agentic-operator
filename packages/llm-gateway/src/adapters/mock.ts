@@ -25,6 +25,7 @@ import {
   type ProviderAdapter,
   type ToolCall,
 } from "../types";
+import { assertMediaMessages } from "../media";
 
 const DEFAULT_MODEL = "mock-model-v1";
 
@@ -496,6 +497,7 @@ export class MockAdapter implements ProviderAdapter {
   readonly defaultModel = DEFAULT_MODEL;
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
+    assertMediaMessages(req.messages, "mock", false);
     const start = Date.now();
     // Tiny simulated latency so durations are non-zero.
     await new Promise((r) => setTimeout(r, 8));

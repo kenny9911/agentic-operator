@@ -365,6 +365,8 @@ export interface GeneratedCodeProductionPolicy {
 
 export interface RunGeneratedCodeOptions {
   systemPrompt?: string;
+  /** Reviewed user input and scoped history, included in each reasoning call. */
+  runInputMessage?: string;
   tenantSlug?: string;
   /** Internal tenant id paired with tenantSlug. Required whenever the default
    * CodeAct host invokes the LLM so budget and telemetry scope cannot be bypassed. */
@@ -832,7 +834,9 @@ export async function runGeneratedCodeIsolated(
       case "reason": {
         const systemPrompt =
           typeof args[0] === "string" ? args[0] : (options.systemPrompt ?? "");
-        const reasonInput = args[1];
+        const reasonInput = options.runInputMessage
+          ? { input: args[1], userContext: options.runInputMessage }
+          : args[1];
         if (hostRuntime?.reason)
           return hostRuntime.reason(systemPrompt, reasonInput);
         const gateway = getRuntimeGateway();

@@ -21,6 +21,7 @@ import {
   type ToolUseBlock,
 } from "../types";
 import { LLMError, classifyHttpError } from "../errors";
+import { assertMediaMessages } from "../media";
 
 /**
  * Map a gateway-wide ChatMessage onto the OpenAI tool-aware message shape.
@@ -44,7 +45,11 @@ type OAIReasoningReplayFields = {
 };
 
 type OAIChatMsg =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | {
+      role: "user";
+      content: string | OpenAI.Chat.Completions.ChatCompletionContentPart[];
+    }
   | (OAIReasoningReplayFields & {
       role: "assistant";
       content: string;
@@ -224,7 +229,38 @@ function mapMessageToOpenAI(
     ];
   }
 
-  // system / user with structured content — flatten to text.
+  // Keep native media parts in order with the user's text. Text-only messages
+  // retain their existing string wire representation.
+  if (
+    role === "user" &&
+    content.some((block) => block.type === "image" || block.type === "document")
+  ) {
+    return [
+      {
+        role,
+        content: content.map(
+          (block): OpenAI.Chat.Completions.ChatCompletionContentPart => {
+            if (block.type === "image") {
+              return {
+                type: "image_url",
+                image_url: { url: `data:${block.mimeType};base64,${block.data}` },
+              };
+            }
+            if (block.type === "document") {
+              return {
+                type: "file",
+                file: {
+                  filename: block.name,
+                  file_data: `data:${block.mimeType};base64,${block.data}`,
+                },
+              };
+            }
+            return { type: "text", text: flattenContentToText([block]) };
+          },
+        ),
+      },
+    ];
+  }
   return [{ role, content: flattenContentToText(content) }];
 }
 
@@ -233,6 +269,7 @@ export function mapOpenAICompatibleMessages(
   messages: ChatRequest["messages"],
   provider?: ProviderId,
 ): unknown[] {
+  assertMediaMessages(messages, provider ?? "openai");
   return messages.flatMap((message) =>
     mapMessageToOpenAI(
       message.role,

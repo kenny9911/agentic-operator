@@ -14,7 +14,7 @@ import {
 } from "@agentic/llm-gateway";
 import { agents, auditLog, events, eventTypes, getDb } from "@agentic/db";
 import { makeId } from "@agentic/shared";
-import { IngestEventBody, ListEventsQuery } from "@agentic/contracts";
+import { IngestEventBody, ListEventsQuery, RunInputContextSchema } from "@agentic/contracts";
 import { requirePermission } from "../../plugins/rbac";
 import { listRecentEvents, resolvePayloadRef } from "../../queries/runs";
 import {
@@ -369,7 +369,7 @@ export async function eventsRoutes(app: FastifyInstance) {
       id: eventId,
       name: bareName,
       subject: parsed.subject,
-      data: logicalPayload,
+      data: { ...logicalPayload, ...(parsed.runInput ? { __runInput: parsed.runInput } : {}) },
       ts: Date.now(),
     });
 
@@ -405,6 +405,7 @@ export async function eventsRoutes(app: FastifyInstance) {
     const inngestData: Record<string, unknown> = {
       ...logicalPayload,
       ...deliveryPrivateMetadata,
+      ...(parsed.runInput ? { __runInput: parsed.runInput } : {}),
       subject: parsed.subject,
       __triggerEventId: eventId,
       __correlationId: effectiveCorrelationId,
@@ -580,6 +581,9 @@ export async function eventsRoutes(app: FastifyInstance) {
       // collide on the legacy `${id}-replay-${Date.now()}` pattern.
       const newId = makeId("evt");
       const correlationId = makeId("cor");
+      const runInput = RunInputContextSchema.optional().parse(
+        payload && typeof payload === "object" ? (payload as Record<string, unknown>).__runInput : undefined,
+      );
       const logicalPayload = buildCanonicalEventPayload({
         eventName: row.name,
         eventId: newId,
@@ -592,6 +596,7 @@ export async function eventsRoutes(app: FastifyInstance) {
       // points at a missing event and the replayed run never starts.
       const replayData = {
         ...logicalPayload,
+        ...(runInput ? { __runInput: runInput } : {}),
         subject: row.subject ?? undefined,
         ...(auth.tenantSlug === "zhaopin"
           ? { entity_id: row.subject ?? newId }
@@ -611,7 +616,7 @@ export async function eventsRoutes(app: FastifyInstance) {
         id: newId,
         name: row.name,
         subject: row.subject ?? undefined,
-        data: logicalPayload,
+        data: { ...logicalPayload, ...(runInput ? { __runInput: runInput } : {}) },
         ts: Date.now(),
       });
       db.insert(events)

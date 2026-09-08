@@ -73,6 +73,8 @@ export type {
   ProviderId,
   ChatContentBlock,
   TextBlock,
+  ImageBlock,
+  DocumentBlock,
   ToolUseBlock,
   ToolResultBlock,
   ToolDef,

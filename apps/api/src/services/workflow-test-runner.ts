@@ -23,6 +23,9 @@ import {
   WorkflowAgentHarness,
   buildManualTaskResolution,
   canonicalJson,
+  createRunInputMemory,
+  readRunInputHistory,
+  rememberRunInput,
   runAction,
   type ActionSpec,
 } from "@agentic/runtime";
@@ -47,6 +50,7 @@ interface QueuedTestEvent {
 }
 
 interface ExecuteAgentInput {
+  workflowSlug: string;
   definition: AgentDefinitionV2;
   event: QueuedTestEvent;
   tenantId: string;
@@ -389,8 +393,18 @@ async function executeAgent(
   let tokensOut = 0;
   const explicitEmits: unknown[] = [];
   let suppressImplicit = false;
+  // Draft runs share continuity only within this workflow's draft namespace.
+  // They must never train the live workflow's context from simulated effects.
+  const contextMemory = createRunInputMemory({
+    tenantId: input.tenantId,
+    agentName: `draft:${input.workflowSlug}:${input.definition.id}:${input.definition.name}`,
+    contextKey: input.body.runInput?.contextKey,
+    runId,
+    requireSuccessfulRun: false,
+  });
 
   try {
+    const runInputHistory = await readRunInputHistory(contextMemory, runId);
     const prepared = await harness.prepare({
       event: {
         name: input.event.name,
@@ -505,6 +519,7 @@ async function executeAgent(
         }
 
         const outcome = await runAction({
+          runInputHistory,
           ctx: {
             agentName: definition.name,
             actionName: action.name,
@@ -686,6 +701,14 @@ async function executeAgent(
       outputPortIds: emission.outputPortIds,
     }));
     const endedAt = Date.now();
+    await rememberRunInput(contextMemory, {
+      runId,
+      input: input.body.runInput ? {
+        ...input.body.runInput,
+        prompt: input.body.runInput.prompt ?? (typeof input.event.data.prompt === "string" ? input.event.data.prompt : undefined),
+      } : undefined,
+      output: finalized.output.value,
+    });
     return {
       run: {
         id: runId,
@@ -761,6 +784,7 @@ function rootEventData(
   return {
     ...body.inputs,
     ...body.payload,
+    ...(body.runInput ? { __runInput: body.runInput } : {}),
     inputs: structuredClone(body.inputs),
     event_type: body.triggerEvent,
     event_name: body.triggerEvent,
@@ -877,6 +901,7 @@ export async function runWorkflowDraftTest(
         break;
       }
       const result = await executeAgent({
+        workflowSlug: slug,
         definition,
         event,
         tenantId: ctx.tenantId,
@@ -910,6 +935,7 @@ export async function runWorkflowDraftTest(
           parentEventId: event.id,
           data: {
             ...emission.payload,
+            ...(body.runInput ? { __runInput: body.runInput } : {}),
             event_type: emission.name,
             event_name: emission.name,
             event_id: emission.id,

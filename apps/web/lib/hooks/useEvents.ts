@@ -189,6 +189,7 @@ export function useEmitEvent() {
       test?: boolean;
       source?: "operator" | "system" | "external";
       targetAgent?: string;
+      runInput?: import("@agentic/contracts").RunInputContext;
     }) =>
       callV1<{ event_id: string; name: string }>("/v1/events", {
         method: "POST",

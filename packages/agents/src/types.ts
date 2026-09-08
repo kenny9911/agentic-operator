@@ -9,7 +9,9 @@ import type {
   ProviderId,
   ReasoningConfig,
   TextVerbosity,
+  RunInputContext,
 } from "@agentic/contracts";
+import type { createMemoryHandle } from "@agentic/runtime";
 
 export type AgentKind = "manifest" | "code";
 export type AgentScope = "tenant" | "system";
@@ -17,8 +19,14 @@ export type AgentScope = "tenant" | "system";
 export type AgentRunScope = "caller" | "owner";
 
 export interface AgentContext {
+  /** Reviewed file content, user prompt, context, and optional context key. */
+  runInput?: RunInputContext;
+  /** Runtime-bound durable memory; ordinary recall stays inside this context. */
+  memory?: ReturnType<typeof createMemoryHandle>;
   /** Tenant slug; defaults to `__system` for code-only agents with no tenant binding. */
   tenantSlug: string;
+  /** Authenticated caller before an owner-scoped utility selects its run tenant. */
+  callerTenantSlug?: string;
   /** Correlation id propagated across chained runs. */
   correlationId: string;
   /** Caller-provided invocation id (e.g. the API request id) for tracing. */

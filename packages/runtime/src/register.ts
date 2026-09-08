@@ -166,6 +166,7 @@ import type {
 import { StepError, type InngestFunction } from "inngest";
 import { getRuntimeMetrics } from "./llm-host";
 import { createMemoryHandle } from "./memory";
+import { createRunInputMemory, readRunInputContext, readRunInputHistory, rememberRunInput } from "./run-input";
 import { runWithTraceContext } from "./trace-context";
 // #COMMS — inter-agent message envelope: carry-forward payload assembler + content-addressed offload.
 import {
@@ -1371,6 +1372,7 @@ export function registerAgent(
       // Tenant transport concerns terminate here. The generic runtime always
       // operates on canonical flat data and never branches on a business
       // tenant or legacy envelope format.
+      const runInput = readRunInputContext(rehydratedData.__runInput);
       const data = eventAdapter.inbound({
         eventName: event.name,
         data: rehydratedData,
@@ -1629,6 +1631,15 @@ export function registerAgent(
         subject: subject ?? "",
         runId,
       });
+      const runInputMemory = createRunInputMemory({
+        tenantId: ctx.tenantId,
+        agentName: agent.name,
+        contextKey: runInput?.contextKey,
+        runId,
+      });
+      const runInputHistory = runInputMemory
+        ? await step.run("run-input.recall", () => readRunInputHistory(runInputMemory, runId))
+        : [];
 
       let tokensIn = 0;
       let tokensOut = 0;
@@ -1728,6 +1739,7 @@ export function registerAgent(
             source_agent: agent.name,
             source_run: runId,
             __compensation: true,
+            ...(runInput ? { __runInput: runInput } : {}),
             reason: reason.slice(0, 200),
           }),
         });
@@ -2246,7 +2258,7 @@ export function registerAgent(
                   );
                 return await step.invoke(`invoke-${invokeStableKey}`, {
                   function: fn,
-                  data: invokePayload,
+                  data: { ...invokePayload, ...(runInput ? { __runInput: runInput } : {}) },
                   timeout: a.timeout_s ? `${a.timeout_s}s` : undefined,
                 });
               },
@@ -2345,7 +2357,7 @@ export function registerAgent(
                 id: emittedEventId,
                 name: target,
                 subject: subject ?? undefined,
-                data: subflowPayload,
+                data: { ...subflowPayload, ...(runInput ? { __runInput: runInput } : {}) },
                 ts: scheduledAt,
               });
               const inputRef = await requireStepEvidence(
@@ -2490,6 +2502,7 @@ export function registerAgent(
             sourceAgent: agent.name,
             emittedAt: new Date(scheduled.scheduledAt).toISOString(),
           });
+          if (runInput) wireData.__runInput = runInput;
           await step.sendEvent(`subflow.send.${scheduled.emittedEventId}`, {
             name: tenantEventName(
               tenantSlug,
@@ -2993,7 +3006,7 @@ export function registerAgent(
                 }
                 return step.invoke(`invoke-${request.stepId}`, {
                   function: fn,
-                  data: request.input,
+                  data: { ...request.input, ...(runInput ? { __runInput: runInput } : {}) },
                   timeout: request.timeoutMs
                     ? `${Math.max(1, Math.ceil(request.timeoutMs / 1000))}s`
                     : undefined,
@@ -3102,6 +3115,8 @@ export function registerAgent(
                           memory: runMemory,
                         },
                         action: child,
+                        runInput,
+                        runInputHistory,
                         agent: {
                           id: agent.id,
                           name: agent.name,
@@ -3891,6 +3906,8 @@ export function registerAgent(
                 () =>
                   writeArtifact(runId, `step-${ord}-input.json`, {
                     action,
+                    runInput,
+                    runInputHistory,
                     action_data: actionData,
                     named_inputs: executionInputs,
                     last_result: actionLastResult ?? null,
@@ -3948,6 +3965,8 @@ export function registerAgent(
                       memory: runMemory,
                     },
                     action,
+                    runInput,
+                    runInputHistory,
                     // Hand the step engine the slots it needs for prompt assembly
                     // AND the tool-use loop. `tool_use` is the canonical roster
                     // of advertised tools — the engine cross-references each
@@ -4812,7 +4831,7 @@ export function registerAgent(
             id: emittedEventId,
             name: emittedName,
             subject: subject ?? undefined,
-            data: payload,
+            data: { ...payload, ...(runInput ? { __runInput: runInput } : {}) },
             ts: Date.now(),
           });
           dbInner
@@ -4960,6 +4979,7 @@ export function registerAgent(
           sourceAgent: agent.name,
           emittedAt: new Date(finalize.persistedAtMs).toISOString(),
         });
+        if (runInput) wireData.__runInput = runInput;
         await step.sendEvent(`emit.${persisted.index}.${emittedEventId}`, {
           id: emittedEventId,
           name: tenantEventName(
@@ -5188,6 +5208,16 @@ export function registerAgent(
           });
         }
 
+        await rememberRunInput(runInputMemory, {
+          runId,
+          input: runInput ? {
+            ...runInput,
+            prompt: runInput.prompt ?? (typeof data.prompt === "string"
+              ? data.prompt : typeof executionInputs.prompt === "string"
+                ? executionInputs.prompt : JSON.stringify(executionInputs)),
+          } : undefined,
+          output: lastResult,
+        });
         const updated = dbInner
           .update(runs)
           .set({

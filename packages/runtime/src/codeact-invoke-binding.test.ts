@@ -104,7 +104,7 @@ class InvokeRpcTransport implements CodeActDockerTransport {
   private readonly closedPromise: Promise<void>;
   private closedResolve!: () => void;
 
-  constructor() {
+  constructor(method = "invoke", args: unknown[] = ["realChild", { id: "cand-1" }]) {
     this.exitPromise = new Promise((resolve) => {
       this.exitResolve = resolve;
     });
@@ -125,8 +125,8 @@ class InvokeRpcTransport implements CodeActDockerTransport {
             `${JSON.stringify({
               kind: "rpc",
               id: 1,
-              method: "invoke",
-              args: ["realChild", { id: "cand-1" }],
+              method,
+              args,
             })}\n`,
           );
         } else if (message.kind === "rpc_result") {
@@ -223,6 +223,23 @@ describe("the no-substitute rule is actually wired into the invoke RPC", () => {
     else process.env.FACTORY_EXEC_GENERATED = previousGenerated;
     if (previousImage === undefined) delete process.env.FACTORY_CODEACT_CANDIDATE_IMAGE;
     else process.env.FACTORY_CODEACT_CANDIDATE_IMAGE = previousImage;
+  });
+
+  it("injects reviewed files and context into CodeAct reasoning even when generated code selects only one input field", async () => {
+    const transport = new InvokeRpcTransport("reason", ["Authored agent instructions", { selected: "one field" }]);
+    const reason = vi.fn(async () => ({ reviewed: true }));
+    await runGeneratedCodeIsolated(AGENT_CODE, { id: "cand-1" }, {
+      tenantSlug: "af-sbx-probe-sb",
+      containerTransport: transport,
+      timeoutMs: 15_000,
+      runInputMessage: "User context: audit. Extracted file: Total 42. Previous completed result: verified.",
+      hostRuntime: { reason },
+    });
+    expect(reason).toHaveBeenCalledWith("Authored agent instructions", {
+      input: { selected: "one field" },
+      userContext: "User context: audit. Extracted file: Total 42. Previous completed result: verified.",
+    });
+    expect(transport.rpcReply?.ok).toBe(true);
   });
 
   it("answers an unbound invoke with an error, never with an improvised result", async () => {

@@ -16,6 +16,11 @@ const state = vi.hoisted(() => ({
   failLlmTurn: false,
   failLogEvent: "" as string,
   tables: {} as Record<string, { __table: string }>,
+  memoryBindings: [] as Array<Record<string, unknown>>,
+  contextMemoryBindings: [] as Array<Record<string, unknown>>,
+  history: [] as Array<{ runId: string; input: string; output: string }>,
+  remembered: [] as Array<Record<string, unknown>>,
+  clearedMemory: [] as string[],
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -28,7 +33,21 @@ vi.mock("@agentic/shared", () => ({
   makeId: (prefix: string) => `${prefix}-${++state.ids}`,
 }));
 
-vi.mock("@agentic/runtime", () => ({
+vi.mock("@agentic/runtime", async () => ({
+  ...(await import("../../runtime/src/run-input")),
+  createMemoryHandle: (binding: Record<string, unknown>) => {
+    state.memoryBindings.push(binding);
+    return { get: async () => null, put: async () => undefined, delete: async () => undefined, search: async () => [] };
+  },
+  clearRunMemory: (runId: string) => { state.clearedMemory.push(runId); },
+  createRunInputMemory: (binding: { contextKey?: string }) => {
+    state.contextMemoryBindings.push(binding);
+    return binding.contextKey ? {} : undefined;
+  },
+  readRunInputHistory: async () => state.history,
+  rememberRunInput: async (memory: unknown, turn: Record<string, unknown>) => {
+    if (memory) state.remembered.push(turn);
+  },
   logPathFor: () => "/tmp/agents-run-truth.log",
   registerStepArtifactEvidence: async (artifact: Record<string, unknown>) => {
     state.artifacts.push(artifact);
@@ -217,6 +236,11 @@ beforeEach(async () => {
   state.logs.length = 0;
   state.failLlmTurn = false;
   state.failLogEvent = "";
+  state.memoryBindings.length = 0;
+  state.contextMemoryBindings.length = 0;
+  state.history.length = 0;
+  state.remembered.length = 0;
+  state.clearedMemory.length = 0;
   originalArtifacts = process.env.AGENTIC_ARTIFACTS_DIR;
   artifactRoot = await mkdtemp(path.join(tmpdir(), "agents-run-truth-"));
   process.env.AGENTIC_ARTIFACTS_DIR = artifactRoot;
@@ -236,6 +260,52 @@ const context = {
 };
 
 describe.sequential("canonical code-agent execution truth", () => {
+  it("delivers reviewed files, user context and same-key memory to the provider and custom agent context", async () => {
+    let received: ChatMessage[] = [];
+    state.history.push({ runId: "prior", input: "Prior request", output: "Prior result" });
+    setGateway({ defaultProvider: "openai", defaultModel: "gpt-truth", async chat(request: { messages: ChatMessage[] }) {
+      received = structuredClone(request.messages);
+      return response("Completed review");
+    } } as never);
+    const result = await new TextAgent().run(undefined, {
+      ...context,
+      runInput: { prompt: "Review uploaded invoice", context: "Check tax", contextKey: "invoice-1", attachments: [{ id: "att-1", name: "scan.png", mimeType: "image/png", size: 1, text: "Total: 42" }] },
+    });
+    expect(received[0]).toEqual({ role: "user", content: "answer" });
+    expect(received.at(-1)?.role).toBe("user");
+    expect(received.at(-1)?.content).toContain("Total: 42");
+    expect(received.at(-1)?.content).toContain("Check tax");
+    expect(received.at(-1)?.content).toContain("Prior result");
+    expect(state.memoryBindings[0]).toMatchObject({ tenantId: "ten-1", subject: "invoice-1", subjectExact: true });
+    expect(state.remembered).toHaveLength(1);
+    expect(state.remembered[0]).toMatchObject({ runId: result.runId, output: "Completed review" });
+    expect(state.clearedMemory).toEqual([result.runId]);
+  });
+
+  it("does not remember failed code-agent output and still clears scratch memory", async () => {
+    setGateway({ defaultProvider: "openai", defaultModel: "gpt-truth", async chat() { throw new Error("provider unavailable"); } } as never);
+    await expect(new TextAgent().run(undefined, { ...context, runInput: { contextKey: "case-1" } })).rejects.toThrow("provider unavailable");
+    expect(state.remembered).toEqual([]);
+    expect(state.clearedMemory).toHaveLength(1);
+  });
+
+  it("isolates owner-scoped utility memory by the authenticated caller after the API selects __system execution", async () => {
+    class OwnerAgent extends TextAgent {
+      override readonly scope = "system" as const;
+      override readonly runScope = "owner" as const;
+    }
+    setGateway({ defaultProvider: "openai", defaultModel: "gpt-truth", async chat() { return response("done"); } } as never);
+    for (const callerTenantSlug of ["tenant-a", "tenant-b"]) {
+      state.run = null;
+      await new OwnerAgent().run(undefined, { ...context, callerTenantSlug, runInput: { contextKey: "same-key" } });
+    }
+    expect(state.memoryBindings.map((binding) => binding.agentName)).toEqual([
+      "truth-agent:caller:tenant-a", "truth-agent:caller:tenant-b",
+    ]);
+    expect(state.contextMemoryBindings.map((binding) => binding.agentName)).toEqual([
+      "truth-agent:caller:tenant-a", "truth-agent:caller:tenant-b",
+    ]);
+  });
   it("refuses to overwrite the correlation of a reserved run", async () => {
     state.run = {
       id: "run-reserved",

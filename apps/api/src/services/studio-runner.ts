@@ -18,6 +18,7 @@ import {
 import { makeId } from "@agentic/shared";
 import {
   AgentDefinitionV2Schema,
+  RunInputContextSchema,
   STUDIO_AGENT_RUN_CONTROL_EVENT,
   STUDIO_CHAT_MESSAGE_EVENT,
   StudioAgentRunEventDataSchema,
@@ -39,7 +40,13 @@ import {
   appendToLedger,
   bindTriggerInputs,
   canonicalJson,
+  clearRunMemory,
+  createMemoryHandle,
   createFilteredTraceSink,
+  createRunInputMemory,
+  readRunInputHistory,
+  rememberRunInput,
+  renderRunInputMessage,
   finalizeAgentExecution,
   inngest,
   normalizeAgentForExecution,
@@ -175,6 +182,7 @@ const STUDIO_LOGICAL_TRIGGER_RESERVED_FIELDS = new Set([
   "conversationHistory",
   "runtimeOverrides",
   "toolPolicy",
+  "runInput",
 ]);
 
 function studioPayloadFields(value: unknown): Record<string, unknown> {
@@ -238,6 +246,7 @@ export function buildStudioLogicalTriggerPayload(args: {
 
 export const STUDIO_CONVERSATION_HISTORY_METADATA_KEY =
   "__agentic_conversation_history";
+export const STUDIO_RUN_INPUT_METADATA_KEY = "__agentic_run_input";
 // Bounding lives in ./conversation-history so the workflow draft chat and the
 // Test Lab enforce exactly one budget.
 
@@ -249,7 +258,16 @@ function normalizeUserPrompt(content: unknown): string | null {
         ? (content as Record<string, unknown>).prompt
         : undefined;
   if (typeof prompt !== "string") return null;
-  return prompt.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+  const normalizedPrompt = prompt.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+  const runInput =
+    content && typeof content === "object" && !Array.isArray(content)
+      ? (content as Record<string, unknown>).runInput
+      : undefined;
+  const sourceText =
+    runInput === undefined
+      ? undefined
+      : renderRunInputMessage(RunInputContextSchema.parse(runInput));
+  return sourceText ? `${normalizedPrompt}\n\n${sourceText}` : normalizedPrompt;
 }
 
 function normalizeAssistantTurn(content: unknown): string {
@@ -263,9 +281,13 @@ function normalizeAssistantTurn(content: unknown): string {
 function loadSessionConversationHistory(
   tenantId: string,
   sessionId: string,
-): AgentConversationTurn[] {
+): { turns: AgentConversationTurn[]; runIds: Set<string> } {
   const rows = getDb()
-    .select({ role: runMessages.role, content: runMessages.contentJson })
+    .select({
+      role: runMessages.role,
+      content: runMessages.contentJson,
+      runId: runMessages.runId,
+    })
     .from(runMessages)
     .where(
       and(
@@ -290,7 +312,10 @@ function loadSessionConversationHistory(
       });
     }
   }
-  return boundConversationHistory(history);
+  return {
+    turns: boundConversationHistory(history),
+    runIds: new Set(rows.flatMap((row) => (row.runId ? [row.runId] : []))),
+  };
 }
 
 function validateConversationHistory(
@@ -836,6 +861,12 @@ export async function reserveStudioRun(
     conversationHistorySnapshot?: AgentConversationTurn[];
   } = {},
 ): Promise<CreateAgentRunResponse> {
+  // Direct callers use the same bounded contract as HTTP. Files are editable
+  // source text, never artifact references or authority to execute tools.
+  const runInput =
+    body.runInput === undefined
+      ? undefined
+      : RunInputContextSchema.parse(body.runInput);
   const agent = findStudioAgent(ctx, agentRef);
   if (!agent) throw new AgentStudioNotFoundError("agent");
   if (agent.kind !== "manifest") {
@@ -946,8 +977,18 @@ export async function reserveStudioRun(
     options.conversationHistorySnapshot !== undefined
       ? parseConversationHistorySnapshot(options.conversationHistorySnapshot)
       : [];
+  const contextMemory = createRunInputMemory({
+    tenantId: ctx.tenantId,
+    agentName: `studio:${body.target.kind}:${agent.id}`,
+    contextKey: runInput?.contextKey,
+  });
+  const contextHistory =
+    options.conversationHistorySnapshot === undefined
+      ? await readRunInputHistory(contextMemory)
+      : [];
   const usageAttribution = currentUsageAttribution();
   getDb().transaction(() => {
+    let sessionRunIds = new Set<string>();
     if (contextMode === "session") {
       const activeRun = getDb()
         .select({ id: runs.id })
@@ -971,11 +1012,31 @@ export async function reserveStudioRun(
       if (options.conversationHistorySnapshot === undefined) {
         // Snapshot before appending the current user message. This exact array
         // is persisted and dispatched so later session writes cannot alter it.
-        conversationHistory = loadSessionConversationHistory(
+        const sessionHistory = loadSessionConversationHistory(
           ctx.tenantId,
           session.id,
         );
+        conversationHistory = sessionHistory.turns;
+        sessionRunIds = sessionHistory.runIds;
       }
+    }
+    if (
+      options.conversationHistorySnapshot === undefined &&
+      contextHistory.length
+    ) {
+      // Reuse shared context across sessions without replaying the same run
+      // twice when its full user/assistant pair already exists in this chat.
+      conversationHistory = boundConversationHistory([
+        ...contextHistory
+          .filter((turn) => !sessionRunIds.has(turn.runId))
+          .flatMap(
+            (turn): AgentConversationTurn[] => [
+              { role: "user", content: turn.input },
+              { role: "assistant", content: turn.output },
+            ],
+          ),
+        ...conversationHistory,
+      ]);
     }
     getDb()
       .insert(runs)
@@ -1015,6 +1076,7 @@ export async function reserveStudioRun(
       .run();
     appendSessionMessage(ctx.tenantId, session.id, runId, "user", {
       prompt: body.prompt,
+      ...(runInput ? { runInput } : {}),
       inputs: stripInlineFileData(
         Object.fromEntries(
           Object.entries(authoredInputs).filter(
@@ -1107,6 +1169,7 @@ export async function reserveStudioRun(
       .set({
         contentJson: {
           prompt: body.prompt,
+          ...(runInput ? { runInput } : {}),
           inputs: stripInlineFileData(
             Object.fromEntries(
               Object.entries(continuationInputs).filter(
@@ -1126,14 +1189,16 @@ export async function reserveStudioRun(
       .run();
     if (
       pinned.definition.output_config.artifact.persist_run_input ||
-      contextMode === "session"
+      contextMode === "session" ||
+      runInput
     ) {
-      const runInput: Record<string, unknown> = {
+      const inputArtifact: Record<string, unknown> = {
         ...runtimeInputs,
         prompt: body.prompt,
+        ...(runInput ? { [STUDIO_RUN_INPUT_METADATA_KEY]: runInput } : {}),
       };
-      if (contextMode === "session") {
-        runInput[STUDIO_CONVERSATION_HISTORY_METADATA_KEY] =
+      if (contextMode === "session" || body.runInput?.contextKey) {
+        inputArtifact[STUDIO_CONVERSATION_HISTORY_METADATA_KEY] =
           conversationHistory;
       }
       await artifactSink.persist({
@@ -1143,7 +1208,7 @@ export async function reserveStudioRun(
         // Keep the Studio chat prompt for exact replay even for human-only
         // definitions that intentionally do not expose an LLM prompt port.
         // Session-mode runs also reserve their exact bounded prior turns.
-        payload: runInput,
+        payload: inputArtifact,
         retentionUntil: artifactRetention,
       });
     }
@@ -1197,6 +1262,7 @@ export async function reserveStudioRun(
       subject,
       // Never normalize or trim this value: it is the user-owned chat turn.
       prompt: body.prompt,
+      ...(runInput ? { runInput } : {}),
       payload: logicalTriggerPayload,
       // Includes the exact prompt under the definition's prompt-port id.
       inputs: runtimeInputs,
@@ -1208,9 +1274,12 @@ export async function reserveStudioRun(
       id: eventId,
       name: triggerEvent,
       ...(subject === null ? {} : { subject }),
-      // Persist the authored logical event, never the private Studio control
-      // envelope containing tenant, definition and tool-policy metadata.
-      data: logicalTriggerPayload,
+      // Keep source input for event replay as well as Studio run replay. The
+      // private control envelope (tenant, definition, tool policy) stays out.
+      data: {
+        ...logicalTriggerPayload,
+        ...(runInput ? { __runInput: runInput } : {}),
+      },
       ts: queuedAt.getTime(),
     });
     const eventCategory = getDb()
@@ -1778,6 +1847,14 @@ export async function executeReservedStudioRun(
     const conversationHistory = parseEventConversationHistory(
       event.conversationHistory,
     );
+    const memoryAgentName = `studio:${resolved.run.draftRevisionId ? "draft" : "live"}:${resolved.agent.id}`;
+    const memory = createMemoryHandle({
+      tenantId,
+      agentName: memoryAgentName,
+      subject: event.runInput?.contextKey ?? event.sessionId,
+      subjectExact: true,
+      runId,
+    });
     const logicalEvent = buildStudioExecutionEvent(event, event.inputs);
     const executionInputs = bindTriggerInputs(definition, {
       ...logicalEvent,
@@ -1869,6 +1946,8 @@ export async function executeReservedStudioRun(
       ) as Parameters<typeof runAction>[0]["action"];
       const executionEvent = buildStudioExecutionEvent(event, prepared.inputs);
       const outcome = await runAction({
+        runInput: event.runInput,
+        memory,
         runId,
         stepId,
         stepOrd: ord,
@@ -1879,6 +1958,9 @@ export async function executeReservedStudioRun(
           subject: resolved.run.subject ?? undefined,
           correlationId: resolved.run.correlationId,
           tenantSlug: event.tenantSlug,
+          tenantId,
+          runId,
+          memory,
           event: executionEvent,
           lastResult,
         },
@@ -2168,6 +2250,21 @@ export async function executeReservedStudioRun(
       payload: record,
       retentionUntil: artifactRetention,
     });
+    await rememberRunInput(
+      createRunInputMemory({
+        tenantId,
+        agentName: memoryAgentName,
+        contextKey: event.runInput?.contextKey,
+        runId,
+      }),
+      {
+        runId,
+        input: event.runInput
+          ? { ...event.runInput, prompt: event.prompt }
+          : undefined,
+        output: finalized.output.value,
+      },
+    );
     const completed = getDb()
       .update(runs)
       .set({
@@ -2261,6 +2358,17 @@ export async function executeReservedStudioRun(
       tenantSlug,
     });
     throw error;
+  } finally {
+    try {
+      clearRunMemory(runId);
+    } catch {
+      await writeRunLog(
+        { tenantSlug, runId, correlationId: resolved.run.correlationId },
+        "WARN",
+        "memory.cleanup_failed",
+        {},
+      ).catch(() => undefined);
+    }
   }
 }
 
@@ -2372,6 +2480,12 @@ export async function replayStudioRun(
     : undefined;
   const storedInputs = { ...stored };
   const inputsPatch = { ...body.inputsPatch };
+  const runInput =
+    stored[STUDIO_RUN_INPUT_METADATA_KEY] === undefined
+      ? undefined
+      : RunInputContextSchema.parse(stored[STUDIO_RUN_INPUT_METADATA_KEY]);
+  delete storedInputs[STUDIO_RUN_INPUT_METADATA_KEY];
+  delete inputsPatch[STUDIO_RUN_INPUT_METADATA_KEY];
   delete storedInputs[STUDIO_CONVERSATION_HISTORY_METADATA_KEY];
   // Reserved execution metadata always comes from the original artifact. A
   // replay input patch cannot replace conversation history with mutable or
@@ -2450,6 +2564,7 @@ export async function replayStudioRun(
         ? { triggerEvent: original.triggerEventName }
         : {}),
       prompt,
+      ...(runInput ? { runInput } : {}),
       inputs: patched,
       toolPolicy,
     },

@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import { RunInputContextSchema } from "./run-input";
 import {
   PROVIDER_IDS,
   REASONING_CONTEXTS,
@@ -111,6 +112,7 @@ export type ProviderInfoDTO = z.infer<typeof ProviderInfoSchema>;
 
 export const InvokeAgentBody = z.object({
   input: z.unknown().optional(),
+  runInput: RunInputContextSchema.optional(),
   provider: ProviderIdSchema.optional(),
   model: z.string().optional(),
   reasoning: ReasoningConfigSchema.optional(),

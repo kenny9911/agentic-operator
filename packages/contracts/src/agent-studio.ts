@@ -11,6 +11,7 @@ import {
   TextVerbositySchema,
 } from "./llm";
 import { RunStatus } from "./runs";
+import { RunInputContextSchema } from "./run-input";
 import { WorkflowSlugSchema } from "./workflow-authoring";
 
 export const AgentLifecycleSchema = z.enum(["draft", "active", "archived"]);
@@ -344,6 +345,7 @@ export type StudioRuntimeOverrides = z.infer<
 >;
 
 export const CreateAgentRunBodySchema = z.object({
+  runInput: RunInputContextSchema.optional(),
   sessionId: z.string().optional(),
   contextMode: StudioContextModeSchema.default("isolated"),
   target: StudioRunTargetSchema,
@@ -421,6 +423,7 @@ export type StudioLogicalTriggerPayload = z.infer<
  */
 export const StudioAgentRunEventDataSchema = z
   .object({
+    runInput: RunInputContextSchema.optional(),
     schemaVersion: z.literal(1),
     eventId: z.string(),
     eventName: z.string().trim().min(1).max(160),

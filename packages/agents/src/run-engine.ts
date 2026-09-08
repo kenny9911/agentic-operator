@@ -30,6 +30,13 @@ import type { DB } from "@agentic/db";
 import { makeId } from "@agentic/shared";
 import {
   logPathFor,
+  clearRunMemory,
+  createMemoryHandle,
+  createRunInputMemory,
+  readRunInputContext,
+  readRunInputHistory,
+  rememberRunInput,
+  renderRunInputMessage,
   publishStreamEvent,
   registerStepArtifactEvidence,
   writeRunLog,
@@ -309,6 +316,7 @@ export async function executeAgentRun<TInput, TOutput>(
   const requestedModel =
     ctx.model ?? agent.defaultModel ?? gateway.defaultModel;
   const requestedTenantSlug = ctx.tenantSlug || SYSTEM_TENANT_SLUG;
+  const callerTenantSlug = ctx.callerTenantSlug || requestedTenantSlug;
   const tenantSlug =
     agent.scope === "system" && agent.runScope === "owner"
       ? SYSTEM_TENANT_SLUG
@@ -323,6 +331,11 @@ export async function executeAgentRun<TInput, TOutput>(
   );
 
   const runId = ctx.runId?.trim() || makeId("run");
+  const runInput = readRunInputContext(ctx.runInput);
+  // Owner-scoped utilities share definition/run ownership but must never
+  // share a caller's context with another tenant.
+  const memoryAgentName = agent.scope === "system" && agent.runScope === "owner"
+    ? `${agent.name}:caller:${callerTenantSlug}` : agent.name;
   const correlationId = ctx.correlationId ?? makeId("cor");
   const parentRunId = ctx.parentRunId?.trim() || undefined;
   const runtimeRole = ctx.runtimeRole?.trim() || "primary";
@@ -364,11 +377,26 @@ export async function executeAgentRun<TInput, TOutput>(
   const effectiveCtx: AgentContext = {
     ...ctx,
     tenantSlug,
+    callerTenantSlug,
     runId,
     correlationId,
     parentRunId,
     runtimeRole,
+    runInput,
+    memory: createMemoryHandle({
+      tenantId,
+      agentName: memoryAgentName,
+      subject: runInput?.contextKey ?? runId,
+      subjectExact: true,
+      runId,
+    }),
   };
+  const runInputMemory = createRunInputMemory({
+    tenantId,
+    agentName: memoryAgentName,
+    contextKey: runInput?.contextKey,
+    runId,
+  });
   const startedAt = Date.now();
   const runLogPath = logPathFor(
     { tenantSlug, tenantId, runId, correlationId, agentName: agent.name },
@@ -516,10 +544,15 @@ export async function executeAgentRun<TInput, TOutput>(
     const provider: ProviderId = requestedProvider;
     const model = effectiveCtx.model ?? agent.defaultModel;
 
-    const messages: ChatMessage[] = await agent._buildMessages(
+    const messages: ChatMessage[] = structuredClone(await agent._buildMessages(
       input,
       effectiveCtx,
+    ));
+    const runInputMessage = renderRunInputMessage(
+      runInput,
+      await readRunInputHistory(runInputMemory, runId),
     );
+    if (runInputMessage) messages.push({ role: "user", content: runInputMessage });
 
     const tools = agent.getTools(effectiveCtx);
     const toolHandlers = agent.getToolHandlers(effectiveCtx);
@@ -1256,6 +1289,14 @@ export async function executeAgentRun<TInput, TOutput>(
       );
     }
 
+    await rememberRunInput(runInputMemory, {
+      runId,
+      input: runInput ? {
+        ...runInput,
+        prompt: runInput.prompt ?? (typeof input === "string" ? input : JSON.stringify(input ?? null)),
+      } : undefined,
+      output,
+    });
     const runEndedAt = Date.now();
     db.update(runs)
       .set({
@@ -1461,5 +1502,8 @@ export async function executeAgentRun<TInput, TOutput>(
     }
 
     throw llm;
+  } finally {
+    try { clearRunMemory(runId); }
+    catch (error) { appendRunDiagnostic(db, runId, `memory_cleanup_failed: ${String(error)}`); }
   }
 }

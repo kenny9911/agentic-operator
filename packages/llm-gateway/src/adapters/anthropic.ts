@@ -15,6 +15,7 @@ import {
   type ProviderAdapter,
 } from "../types";
 import { LLMError, classifyHttpError } from "../errors";
+import { assertMediaMessages } from "../media";
 
 const DEFAULT_MODEL = "claude-haiku-4-5";
 
@@ -225,6 +226,17 @@ function mapMessageToAnthropic(message: ChatMessage): Anthropic.MessageParam {
   for (const block of message.content) {
     if (block.type === "text") {
       content.push({ type: "text", text: block.text });
+    } else if (block.type === "image") {
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: block.mimeType, data: block.data },
+      });
+    } else if (block.type === "document") {
+      content.push({
+        type: "document",
+        title: block.name,
+        source: { type: "base64", media_type: block.mimeType, data: block.data },
+      });
     } else if (block.type === "tool_use") {
       if (message.role !== "assistant") {
         throw new LLMError(
@@ -263,6 +275,7 @@ export function mapAnthropicMessages(messages: ChatMessage[]): {
   system: string | undefined;
   messages: Anthropic.MessageParam[];
 } {
+  assertMediaMessages(messages, "anthropic");
   const systemParts: string[] = [];
   const rest: Anthropic.MessageParam[] = [];
   for (const m of messages) {

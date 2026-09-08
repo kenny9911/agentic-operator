@@ -48,6 +48,9 @@ import {
 import { WorkflowChatPanel } from "./WorkflowChatPanel";
 import { localizeValidationMessage } from "@/lib/i18n/workflow-validation";
 import styles from "./WorkflowRunConsole.module.css";
+import { useRunInput } from "@/lib/hooks/useRunInput";
+import { RunInputPanel } from "@/app/portal/components/RunInputPanel";
+import { runInputPrompt } from "@/lib/run-input";
 
 type RunTarget = "draft" | "live";
 type RunMode = "chat" | "payload";
@@ -265,6 +268,7 @@ export function WorkflowRunConsole({
   );
   const runTest = useRunWorkflowTest(workflowSlug);
   const emitLive = useEmitEvent();
+  const runInput = useRunInput();
   const [selectedEvent, setSelectedEvent] = useState("");
   const [subject, setSubject] = useState(defaultSubject);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
@@ -460,16 +464,24 @@ export function WorkflowRunConsole({
     inputs: Record<string, unknown>;
     payload: Record<string, unknown>;
   } {
+    const values = { ...inputValues };
+    if (entrypoint?.inputs.some((input) => input.id === "prompt")) {
+      values.prompt = runInputPrompt(
+        typeof values.prompt === "string" ? values.prompt : "",
+        runInput.value?.attachments,
+        t("runInput.fileOnlyPrompt"),
+      );
+    }
     const errors = validateWorkflowInputValues(
       entrypoint,
-      inputValues,
+      values,
       t,
       false,
     );
     if (errors.length > 0) throw new Error(errors[0]);
     const inputs: Record<string, unknown> = {};
     for (const input of entrypoint?.inputs ?? []) {
-      const value = coerceInputValue(input, inputValues[input.id], t);
+      const value = coerceInputValue(input, values[input.id], t);
       if (value !== undefined && value !== "") inputs[input.id] = value;
     }
     let payload: unknown;
@@ -496,7 +508,8 @@ export function WorkflowRunConsole({
    * because the draft runner is stateless; the server re-bounds them.
    */
   async function sendChatTurn() {
-    const text = chatDraft.trim();
+    if (pending || runInput.blocked) return;
+    const text = runInputPrompt(chatDraft.trim(), runInput.value?.attachments, t("runInput.fileOnlyPrompt"));
     if (!text || !chatEntrypoint) return;
     setChatError(null);
     setChatCascadeWarning(false);
@@ -512,6 +525,7 @@ export function WorkflowRunConsole({
         triggerEvent: chatEntrypoint.event,
         subject: subject.trim() || undefined,
         inputs: { prompt: text },
+        runInput: runInput.value ? { ...runInput.value, prompt: undefined } : undefined,
         payload: {},
         toolPolicy: "safe",
         confirmLiveEffects: false,
@@ -548,6 +562,7 @@ export function WorkflowRunConsole({
   }
 
   async function execute() {
+    if (pending || runInput.blocked) return;
     setFormError(null);
     setCopied(false);
     if (!entrypoint) {
@@ -571,6 +586,11 @@ export function WorkflowRunConsole({
           subject: subject.trim() || undefined,
           inputs: submission.inputs,
           payload: submission.payload,
+          runInput: runInput.value ? {
+            ...runInput.value,
+            prompt: entrypoint.inputs.some((input) => input.id === "prompt")
+              ? undefined : runInput.value.prompt,
+          } : undefined,
           toolPolicy,
           confirmLiveEffects,
           failurePolicy,
@@ -597,6 +617,11 @@ export function WorkflowRunConsole({
           submission.payload,
         ),
         source: "operator",
+        runInput: runInput.value ? {
+          ...runInput.value,
+          prompt: entrypoint.inputs.some((input) => input.id === "prompt")
+            ? undefined : runInput.value.prompt,
+        } : undefined,
       });
       setLiveReceipt({
         eventId: response.event_id,
@@ -709,6 +734,7 @@ export function WorkflowRunConsole({
             draft={chatDraft}
             onDraftChange={setChatDraft}
             onSend={() => void sendChatTurn()}
+            inputEditor={runInput}
           />
         ) : (
           <>
@@ -859,6 +885,11 @@ export function WorkflowRunConsole({
                   {t("workflowRunConsole.noNamedInputs")}
                 </div>
               )}
+              <RunInputPanel
+                editor={runInput}
+                disabled={pending}
+                hidePrompt={Boolean(entrypoint?.inputs.some((input) => input.id === "prompt"))}
+              />
               <button
                 type="button"
                 onClick={() => setShowRawPayload((current) => !current)}
@@ -1159,6 +1190,7 @@ export function WorkflowRunConsole({
               onClick={() => void execute()}
               disabled={
                 pending ||
+                runInput.blocked ||
                 !entrypoint ||
                 (target === "draft" &&
                   toolPolicy === "live" &&

@@ -214,6 +214,7 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
     const idemFingerprint = idempotencyFingerprint({
       agentName,
       input: body.input ?? null,
+      runInput: body.runInput ?? null,
       provider: body.provider ?? null,
       model: body.model ?? null,
       async: wantsAsync,
@@ -348,6 +349,7 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
 
       const inngestData: Record<string, unknown> = {
         ...logicalPayload,
+        ...(body.runInput ? { __runInput: body.runInput } : {}),
         subject,
         __triggerEventId: eventId,
         __correlationId: correlationId,
@@ -703,7 +705,9 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
             data: {
               runId: operation.runId,
               tenantSlug: executionTenantSlug,
+              callerTenantSlug: auth.tenantSlug,
               input: body.input,
+              runInput: body.runInput,
               provider: body.provider as ProviderId | undefined,
               model: body.model,
               correlationId: operation.correlationId,
@@ -1042,6 +1046,8 @@ export async function agentInvokeRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const result = await agent.run(body.input as never, {
+        runInput: body.runInput,
+        callerTenantSlug: auth.tenantSlug,
         // Execution and run observability stay scoped to the active tenant.
         // Platform utilities resolve their canonical identity/version from
         // __system without being copied into this tenant's agent catalog.
