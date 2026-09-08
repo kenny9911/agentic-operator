@@ -77,6 +77,14 @@ export interface MetaerpRoute {
   line_overrides?: Record<string, unknown>;
   /** Canned answer for `transport: "stub"`. Required by that transport. */
   stub_response?: Record<string, unknown>;
+  /**
+   * 按租户覆盖这条路由。浅合并在声明之上。
+   *
+   * 路由表是全域共用的，一个域为了演示把某个操作改成桩，会连带改掉别的域——
+   * 实测里 updateTransactionOrder 改桩后，采购-HC-Formal 的端到端测试立刻红了，
+   * 因为它断言这个操作必须真的打到 ERP。演示口径属于某一个租户，不该是全域默认。
+   */
+  tenant_overrides?: Record<string, Partial<MetaerpRoute>>;
   /** Why this operation is stubbed — surfaced in the run trace. */
   stub_reason?: string;
   /**
@@ -154,6 +162,7 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
       `metaerp routes: entry '${operation}' declares stub_response but transport is '${transport}'`,
     );
   }
+
   const routePath = typeof raw.path === "string" ? raw.path.trim() : "";
   if (transport !== "mock" && transport !== "stub") {
     // A real transport without a path would silently fall back to the mock
@@ -208,6 +217,22 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
     ...(lineDefaults ? { line_defaults: lineDefaults } : {}),
     ...(lineOverrides ? { line_overrides: lineOverrides } : {}),
     ...(stubResponse ? { stub_response: stubResponse as Record<string, unknown> } : {}),
+    ...((raw as { tenant_overrides?: unknown }).tenant_overrides
+      ? {
+          tenant_overrides: Object.fromEntries(
+            Object.entries(
+              (raw as { tenant_overrides: Record<string, unknown> }).tenant_overrides,
+            ).map(([tenant, override]) => [
+              tenant,
+              normalizeRoute(`${operation}@${tenant}`, {
+                // 覆盖块只写要改的字段，transport 缺省沿用主声明。
+                transport: (override as { transport?: unknown }).transport ?? transport,
+                ...(override as Record<string, unknown>),
+              }),
+            ]),
+          ),
+        }
+      : {}),
     ...(typeof (raw as { stub_reason?: unknown }).stub_reason === "string"
       ? { stub_reason: (raw as { stub_reason: string }).stub_reason }
       : {}),
@@ -341,8 +366,12 @@ function expandDefaults(
 export function resolveRoute(
   operation: string,
   kind: "query" | "write",
+  tenantSlug?: string,
 ): ResolvedRoute {
-  const stored = loadMetaerpRoutes().get(operation);
+  const base = loadMetaerpRoutes().get(operation);
+  const override = tenantSlug ? base?.tenant_overrides?.[tenantSlug] : undefined;
+  // 浅合并：覆盖块只需写它要改的字段，其余沿用主声明。
+  const stored = base && override ? { ...base, ...override } : base;
   const declared: MetaerpRoute = stored
     ? {
         ...stored,

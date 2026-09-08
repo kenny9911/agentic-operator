@@ -712,7 +712,7 @@ describe("stub 通道", () => {
   it("returns the declared answer without either gate downgrading it", () => {
     process.env.METAERP_TRANSPORT_MODE = "mock";
     process.env.METAERP_ALLOW_REAL_WRITES = "false";
-    const route = resolveRoute("updateTransactionOrder", "write");
+    const route = resolveRoute("updateTransactionOrder", "write", "hc-procurement");
     // 桩不碰任何系统，所以两道闸口都不适用——降级到 mock 反而会发出一次 HTTP 调用
     expect(route.transport).toBe("stub");
     expect(route.downgradedFrom).toBeUndefined();
@@ -747,5 +747,23 @@ describe("演示期固定调拨数量", () => {
     const route = resolveRoute("createTransactionOrder", "write");
     const out = _applyLineScopeForTests("createTransactionOrder", route, { lineList: lines() }, null);
     expect((out.lineList as Record<string, unknown>[])[0]!.transactionQuantity).toBe("300");
+  });
+});
+
+describe("租户级路由覆盖", () => {
+  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  it("leaves other tenants on the declared transport", () => {
+    // 采购-HC-Formal 的端到端测试断言这个操作必须真的打到 ERP；演示口径属于
+    // hc-procurement 一家，不能变成全域默认。
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_ALLOW_REAL_WRITES = "true";
+    _clearMetaerpRoutesCacheForTests();
+    expect(resolveRoute("updateTransactionOrder", "write", "procurement-hc-formal").transport)
+      .toBe("openapi");
+    expect(resolveRoute("updateTransactionOrder", "write").transport).toBe("openapi");
+    expect(resolveRoute("updateTransactionOrder", "write", "hc-procurement").transport)
+      .toBe("stub");
   });
 });

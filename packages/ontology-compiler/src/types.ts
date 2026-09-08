@@ -299,13 +299,58 @@ export interface CompilerOverlay {
    * auto-emit list.
    */
   compensation_events?: Record<string, string>;
+  /**
+   * actionId → localized display titles, e.g.
+   * `{ zh: "库存校验", en: "Verify Inventory Availability" }`.
+   *
+   * An ontology package names its actions by id (`verifyInventoryAvailability`)
+   * and carries the human wording only on workflow steps; this is where the
+   * per-locale title an operator reads on the canvas is declared. `title` is
+   * taken from `title_locale` (default `zh`); the whole map ships as
+   * `title_i18n` so the portal can switch with its language toggle.
+   */
+  titles?: Record<string, Record<string, string>>;
+  /** Locale whose title becomes the AgentSpec `title` (default `zh`). */
+  title_locale?: string;
+  /**
+   * actionId → outcomes an analysis action may honestly report that mean
+   * "nothing downstream may proceed" (e.g. `blocking_note` set because a
+   * cycle configuration is missing, BR-PLAN-01).
+   *
+   * Without this the compiled agent emitted its success event regardless,
+   * and the ERP write downstream received a null payload, was rejected with
+   * HTTP 400 and retried for minutes. Each outcome compiles to a `condition`
+   * step over the analysis result plus a `control.fail` tool step with
+   * `on_error: "terminal"`: the run ends FAILED with the reported reason,
+   * visible on the canvas, and no event fires.
+   */
+  blocking_outcomes?: Record<string, OverlayBlockingOutcome[]>;
 }
+
+export interface OverlayBlockingOutcome {
+  /** AO condition-DSL expression over `lastResult` (the analysis JSON) that
+   * is TRUE when the run must stop, e.g.
+   * `lastResult.blocking_note || !lastResult.draft_request`. */
+  when: string;
+  /** Stable snake_case failure code recorded on the run (`^[a-z][a-z0-9_]*$`). */
+  code: string;
+  /** Safe data path to the reason the analysis reported (preferred). */
+  message_from?: string;
+  /** Static reason when the analysis carries none. Exactly one of
+   * `message_from` / `message` must be given. */
+  message?: string;
+}
+
+/** Declarative retry/terminal ladder rule (runtime `RuntimeErrorPolicyRule`). */
+export type CompiledErrorPolicyRule =
+  | { when: string; do: "retry" | "terminal" | "park" | "continue" }
+  | { default: "retry" | "terminal" | "park" | "continue" };
 
 // ── compiled output ───────────────────────────────────────────────────────────
 
 /** Reviewed execution policy — must byte-match the global registry entry for
- * the named tool (metaerp.invoke, ontology.query and planning.backwardSchedule
- * respectively). */
+ * the named tool (metaerp.invoke, ontology.query, and the pure compute tools
+ * control.fail / planning.backwardSchedule / records.project). */
 export type CompiledExecutionPolicy =
   | {
       operation: "read_write";
@@ -318,6 +363,8 @@ export type CompiledExecutionPolicy =
       sandbox_policy: "live_external";
     }
   | {
+      /** control.fail / planning.backwardSchedule / records.project
+       *  — pure, no I/O, no effect. */
       operation: "compute";
       effect_scope: "none";
       sandbox_policy: "pure";
@@ -359,7 +406,9 @@ export interface CompiledStep {
   allowed_tools?: string[];
   result_key?: string;
   depends_on?: string[];
-  on_error?: "soft" | "terminal";
+  /** Legacy string policy, or a declarative first-match ladder (the ERP write
+   * step compiles one: 4xx = terminal, unreachable/5xx = retry). */
+  on_error?: "soft" | "terminal" | CompiledErrorPolicyRule[];
   emit_event?: string;
   emit_payload_from?: string;
   decision_table?: Record<string, unknown>;
@@ -388,6 +437,8 @@ export interface CompiledAgent {
   id: string;
   name: string;
   title: string;
+  /** Localized titles by language tag; `title` is one of these values. */
+  title_i18n?: Record<string, string>;
   description: string;
   actor: string[];
   trigger: string[];

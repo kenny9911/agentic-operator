@@ -12,6 +12,8 @@ export {
   loadMetaerpCatalog,
   _clearMetaerpCatalogCacheForTests,
   _clearMetaerpCallBudgetForTests,
+  IntegrationUnreachableError,
+  METAERP_UNREACHABLE_CODE,
   type MetaerpCatalogOperation,
   type MetaerpOperationKind,
 } from "./invoke";
