@@ -126,7 +126,8 @@ test.describe("P4-TEST-06: CLI init + deploy round-trip E2E", () => {
       cwd,
     );
     expect(r.code, `stderr=${r.stderr}\nstdout=${r.stdout}`).toBe(0);
-    const version = r.stdout.match(/Deployed (auto-[a-f0-9]{8})/)?.[1];
+    // Full content digest; the 8-char form is the legacy id (see spec 05).
+    const version = r.stdout.match(/Deployed (auto-[a-f0-9]{64})/)?.[1];
     expect(version).toBeTruthy();
     deployedVersion = version ?? "";
   });
@@ -155,6 +156,27 @@ test.describe("P4-TEST-06: CLI init + deploy round-trip E2E", () => {
     );
     expect(codeDeployment).toBeDefined();
     expect(codeDeployment?.versionString).toMatch(/^v1-[a-f0-9]{12}$/);
+  });
+
+  test("post-deploy: starting the tenant runtime serves its functions", async () => {
+    // `POST /v1/tenants` deliberately creates a tenant STOPPED ("New empty
+    // tenants start stopped" — routes/v1/tenants.ts), so until an operator
+    // starts it the tenant serves zero Inngest functions and no event of its
+    // own can run. The deploy above is legal in that state; execution below
+    // is not, so start the runtime here — this is the 上线 step of the real
+    // operator flow, not test scaffolding.
+    const started = await apiFetch<{ functionCount: number; brokerVerified: boolean }>(
+      `/v1/tenants/${slug}/inngest-deployment`,
+      {
+        method: "PUT",
+        tenantSlug: slug,
+        body: JSON.stringify({ enabled: true }),
+      },
+    );
+    expect(started.status, JSON.stringify(started.body)).toBe(200);
+    if (!started.body.ok) throw new Error("tenant runtime start failed");
+    // The scaffolded manifest declares two agents; both must now be served.
+    expect(started.body.data.functionCount).toBeGreaterThan(0);
   });
 
   test("post-deploy: uploaded registry executes through the real event runtime", async () => {

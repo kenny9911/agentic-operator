@@ -53,12 +53,21 @@ export interface MockErpApp {
 }
 
 export function buildApp(opts: BuildAppOptions = {}): MockErpApp {
+  const dataDir = opts.dataDir ?? process.env.MOCK_ERP_DATA_DIR ?? DEFAULT_DATA_DIR;
+  const transformMapsPath =
+    opts.transformMapsPath ??
+    process.env.MOCK_ERP_TRANSFORM_MAPS ??
+    DEFAULT_TRANSFORM_MAPS;
+  if (!dataDir || !transformMapsPath) {
+    throw new Error(
+      "mock-erp: no data plane configured — pass { dataDir, transformMapsPath }, " +
+        "set MOCK_ERP_DATA_DIR + MOCK_ERP_TRANSFORM_MAPS, or set POWER_SCM_DIST " +
+        "to the allmetaOntology power-scm dist directory",
+    );
+  }
   const store = new MockErpStore({
-    dataDir: opts.dataDir ?? process.env.MOCK_ERP_DATA_DIR ?? DEFAULT_DATA_DIR,
-    transformMapsPath:
-      opts.transformMapsPath ??
-      process.env.MOCK_ERP_TRANSFORM_MAPS ??
-      DEFAULT_TRANSFORM_MAPS,
+    dataDir,
+    transformMapsPath,
     stateDir:
       opts.stateDir ?? process.env.MOCK_ERP_STATE_DIR ?? path.join(APP_ROOT, "data"),
   });

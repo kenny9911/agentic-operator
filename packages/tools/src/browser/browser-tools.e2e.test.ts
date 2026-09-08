@@ -24,7 +24,14 @@ import {
 } from "./tools";
 import { browserSessions, browserToolsAvailable } from "./session-manager";
 
-const available = browserToolsAvailable();
+// The page under test is served by apps/mock-erp over the power-scm demo
+// data plane, which lives in the allmetaOntology repo (POWER_SCM_DIST →
+// …/demo-packages/power-scm/dist). Without it there is nothing to drive, so
+// the suite skips visibly instead of failing on a path from another machine.
+const POWER_SCM_DIST = process.env.POWER_SCM_DIST?.trim() ?? "";
+const dataPlaneAvailable =
+  POWER_SCM_DIST !== "" && fs.existsSync(path.join(POWER_SCM_DIST, "mock-erp", "_index.json"));
+const available = browserToolsAvailable() && dataPlaneAvailable;
 
 function ctx(input: Record<string, unknown>): ToolContext {
   return {
@@ -53,8 +60,11 @@ if (!available) {
   // Make the skip loud in the reporter output instead of silently green.
   // eslint-disable-next-line no-console
   console.warn(
-    "[browser-tools.e2e] SKIPPED: no Chrome/Chromium executable found " +
-      "(BROWSER_TOOLS_EXECUTABLE unset, no /Applications/Google Chrome.app, no /usr/bin/chromium*).",
+    dataPlaneAvailable
+      ? "[browser-tools.e2e] SKIPPED: no Chrome/Chromium executable found " +
+          "(BROWSER_TOOLS_EXECUTABLE unset, no /Applications/Google Chrome.app, no /usr/bin/chromium*)."
+      : "[browser-tools.e2e] SKIPPED: POWER_SCM_DIST is not set to the allmetaOntology power-scm dist " +
+          "(the mock ERP page under test needs its data plane).",
   );
 }
 

@@ -21,7 +21,7 @@
  *     → PSCM_STOCK_TRANSFER_CREATED → action-dispatch-logistics (ERP write)
  */
 
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,7 +51,13 @@ import { makeId } from "@agentic/shared";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "../../..");
 const MANIFEST_PATH = path.join(REPO_ROOT, "models/power-scm-v1/workflow_v1.json");
-const ALLMETA_DIST = "/Users/kenny/CSI-AICOE/allmetaOntology/demo-packages/power-scm/dist";
+// The power-scm demo data plane lives in the allmetaOntology repo; point
+// POWER_SCM_DIST at its `demo-packages/power-scm/dist` to run this suite.
+// Without it (CI, a fresh clone) the suite is skipped — visibly — instead of
+// failing on a path that only exists on one developer's machine.
+const ALLMETA_DIST = process.env.POWER_SCM_DIST?.trim() ?? "";
+const POWER_SCM_AVAILABLE =
+  ALLMETA_DIST !== "" && existsSync(path.join(ALLMETA_DIST, "mock-erp", "_index.json"));
 
 const suffix = Date.now().toString(36).toLowerCase();
 const tenantSlug = `pscm-e2e-${suffix}`;
@@ -97,7 +103,7 @@ function forecastResult(overrides?: { emergencyClause?: boolean; gapExists?: boo
   };
 }
 
-describe.sequential("power-scm scenario 1 storm-72h cascade (E2E)", () => {
+describe.sequential.skipIf(!POWER_SCM_AVAILABLE)("power-scm scenario 1 storm-72h cascade (E2E)", () => {
   const db = getDb();
   const priorGateway = (() => {
     try {

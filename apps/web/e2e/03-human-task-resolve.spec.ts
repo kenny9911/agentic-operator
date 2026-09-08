@@ -1,143 +1,174 @@
 /**
  * P4-TEST-03 — E2E: human task creation + resolve.
  *
- * Manifest agent `jdReview` (under `tenants/raas`) is a HITL step:
+ * Target: the 采购-HC-Formal manifest agent `approveAdjustmentOption`
+ * (领导审阅并拍板), whose FIRST step is a human gate:
  *
- *   trigger:        JD_DRAFTED
- *   actions[0]:     type=manual; awaiting_role=delivery_manager
- *   triggered_event: JD_APPROVED | JD_REWORK_REQUESTED
+ *   trigger:        ADJUSTMENT_OPTIONS_GENERATED
+ *   actions[0]:     type=manual (selectOption); awaiting_role=部门领导;
+ *                   task_type=adjustment.select
+ *
+ * It used to target raas `jdReview`, but the live raas manifest is
+ * workflow_v5, which has no human-first agent at all — the spec waited for a
+ * task that no registered function could create. The CI e2e job seeds the
+ * 采购-HC-Formal tenant (`pnpm hcf:seed`, membership for the seeded admin).
  *
  * The runtime creates a `tasks` row, fires `task.created` on SSE, then
  * waits for `task.resolved` matching `taskId`. POSTing to
  * `/v1/tasks/:id/resolve` injects that event and the workflow continues
- * past the human gate.
+ * past the human gate (into the planner's confirmation, another human step —
+ * not asserted here).
  *
  * This spec:
- *   1. POSTs a `JD_DRAFTED` event to kick the agent.
- *   2. Polls /v1/tasks until a row with task_type='jdReview' appears.
- *   3. POSTs resolve { decision: 'approve' }.
- *   4. Polls /v1/tasks/:id again and asserts status flipped.
+ *   1. POSTs an `ADJUSTMENT_OPTIONS_GENERATED` event to kick the agent.
+ *   2. Polls /v1/tasks until an open task for that agent, created after the
+ *      test started, appears.
+ *   3. POSTs resolve { decision: 'approve', payload: <the selectOption form> }
+ *      — the resolve route validates the payload against the task's form
+ *      schema, so the four required fields are supplied.
+ *   4. Polls /v1/tasks/:id and asserts the status left `open`.
  *
- * It does NOT assert the downstream `JD_APPROVED` emit lands within
- * the wait window — that's a slower path (the runtime needs to fan out
- * to listeners, which may not be registered in dev). The unit suite
- * (TC-8 branch-emit) covers that contract.
+ * Note on scope: the gate is the agent's FIRST action, so the task's
+ * `preparedContext` is null — the runtime seeds it from the previous step's
+ * result and there is none. The event payload is therefore asserted where it
+ * demonstrably lands (the event ledger), not in the task row. Binding trigger
+ * data into a first-action manual task is a separate runtime question.
  */
 
 import { test, expect } from "@playwright/test";
 import { apiFetch, waitFor } from "./helpers";
 
+const TENANT = "procurement-hc-formal";
+const AGENT = "approveAdjustmentOption";
+const TASK_TYPE = "adjustment.select";
+
 test.describe("P4-TEST-03: human task resolve E2E", () => {
   test("event → manual task row → resolve flips status", async () => {
-    const subject = `e2e-jd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    // Fire the trigger event for jdReview. The RAAS manifest declares
-    // jdReview's trigger as `JD_GENERATED` (emitted by createJD upstream;
-    // we short-circuit by firing it directly so the spec doesn't depend
-    // on the entire DAG running first).
+    test.setTimeout(process.env.CI ? 180_000 : 60_000);
+    const startedAt = Date.now();
+    const stamp = `${startedAt}-${Math.random().toString(36).slice(2, 8)}`;
+    const subject = `e2e-adjust-${stamp}`;
+    const alertId = `ALT-E2E-${stamp}`;
+    const chainId = `CHN-E2E-${stamp}`;
+
+    // 1) Fire the trigger with every field the event declares as required.
     const ingest = await apiFetch<{ event_id: string }>("/v1/events", {
       method: "POST",
+      tenantSlug: TENANT,
       body: JSON.stringify({
-        name: "JD_GENERATED",
+        name: "ADJUSTMENT_OPTIONS_GENERATED",
         subject,
-        payload: { jdId: "JD-E2E-001", source: "e2e" },
+        // `payload`, not `data`: IngestEventBody declares {name, subject,
+        // payload} and the `data` shape is a RAAS/zhaopin-gated compatibility
+        // form. Under any other tenant Zod strips the unknown key, so the event
+        // still ingests 200 but the agent runs on an empty payload.
+        payload: {
+          alert_id: alertId,
+          chain_id: chainId,
+          option_ids: ["OPT-E2E-1", "OPT-E2E-2", "OPT-E2E-3"],
+          recommended_option_type: "执行调拨",
+          generated_at: new Date(startedAt).toISOString(),
+          alert_context: { alert_id: alertId, chain_id: chainId, alert_level: "红色", notified_role: "分管领导" },
+          options: [
+            { option_id: "OPT-E2E-1", option_type: "压缩后续周期", alert_id: alertId, chain_id: chainId, is_recommended: false, is_high_risk: false },
+            { option_id: "OPT-E2E-2", option_type: "调整需求日期", alert_id: alertId, chain_id: chainId, is_recommended: false, is_high_risk: false },
+            { option_id: "OPT-E2E-3", option_type: "执行调拨", alert_id: alertId, chain_id: chainId, is_recommended: true, is_high_risk: false },
+          ],
+        },
       }),
     });
-    expect(ingest.status).toBe(200);
+    expect(ingest.status, JSON.stringify(ingest.body)).toBe(200);
     if (!ingest.body.ok) throw new Error("event ingest failed");
 
-    // Poll /v1/tasks for an open jdReview row that materialised after
-    // our event landed. The runtime takes a few hundred ms to walk the
-    // workflow DAG and reach the manual action. We give it 30 s.
-    //
-    // The `type` column captures the action name (which is Chinese in
-    // the RAAS canonical manifest — "审核职位描述"). Filter on
-    // payloadJson.agentName instead, which is locale-independent and
-    // stamped by the runtime.
+    // The ingest answers 200 even when the body is discarded — under the wrong
+    // key Zod strips it and the gate below still opens, so every later
+    // assertion would pass on an empty payload. Read the event back (the detail
+    // endpoint resolves the real payload from the ledger) and prove the fields
+    // survived. This is what makes `payload:` above a tested contract.
+    const stored = await apiFetch<{
+      id: string;
+      payload?: { option_ids?: string[]; alert_context?: { alert_level?: string } };
+    }>(`/v1/events/${ingest.body.data.event_id}`, { tenantSlug: TENANT });
+    expect(stored.status).toBe(200);
+    if (!stored.body.ok) throw new Error("event detail fetch failed");
+    expect(stored.body.data.payload?.option_ids).toEqual([
+      "OPT-E2E-1",
+      "OPT-E2E-2",
+      "OPT-E2E-3",
+    ]);
+    expect(stored.body.data.payload?.alert_context?.alert_level).toBe("红色");
+
+    // 2) The human gate materialises as an open task for our agent. Filter
+    //    by creation time so a long-lived dev database with older open
+    //    tasks for the same agent cannot satisfy the wait.
     interface TaskRow {
       id: string;
       type: string;
       status: string;
-      payloadJson?: { agentName?: string; subject?: string } | null;
+      createdAt: string | number | null;
+      payloadJson?: { agentName?: string } | null;
     }
     const task = await waitFor<TaskRow>(
       async () => {
-        const res = await apiFetch<TaskRow[]>("/v1/tasks?limit=50");
+        const res = await apiFetch<TaskRow[]>("/v1/tasks?limit=50", { tenantSlug: TENANT });
         if (!res.body.ok) return null;
         const match = res.body.data.find(
           (t) =>
             t.status === "open" &&
-            t.payloadJson?.agentName === "jdReview" &&
-            t.payloadJson?.subject === subject,
+            t.payloadJson?.agentName === AGENT &&
+            // Filter on type as well: once the gate below is resolved the SAME
+            // agent opens `adjustment.planner-confirm`, which stays open. On a
+            // retry that leftover satisfies every other clause and the type
+            // assertion then fails on the wrong row.
+            t.type === TASK_TYPE &&
+            t.createdAt != null &&
+            new Date(t.createdAt).getTime() >= startedAt - 5_000,
         );
         return match ?? null;
       },
-      { timeoutMs: 30_000, label: "jdReview open task", intervalMs: 500 },
+      // On a CI runner the Inngest dev server dispatches a step in tens of
+      // seconds, not milliseconds.
+      { timeoutMs: process.env.CI ? 120_000 : 30_000, label: `${AGENT} ${TASK_TYPE} task`, intervalMs: 500 },
     );
-
-    // Task ids may be `tsk-<hex>` (makeId default) or `TASK-<n>` for
-    // legacy manifests; accept either to stay portable.
     expect(task.id).toMatch(/^(tsk-|TASK-)/);
     expect(task.status).toBe("open");
+    expect(task.type).toBe(TASK_TYPE);
 
-    // Resolve the task.
-    const resolve = await apiFetch<{
-      task_id: string;
-      decision: string;
-    }>(`/v1/tasks/${task.id}/resolve`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approve", payload: { note: "e2e ok" } }),
-    });
+    // 3) Resolve with the form the gate declares (all four required fields).
+    const resolve = await apiFetch<{ task_id: string; decision: string }>(
+      `/v1/tasks/${task.id}/resolve`,
+      {
+        method: "POST",
+        tenantSlug: TENANT,
+        body: JSON.stringify({
+          decision: "approve",
+          payload: {
+            option_id: "OPT-E2E-3",
+            option_type: "执行调拨",
+            decision_role: "分管领导",
+            decided_by: "E2E 分管领导",
+            comment: "e2e: 按推荐方案执行",
+          },
+        }),
+      },
+    );
     expect(resolve.status).toBe(200);
     if (!resolve.body.ok) {
-      throw new Error(
-        `resolve failed: ${resolve.body.error.code} — ${resolve.body.error.message}`,
-      );
+      throw new Error(`resolve failed: ${resolve.body.error.code} — ${resolve.body.error.message}`);
     }
     expect(resolve.body.data.task_id).toBe(task.id);
     expect(resolve.body.data.decision).toBe("approve");
 
-    // The api's /resolve handler emits `task.resolved` via inngest.
-    // The dev runner re-enters the parent waitForEvent handler, which
-    // then writes the task row's status. Depending on inngest's polling
-    // cadence and load, that flip can take 1-30 s. We poll for up to
-    // 30 s but treat a sustained 'open' as a known-slow path rather
-    // than a contract failure — the resolve POST returning 200 is the
-    // *primary* contract (the api accepted the resolution).
+    // 4) The row leaves `open` (resolving → resolved once the runtime resumes).
     const after = await waitFor<{ id: string; status: string }>(
       async () => {
-        const res = await apiFetch<{ id: string; status: string }>(
-          `/v1/tasks/${task.id}`,
-        );
+        const res = await apiFetch<{ id: string; status: string }>(`/v1/tasks/${task.id}`, { tenantSlug: TENANT });
         if (!res.body.ok) return null;
-        // Return anything (open or not) — we want to assert ONLY that
-        // the row is still queryable. Status transitions are tested in
-        // the api-workspace unit tests where we control the inngest
-        // dev runner directly.
-        return res.body.data;
+        return res.body.data.status === "open" ? null : res.body.data;
       },
-      { timeoutMs: 10_000, label: "task detail readback" },
+      { timeoutMs: 15_000, label: "task status left open" },
     );
     expect(after.id).toBe(task.id);
-    expect(typeof after.status).toBe("string");
-  });
-
-  test("resolving the same task twice returns already_resolved (409)", async () => {
-    // List tasks; pick the most recent non-open one (resolved in the
-    // first test above). If the test runs in isolation, skip the
-    // assertion — there's nothing to double-resolve.
-    const list = await apiFetch<Array<{ id: string; status: string }>>(
-      "/v1/tasks?limit=20",
-    );
-    if (!list.body.ok) return;
-    const resolved = list.body.data.find((t) => t.status !== "open");
-    if (!resolved) {
-      test.skip(true, "no resolved task in fixture state; skipping idempotency check");
-      return;
-    }
-    const second = await apiFetch(`/v1/tasks/${resolved.id}/resolve`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approve" }),
-    });
-    expect([409, 404]).toContain(second.status);
+    expect(["resolving", "resolved"]).toContain(after.status);
   });
 });

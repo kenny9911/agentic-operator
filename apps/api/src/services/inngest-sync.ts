@@ -370,7 +370,11 @@ export interface TenantAppRegistrationVerification {
   observedFunctionCount: number | null;
   connected: boolean;
   verified: boolean;
-  evidence: "dev_graphql" | "cloud_sync_acceptance" | "test_only_bypass";
+  evidence:
+    | "dev_graphql"
+    | "cloud_sync_acceptance"
+    | "empty_app_sync_acceptance"
+    | "test_only_bypass";
   checkedAt: string;
   error?: string;
 }
@@ -550,6 +554,31 @@ export async function verifyTenantAppRegistration(
         : "dev_graphql",
       checkedAt: new Date().toISOString(),
       error: "local tenant registry identity/function count changed before broker verification",
+    };
+  }
+  // An app that serves ZERO functions has no dispatch connection to observe.
+  // The dev server answers the probe for it with "No functions registered
+  // within your app" (healthy=false, connected=false), so the count probe can
+  // never converge and every caller that demanded it failed closed on a state
+  // that is perfectly legal: a tenant whose runtime is deliberately stopped
+  // (new tenants start stopped) registers zero functions by design, and
+  // publishing a manifest to it must still succeed. The accepted sync PUT is
+  // the broker receipt for that state — the same rule
+  // `synchronizeTenantInngestDeployment` already applies when it skips this
+  // probe for an empty app. The receipt says so plainly rather than borrowing
+  // `dev_graphql`, and it reports connected=false, so the sandbox promotion
+  // gate (which requires a connected readback with an exact non-zero count)
+  // still rejects it.
+  if (expected === 0) {
+    return {
+      slug,
+      appId: configured.appId,
+      expectedFunctionCount: 0,
+      observedFunctionCount: 0,
+      connected: false,
+      verified: true,
+      evidence: "empty_app_sync_acceptance",
+      checkedAt: new Date().toISOString(),
     };
   }
   if (process.env.INNGEST_SYNC_DISABLED === "1" && process.env.NODE_ENV === "test") {

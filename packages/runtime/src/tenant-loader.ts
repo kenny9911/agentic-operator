@@ -238,6 +238,85 @@ export async function resolveLiveVersion(
  * Returns null only when `agentic.json` is absent. Malformed/unreadable
  * manifests and declared-but-missing registries are integrity failures.
  */
+/**
+ * Make the host's module scope resolvable from deployed tenant code.
+ *
+ * A CLI-deployed package lives under `data/tenants/<slug>/<version>/`, outside
+ * the pnpm workspace. Its `package.json` asks for `@agentic/agent-sdk`,
+ * `@agentic/shared` and `zod` — nothing ever installs them there. Node
+ * resolves a bare import by walking up from the importing file, and the
+ * repository root has no `node_modules` at all (pnpm links dependencies per
+ * consumer, never at the root), so those imports failed with
+ * ERR_MODULE_NOT_FOUND on a fresh checkout and in CI.
+ *
+ * This source is imported INTO the api process, so the honest scope for it is
+ * the api's own: one symlink at `data/tenants/node_modules` → the running
+ * process's `node_modules` puts exactly the packages the host can resolve on
+ * that walk-up path, and no others. Node follows the link to each real package
+ * directory, so their own dependencies keep resolving from where pnpm put
+ * them. A tenant importing something the host does not depend on still fails,
+ * which is the truthful answer.
+ */
+/**
+ * True when `shim` is the directory a previous version of this function left
+ * behind: nothing but an `@agentic` symlink into the same host `node_modules`
+ * we are about to link wholesale. Anything else — a real install, extra
+ * entries, a link elsewhere — belongs to whoever put it there.
+ */
+async function isSupersededScopeShim(
+  shim: string,
+  source: string,
+): Promise<boolean> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(shim);
+  } catch {
+    return false;
+  }
+  if (entries.length !== 1 || entries[0] !== "@agentic") return false;
+  const scope = path.join(shim, "@agentic");
+  try {
+    if (!(await fs.lstat(scope)).isSymbolicLink()) return false;
+    const target = await fs.readlink(scope);
+    return (
+      path.resolve(path.dirname(scope), target) ===
+      path.join(source, "@agentic")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function ensureTenantModuleScope(): Promise<void> {
+  const source = path.resolve(process.cwd(), "node_modules");
+  try {
+    await fs.access(source);
+  } catch {
+    return; // not running inside the workspace (packaged build) — nothing to link
+  }
+  const shim = path.join(dataTenantsRoot(), "node_modules");
+  try {
+    const existing = await fs.lstat(shim);
+    if (existing.isSymbolicLink()) {
+      const target = await fs.readlink(shim);
+      if (path.resolve(path.dirname(shim), target) === source) return;
+      await fs.unlink(shim); // stale link from another checkout
+    } else if (await isSupersededScopeShim(shim, source)) {
+      // An earlier build linked only `node_modules/@agentic` inside a real
+      // directory here, which left `zod` (scaffolded into every tenant package)
+      // unresolvable. That directory is ours and holds nothing else, so replace
+      // it; bailing out would leave such a checkout permanently broken.
+      await fs.rm(shim, { recursive: true, force: true });
+    } else {
+      return; // a real directory with content we did not create: hands off
+    }
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+  await fs.mkdir(path.dirname(shim), { recursive: true });
+  await fs.symlink(source, shim, "dir");
+}
+
 export async function loadTenant(
   slug: string,
   version: string,
@@ -281,6 +360,7 @@ export async function loadTenant(
   const registryRel = manifest.code?.registry;
   let registry: TenantRegistry | null = null;
   if (registryRel) {
+    await ensureTenantModuleScope();
     const registryAbs = path.resolve(dir, registryRel);
     const relative = path.relative(dir, registryAbs);
     if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {

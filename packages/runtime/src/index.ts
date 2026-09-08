@@ -263,6 +263,7 @@ export {
   type BootstrapTenantResult,
 } from "./bootstrap";
 export {
+  loadActionsFromDisk,
   loadManifestFromDisk,
   WorkflowManifestSchema,
   ActionsManifestSchema,
@@ -531,6 +532,7 @@ export { resolveModelsRoot, shouldDiscoverModelFolder } from "./models-root";
 export {
   canonicalWorkflowVersionId,
   legacyWorkflowVersionId,
+  workflowVersionContentCompatible,
   workflowVersionContentMatches,
   workflowVersionContentSha256,
   workflowVersionIdentityKind,

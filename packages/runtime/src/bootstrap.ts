@@ -66,6 +66,7 @@ import { resolveModelsRoot, shouldDiscoverModelFolder } from "./models-root";
 import { isFactorySandboxTenant } from "./sandbox-mode";
 import {
   canonicalWorkflowVersionId,
+  workflowVersionContentCompatible,
   legacyWorkflowVersionId,
   workflowVersionContentMatches,
 } from "./workflow-version-identity";
@@ -854,7 +855,12 @@ export async function bootstrapTenant(spec: {
         .all()[0];
   if (
     workflowVersion &&
-    !workflowVersionContentMatches(workflowVersion, manifest, loaded.actionsExt)
+    // Compatible, not identical: a workflow-only publish authors no actions, so
+    // its row's actions_json is null while the runtime pairs the manifest with
+    // the tenant's existing actions file. The version id already hashes both
+    // halves, so that row is not a collision — see
+    // workflowVersionContentCompatible.
+    !workflowVersionContentCompatible(workflowVersion, manifest, loaded.actionsExt)
   ) {
     throw new FatalRuntimeBootstrapError(
       `[bootstrap] full workflow version digest collision for ${spec.tenantSlug}`,

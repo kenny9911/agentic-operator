@@ -27,6 +27,9 @@ import { API_BASE, apiFetch, waitFor, readSseUntil } from "./helpers";
 
 test.describe("P4-TEST-01: manifest agent run E2E", () => {
   test("event → run → step → emit → SSE run.completed", async () => {
+    // See the terminal wait below: on CI the run only becomes terminal after
+    // the agent's retry ladder, which is longer than the default 60 s budget.
+    test.setTimeout(process.env.CI ? 300_000 : 60_000);
     // Unique subject per test invocation so we can find OUR run row in
     // /v1/runs without depending on ordering.
     const subject = `e2e-manifest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -98,7 +101,13 @@ test.describe("P4-TEST-01: manifest agent run E2E", () => {
         }
         return null;
       },
-      { timeoutMs: 30_000, label: "manifest run terminal", intervalMs: 500 },
+      // On a CI runner the raas sync agent has no client-system credentials:
+      // its first tool step fails, Inngest retries it three times with
+      // growing backoff (observed +22 s, +31 s, +48 s), and only then does
+      // the run row become terminal (`failed`, which this spec accepts —
+      // the contract under test is event → run → terminal → SSE, not the
+      // integration). 30 s is shorter than one retry cycle there.
+      { timeoutMs: process.env.CI ? 240_000 : 30_000, label: "manifest run terminal", intervalMs: 500 },
     );
 
     expect(run.agentName).toBe("syncFromClientSystem");
