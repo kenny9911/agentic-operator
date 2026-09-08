@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file-if-exists=.env.local --env-file-if-exists=../../.env --import tsx scripts/sqlite-writer-supervisor.ts --watch",
+    "dev:no-watch": "node --env-file-if-exists=.env.local --env-file-if-exists=../../.env --import tsx scripts/sqlite-writer-supervisor.ts",
     "start": "node --env-file-if-exists=.env.local --env-file-if-exists=../../.env --import tsx scripts/sqlite-writer-supervisor.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

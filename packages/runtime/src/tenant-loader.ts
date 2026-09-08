@@ -238,6 +238,46 @@ export async function resolveLiveVersion(
  * Returns null only when `agentic.json` is absent. Malformed/unreadable
  * manifests and declared-but-missing registries are integrity failures.
  */
+/**
+ * Make the workspace's `@agentic/*` packages resolvable from deployed tenant
+ * code.
+ *
+ * A CLI-deployed package lives under `data/tenants/<slug>/<version>/`, outside
+ * the pnpm workspace, and its `package.json` says `"@agentic/agent-sdk":
+ * "workspace:*"` — nothing ever installs that. Node resolves a bare import by
+ * walking up from the importing file, and the repository root has no
+ * `node_modules/@agentic` (pnpm links workspace packages per consumer, not at
+ * the root), so every such import failed with ERR_MODULE_NOT_FOUND on a fresh
+ * checkout and in CI. One symlink at `data/tenants/node_modules/@agentic` →
+ * the api's own `node_modules/@agentic` (which links every workspace package
+ * the api depends on) puts the whole scope on that walk-up path. Node follows
+ * the link to the real package directory, so the SDK's own dependencies keep
+ * resolving from where pnpm installed them.
+ */
+async function ensureWorkspaceScopeResolvable(): Promise<void> {
+  const source = path.resolve(process.cwd(), "node_modules", "@agentic");
+  try {
+    await fs.access(source);
+  } catch {
+    return; // not running inside the workspace (packaged build) — nothing to link
+  }
+  const shim = path.join(dataTenantsRoot(), "node_modules", "@agentic");
+  try {
+    const existing = await fs.lstat(shim);
+    if (existing.isSymbolicLink()) {
+      const target = await fs.readlink(shim);
+      if (path.resolve(path.dirname(shim), target) === source) return;
+      await fs.unlink(shim); // stale link from another checkout
+    } else {
+      return; // a real directory: the author manages dependencies themselves
+    }
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+  await fs.mkdir(path.dirname(shim), { recursive: true });
+  await fs.symlink(source, shim, "dir");
+}
+
 export async function loadTenant(
   slug: string,
   version: string,
@@ -281,6 +321,7 @@ export async function loadTenant(
   const registryRel = manifest.code?.registry;
   let registry: TenantRegistry | null = null;
   if (registryRel) {
+    await ensureWorkspaceScopeResolvable();
     const registryAbs = path.resolve(dir, registryRel);
     const relative = path.relative(dir, registryAbs);
     if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {

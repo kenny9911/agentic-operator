@@ -246,6 +246,12 @@ jobs:
       INNGEST_BASE_URL: http://localhost:8488
       INNGEST_EVENT_KEY: local-dev-event-key
       INNGEST_SIGNING_KEY: local-dev-signing-key
+      # Same shape as the env examples (cwd-relative to apps/api). Without
+      # AGENTIC_MODELS_DIR the api registers no tenant manifests (events then
+      # have no handler — the run/task specs wait forever) and the manifest
+      # import route answers 500 ("AGENTIC_MODELS_DIR is not set").
+      AGENTIC_MODELS_DIR: ../../models
+      AGENTIC_ARTIFACTS_DIR: ../../data/artifacts
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -265,6 +271,11 @@ jobs:
           echo "AGENTIC_BOOTSTRAP_ADMIN_PASSWORD=$seed_password" >> "$GITHUB_ENV"
           pnpm db:migrate
           pnpm db:seed
+          # The human-task spec needs a tenant whose live manifest still has
+          # a human-first agent; raas (workflow_v5) has none. 采购-HC-Formal
+          # ships 29 manifest agents incl. 领导拍板 (approveAdjustmentOption).
+          # Creates no users; grants membership to the seeded admin.
+          pnpm hcf:seed
 
       - name: Install Playwright browsers
         run: pnpm --filter @agentic/web exec playwright install --with-deps chromium

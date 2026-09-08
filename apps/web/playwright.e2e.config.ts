@@ -63,10 +63,14 @@ export default defineConfig({
     ? {
         webServer: [
           {
-            // The repo-level `pnpm dev` concurrently launches web (3599),
-            // api (3540), and inngest dev (8488). It accepts a SIGTERM
-            // cleanly via the wrapper.
-            command: "pnpm dev",
+            // The repo-level `pnpm dev:e2e` concurrently launches web (3599),
+            // api (3540), and inngest dev (8488) — like `pnpm dev`, but the
+            // api runs WITHOUT `node --watch`. The suite deploys tenant code
+            // under data/tenants/ and the api imports it; with --watch that
+            // import joins the watch set, the next write restarts the api
+            // mid-suite, and every in-flight call (Inngest executions, the
+            // CLI's second request) dies with EOF / fetch failed.
+            command: "pnpm dev:e2e",
             // Wait on core readiness (process + SQLite + Inngest registration).
             // NOT /health: that is full production readiness and answers 503
             // whenever the optional execution planes (CodeAct executor,
