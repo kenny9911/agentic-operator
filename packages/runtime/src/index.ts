@@ -69,6 +69,7 @@ export {
   type GeneratedCodeFailure,
   type GeneratedCodeHostRuntime,
   type GeneratedCodeProductionPolicy,
+  type GeneratedCodeSkillAccess,
   type RunGeneratedCodeOptions,
 } from "./codeact";
 export {
@@ -555,3 +556,7 @@ export {
   type StoredWorkflowVersionContent,
 } from "./workflow-version-identity";
 export { systemCronFns, __getCronFires, __resetCronFires } from "./system-cron";
+
+export * from "./skill-execution";
+
+export * from "./skill-host";

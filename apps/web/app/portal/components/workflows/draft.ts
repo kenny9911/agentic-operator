@@ -22,7 +22,7 @@
  */
 
 import type { DagAgent } from "@/lib/hooks/useAgents";
-import { connectWorkflowAgents, type AgentSpec } from "@agentic/contracts";
+import { connectWorkflowAgents, SkillBindingsSchema, type SkillBindings, type AgentSpec } from "@agentic/contracts";
 
 export type AgentActor = "Agent" | "Human";
 
@@ -71,6 +71,7 @@ export interface DraftAgent {
   outputs?: unknown[] | null;
   actions?: unknown[];
   tool_use?: unknown[] | null;
+  skills?: SkillBindings | null;
   provider?: string | null;
   model?: string | null;
   temperature?: number | null;
@@ -83,6 +84,8 @@ export interface DraftAgent {
 }
 
 export interface WorkflowDraft {
+  /** Sparse workflow-level override; absence preserves the loaded envelope. */
+  skills?: SkillBindings;
   agents: Record<string, DraftAgent>;
   added: Set<string>;
   removed: Set<string>;
@@ -209,6 +212,7 @@ export function patchAgentDefinition(
   if (hasOwn(patch, "tool_use")) {
     optionalField(out, "tool_use", patch.tool_use);
   }
+  if (hasOwn(patch, "skills")) optionalField(out, "skills", patch.skills);
   if (hasOwn(patch, "provider")) optionalField(out, "provider", patch.provider);
   if (hasOwn(patch, "model")) optionalField(out, "model", patch.model);
   if (hasOwn(patch, "temperature")) {
@@ -691,6 +695,7 @@ export function addAgentToDraft(
   const nextRemoved = new Set(draft.removed);
   nextRemoved.delete(id);
   return {
+    ...draft,
     agents: {
       ...draft.agents,
       [id]: {
@@ -800,6 +805,7 @@ export function connectAgents(
     ]),
   };
   return {
+    ...draft,
     agents,
     added: new Set(draft.added),
     removed: new Set(draft.removed),
@@ -821,6 +827,7 @@ export function moveAgent(
   }
   const current = draft.agents[agentId] ?? { id: agentId };
   return {
+    ...draft,
     agents: {
       ...draft.agents,
       [agentId]: {
@@ -846,7 +853,7 @@ export function countDraftChanges(draft: WorkflowDraft): DraftCounts {
     added: draft.added.size,
     modified: Object.keys(draft.agents).filter(
       (id) => !draft.added.has(id) && !draft.removed.has(id),
-    ).length,
+    ).length + (hasOwn(draft, "skills") ? 1 : 0),
     removed: draft.removed.size,
   };
 }
@@ -858,6 +865,7 @@ export function countDraftChanges(draft: WorkflowDraft): DraftCounts {
 // (tenants share the same dev DB; we don't want a cross-tenant collision).
 
 export interface SerializedDraft {
+  skills?: SkillBindings;
   v: 2;
   savedAt: number;
   /** Optimistic-concurrency anchor captured when browser editing began. */
@@ -876,6 +884,7 @@ export function serializeDraft(
     savedAt: Date.now(),
     baseVersionId,
     agents: draft.agents,
+    ...(draft.skills === undefined ? {} : { skills: draft.skills }),
     added: Array.from(draft.added),
     removed: Array.from(draft.removed),
   };
@@ -884,6 +893,7 @@ export function serializeDraft(
 export function deserializeDraft(serialized: SerializedDraft): WorkflowDraft {
   return {
     agents: serialized.agents,
+    ...(serialized.skills === undefined ? {} : { skills: serialized.skills }),
     added: new Set(serialized.added),
     removed: new Set(serialized.removed),
   };
@@ -931,4 +941,15 @@ export function tryReadSerializedDraft(raw: string): SerializedDraft | null {
 /** Build the localStorage key for a given (tenant, workflow) pair. */
 export function draftStorageKey(tenant: string, workflowId: string): string {
   return `workflow-draft:${tenant}:${workflowId}`;
+}
+
+/** Retain workflow-level settings and extensions when saving canvas edits.
+ * The caller must provide the complete source envelope for the same revision. */
+export function mergeWorkflowManifest(
+  source: Record<string, unknown>,
+  agents: CompleteAgentDefinition[],
+  draft: Pick<WorkflowDraft, "skills">,
+): Record<string, unknown> & { agents: CompleteAgentDefinition[]; skills?: SkillBindings } {
+  if (!Array.isArray(source.agents)) throw new Error("The complete workflow manifest must be loaded before saving.");
+  return { ...source, agents, ...(draft.skills === undefined ? {} : { skills: SkillBindingsSchema.parse(draft.skills) }) };
 }

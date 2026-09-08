@@ -76,15 +76,11 @@ export const CODEACT_WORKER_ISOLATION_CONTRACT = Object.freeze({
   promotable: false as const,
 });
 
-export type CodeActRpcMethod =
-  | "reason"
-  | "tool"
-  | "memory.get"
-  | "memory.put"
-  | "memory.delete"
-  | "memory.search"
-  | "invoke"
-  | "spawn";
+export const CODEACT_RPC_METHODS = Object.freeze([
+  "reason", "tool", "memory.get", "memory.put", "memory.delete", "memory.search",
+  "invoke", "spawn", "skills.list", "skills.load", "skills.listResources", "skills.readResource",
+] as const);
+export type CodeActRpcMethod = (typeof CODEACT_RPC_METHODS)[number];
 
 export interface CodeActWorkerIdentity {
   agentName: string;
@@ -346,6 +342,13 @@ function rpc(method, args) {
       reason: (systemPrompt, input) => rpc("reason", [systemPrompt, input]),
       tool: (name, args) => rpc("tool", [name, args]),
       tools: { run: (name, args) => rpc("tool", [name, args]) },
+      skills: {
+        runScript: (input) => rpc("tool", ["skills.run_script", input]),
+        list: (options) => rpc("skills.list", [options]),
+        load: (selector) => rpc("skills.load", [selector]),
+        listResources: (selector, options) => rpc("skills.listResources", [selector, options]),
+        readResource: (selector, path) => rpc("skills.readResource", [selector, path]),
+      },
       emit(event, payload = {}) {
         if (typeof event !== "string" || !event.trim()) throw new TypeError("emit event must be a non-empty string");
         const wire = jsonClone({ event, payload }, "emit payload");
@@ -508,7 +511,7 @@ export function executeCodeActWorker(
       if (message.kind === "rpc") {
         const id = message.id;
         const method = message.method;
-        if (typeof id !== "number" || !method) {
+        if (!Number.isSafeInteger(id) || !method || !CODEACT_RPC_METHODS.includes(method)) {
           finish({ ok: false, failure: "rpc_failed", error: "worker sent a malformed RPC request" });
           return;
         }

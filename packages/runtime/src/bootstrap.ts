@@ -536,6 +536,7 @@ export async function bootstrapTenant(spec: {
   const db = getDb();
   const loaded = await loadModelsFromDisk(spec.modelDir);
   const { manifest } = loaded;
+  const persistedManifest = loaded.skills ? { $schemaVersion: 2, agents: manifest, skills: loaded.skills } : manifest;
 
   // UC-V11-25 / AR-GAP-13 — refuse-to-boot when any `logic` action lacks
   // a tenant `definePrompt`. The legacy fallback shipped
@@ -753,7 +754,7 @@ export async function bootstrapTenant(spec: {
     manifest,
   });
 
-  const versionStr = canonicalWorkflowVersionId(manifest, loaded.actionsExt);
+  const versionStr = canonicalWorkflowVersionId(persistedManifest, loaded.actionsExt);
   const legacyVersionStr = legacyWorkflowVersionId(manifest);
 
   // Authoring can publish a NAMED workflow into the tenant's single live
@@ -794,7 +795,7 @@ export async function bootstrapTenant(spec: {
       // would overwrite a colliding row. It qualifies only on a canonical
       // version match (above) or a real content match (below). See
       // workflow-version-identity.ts:50-54.
-      workflowVersionContentMatches(liveVersion, manifest, loaded.actionsExt)
+      workflowVersionContentMatches(liveVersion, persistedManifest, loaded.actionsExt)
     ) {
       matchingLive = candidate;
       break;
@@ -860,7 +861,7 @@ export async function bootstrapTenant(spec: {
     // the tenant's existing actions file. The version id already hashes both
     // halves, so that row is not a collision — see
     // workflowVersionContentCompatible.
-    !workflowVersionContentCompatible(workflowVersion, manifest, loaded.actionsExt)
+    !workflowVersionContentCompatible(workflowVersion, persistedManifest, loaded.actionsExt)
   ) {
     throw new FatalRuntimeBootstrapError(
       `[bootstrap] full workflow version digest collision for ${spec.tenantSlug}`,
@@ -879,7 +880,7 @@ export async function bootstrapTenant(spec: {
       .all()[0];
     if (
       legacy &&
-      workflowVersionContentMatches(legacy, manifest, loaded.actionsExt)
+      workflowVersionContentMatches(legacy, persistedManifest, loaded.actionsExt)
     ) {
       workflowVersion = legacy;
     }
@@ -892,7 +893,7 @@ export async function bootstrapTenant(spec: {
         id: wfvId,
         workflowId: workflow.id,
         version: versionStr,
-        manifestJson: manifest as unknown as object,
+        manifestJson: persistedManifest as unknown as object,
         actionsJson: loaded.actionsExt as unknown as object,
       })
       .run();
@@ -915,6 +916,7 @@ export async function bootstrapTenant(spec: {
   // each function is built; the resolver closure reads it lazily at handler-run time (after boot
   // finishes), so an invoke action can resolve a sibling agent registered later in this loop.
   const fnRegistry = new Map<string, InngestFunction.Any>();
+  const functionRecipients = new Map<string, string>();
   const resolveFunction = (ref: string): InngestFunction.Any | undefined =>
     fnRegistry.get(ref);
   // #RULE-GATE — resolved once for the whole domain, before any function is
@@ -1043,6 +1045,8 @@ export async function bootstrapTenant(spec: {
         tenantRegistry: tenantRegistry ?? undefined,
         eventAdapter,
         resolveFunction,
+        resolveFunctionRecipient: (ref) => functionRecipients.get(ref),
+        workflowSkills: loaded.skills,
         declarativeTools,
         // #RULE-GATE — the consumer `rules.json` never had. Resolved once per
         // boot above; every registered agent in this domain is judged against
@@ -1070,6 +1074,7 @@ export async function bootstrapTenant(spec: {
         // references) so validation and resolution can never disagree.
         for (const target of invokeTargetNames(spec.tenantSlug, a)) {
           fnRegistry.set(target, fn as InngestFunction.Any);
+          functionRecipients.set(target, a.name);
         }
       }
     }

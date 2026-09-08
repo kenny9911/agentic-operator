@@ -1,3 +1,6 @@
+import { getRuntimeSkillHost, type RunSkillSnapshotRef } from "./skill-host";
+import { advanceSkillCheckpoint, captureSkillCheckpoint, type SkillExecutionCheckpoint } from "./skill-execution";
+import type { SkillBindings } from "@agentic/contracts";
 /**
  * registerAgent — turns an AgentSpec into an Inngest function tied to a tenant.
  *
@@ -194,6 +197,8 @@ import {
 } from "./production-codeact-authorization";
 
 export interface RegisterContext {
+  workflowSkills?: SkillBindings;
+  resolveFunctionRecipient?: (ref: string) => string | undefined;
   tenantId: string;
   tenantSlug: string;
   workflowVersionId: string;
@@ -1373,6 +1378,8 @@ export function registerAgent(
       // operates on canonical flat data and never branches on a business
       // tenant or legacy envelope format.
       const runInput = readRunInputContext(rehydratedData.__runInput);
+      const invocationGrant = typeof rehydratedData.__skillInvocationGrant === "string" ? rehydratedData.__skillInvocationGrant : undefined;
+      delete rehydratedData.__skillInvocationGrant;
       const data = eventAdapter.inbound({
         eventName: event.name,
         data: rehydratedData,
@@ -1490,6 +1497,8 @@ export function registerAgent(
             ),
           },
         );
+        if (!getRuntimeSkillHost() && (ctx.workflowSkills || agent.skills)) throw new Error("Authored Skill bindings require a configured runtime Skill host");
+        const skillSnapshot = db.transaction(() => {
         db.insert(runs)
           .values({
             id: rid,
@@ -1519,6 +1528,13 @@ export function registerAgent(
             logPath: runLogPath,
           })
           .run();
+        return getRuntimeSkillHost()?.capture({
+          tenantId: ctx.tenantId, tenantSlug, executionId: rid, agentId: agentRow.id,
+          agentName: agent.name, workflowSkills: ctx.workflowSkills, agentSkills: agent.skills,
+          ...(event.id ? { delivery: { eventId: event.id, eventName: event.name } } : {}),
+          invocationGrant,
+        });
+        });
         // Structured run.start trace (run_trace_events) — best-effort: trace
         // IO must never abort a real run. Inside `init` ⇒ exactly-once.
         try {
@@ -1561,6 +1577,7 @@ export function registerAgent(
           /* broadcast best-effort */
         }
         return {
+          skillSnapshot,
           runId: rid,
           correlationId: cid,
           agentDbId: agentRow.id,
@@ -1571,6 +1588,11 @@ export function registerAgent(
       });
 
       const runId = init.runId;
+      const skillHost = getRuntimeSkillHost();
+      if (init.skillSnapshot && !skillHost) throw new Error("The captured Skill runtime host is unavailable");
+      const skillSession = init.skillSnapshot
+        ? await skillHost!.restore(init.skillSnapshot as RunSkillSnapshotRef, { tenantId: ctx.tenantId, executionId: runId, agentId: init.agentDbId })
+        : undefined;
       const correlationId = init.correlationId;
       const startedAtMs = init.startedAt;
       const startedAt = new Date(startedAtMs);
@@ -2205,7 +2227,10 @@ export function registerAgent(
                 .set({ inputRef })
                 .where(eq(steps.id, stepId))
                 .run();
-              return { stepId, startedAtMs };
+              const recipient = ctx.resolveFunctionRecipient?.(targetRef);
+              if (skillHost && !recipient) throw new Error("Skill invocation recipient is not registered");
+              const skillInvocationGrant = skillHost?.issueInvocation({ tenantId: ctx.tenantId, executionId: runId, agentId: init.agentDbId, stepId, recipient: recipient! });
+              return { stepId, startedAtMs, skillInvocationGrant };
             },
           );
           const completeInvoke = async (
@@ -2258,7 +2283,11 @@ export function registerAgent(
                   );
                 return await step.invoke(`invoke-${invokeStableKey}`, {
                   function: fn,
-                  data: { ...invokePayload, ...(runInput ? { __runInput: runInput } : {}) },
+                  data: {
+                    ...invokePayload,
+                    ...(runInput ? { __runInput: runInput } : {}),
+                    ...(invokeReceipt.skillInvocationGrant ? { __skillInvocationGrant: invokeReceipt.skillInvocationGrant } : {}),
+                  },
                   timeout: a.timeout_s ? `${a.timeout_s}s` : undefined,
                 });
               },
@@ -2504,6 +2533,7 @@ export function registerAgent(
           });
           if (runInput) wireData.__runInput = runInput;
           await step.sendEvent(`subflow.send.${scheduled.emittedEventId}`, {
+            id: scheduled.emittedEventId,
             name: tenantEventName(
               tenantSlug,
               target,
@@ -3096,6 +3126,7 @@ export function registerAgent(
                   const runChild = async (): Promise<StepOutput> => {
                     try {
                       const output = await runAction({
+                        skillSession,
                         ctx: {
                           agentName: agent.name,
                           actionName: child.name,
@@ -3235,7 +3266,7 @@ export function registerAgent(
                       if (isRequiredStepEvidenceFailure(failure))
                         throw failure;
                       return {
-                        ...resolveActionFailureOutcome(child, failure),
+                        ...resolveActionFailureOutcome(child, failure, skillSession ? { meta: { skillCheckpoint: await captureSkillCheckpoint(skillSession) } } : {}),
                         type: child.type,
                       };
                     }
@@ -3245,6 +3276,8 @@ export function registerAgent(
                       ? await runChild()
                       : await runChildDurable(childStepId, child.name, runChild);
 
+                  const childSkillCheckpoint = (bodyResult.meta as { skillCheckpoint?: SkillExecutionCheckpoint } | undefined)?.skillCheckpoint;
+                  if (skillSession) await advanceSkillCheckpoint(skillSession, childSkillCheckpoint as SkillExecutionCheckpoint);
                   tokensIn += bodyResult.tokensIn ?? 0;
                   tokensOut += bodyResult.tokensOut ?? 0;
                   // #RUN-EVIDENCE (D6) — fold the child's persisted per-call
@@ -3943,6 +3976,7 @@ export function registerAgent(
                 { correlationId, agentName: agent.name, tenantSlug, runId },
                 () =>
                   runAction({
+                    skillSession,
                     ctx: {
                       agentName: agent.name,
                       actionName: action.name,
@@ -4413,6 +4447,7 @@ export function registerAgent(
               return resolveActionFailureOutcome(action, err, {
                 durationMs: failedAt - sStarted,
                 toolLedger: stepToolLedger,
+                ...(skillSession ? { meta: { skillCheckpoint: await captureSkillCheckpoint(skillSession) } } : {}),
               });
             }
           });
@@ -4431,7 +4466,7 @@ export function registerAgent(
           // callback already classified the failure; if the wrapper reaches
           // this boundary we apply the same deterministic policy once more.
           try {
-            stepOutcome = resolveActionFailureOutcome(action, stepErr);
+            stepOutcome = resolveActionFailureOutcome(action, stepErr, skillSession ? { meta: { skillCheckpoint: await captureSkillCheckpoint(skillSession) } } : {});
           } catch (controlFlowError) {
             // #RUN-FINALIZE — a step failure that leaves this handler must
             // leave the run row truthful too. Under the real SDK a failing
@@ -4469,6 +4504,9 @@ export function registerAgent(
             throw controlFlowError;
           }
         }
+
+        const skillCheckpoint = (stepOutcome.meta as { skillCheckpoint?: SkillExecutionCheckpoint } | undefined)?.skillCheckpoint;
+        if (skillSession) await advanceSkillCheckpoint(skillSession, skillCheckpoint as SkillExecutionCheckpoint);
 
         // #RUN-EVIDENCE (D6) — fold this step's persisted per-call records into
         // the run ledger. `stepOutcome` is the memoized step result, so this

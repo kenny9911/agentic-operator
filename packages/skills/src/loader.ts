@@ -1,139 +1,295 @@
-/**
- * SKILL.md loader. Mirrors Anthropic's "Skills" progressive-disclosure
- * pattern: each skill lives in `<root>/<skill-name>/SKILL.md` with a YAML
- * frontmatter block carrying `name` + `description` + arbitrary metadata.
- *
- * Boot-time we list every SKILL.md and read ONLY the frontmatter (cheap —
- * ~kilobytes per tenant). The body is loaded lazily on `load_skill(name)`
- * so a tenant with 50 skills doesn't burn memory + tokens advertising
- * 50 full bodies.
- */
-
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve, basename } from "node:path";
+/** Filesystem compatibility adapter. Configured roots are operator-owned;
+ * untrusted uploads enter through bundle/archive admission instead. */
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  opendirSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import {
+  SKILL_BUNDLE_LIMITS,
+  type SkillBundle,
+  type SkillFile,
+} from "@agentic/contracts";
+import {
+  assertSafeSkillPath,
+  assertValidSkillBundle,
+  parseSkillFrontmatter,
+} from "./bundle";
 
 export interface SkillDescriptor {
-  /** Canonical id — kebab folder name unless frontmatter overrides. */
   name: string;
-  /** One-liner shown to the LLM in the `list_skills` response. */
   description: string;
-  /** Absolute path to SKILL.md; consumed by `load_skill`. */
+  /** Trusted compatibility coordinate. Never accept this path from a model. */
   path: string;
-  /** Frontmatter metadata verbatim (any extra keys the author wants to surface). */
   metadata?: Record<string, unknown>;
 }
 
-/**
- * Walk `<root>/<skill-name>/SKILL.md` files and return a descriptor per
- * skill. Subdirectories without a SKILL.md are skipped silently — lets a
- * tenant keep helper scripts under `skills/<name>/` without polluting
- * the listing.
- *
- * `root` is resolved relative to `process.cwd()` when relative. Missing
- * `root` returns an empty array — a tenant with no skills shouldn't fail
- * to boot.
- */
-export function loadSkillsFromDirectory(root: string): SkillDescriptor[] {
-  const absRoot = resolve(process.cwd(), root);
-  if (!existsSync(absRoot)) return [];
-  const entries = readdirSync(absRoot);
-  const out: SkillDescriptor[] = [];
-  for (const entry of entries) {
-    const skillDir = join(absRoot, entry);
-    if (!statSync(skillDir).isDirectory()) continue;
-    const skillFile = join(skillDir, "SKILL.md");
-    if (!existsSync(skillFile)) continue;
-    const raw = readFileSync(skillFile, "utf8");
-    const { metadata, body: _body } = parseFrontmatter(raw);
-    // Default name = folder name; frontmatter `name` wins when present.
-    const name = stringOr(metadata?.name, basename(skillDir));
-    const description = stringOr(
-      metadata?.description,
-      `Skill '${name}' (no description provided)`,
+interface DirectoryAnchor {
+  path: string;
+  canonical: string;
+  dev: number;
+  ino: number;
+}
+
+/** Pin each traversed directory to its original identity and canonical parent.
+ * These checks reject observed replacements, including intermediate symlinks.
+ * They are not an atomic openat-based defense against a hostile same-UID
+ * process swapping paths back between checks; configured roots are trusted. */
+function captureDirectory(
+  path: string,
+  parent?: DirectoryAnchor,
+): DirectoryAnchor {
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error(
+      "Skill directories must be directories without symbolic links",
     );
-    out.push({
+  const canonical = realpathSync(path);
+  if (parent && canonical !== join(parent.canonical, basename(path))) {
+    throw new Error("Skill directory changed or escaped its pinned parent");
+  }
+  const anchor = { path, canonical, dev: stat.dev, ino: stat.ino };
+  verifyDirectories([anchor]);
+  return anchor;
+}
+
+function verifyDirectories(anchors: readonly DirectoryAnchor[]): void {
+  for (const anchor of anchors) {
+    const stat = lstatSync(anchor.path);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.dev !== anchor.dev ||
+      stat.ino !== anchor.ino ||
+      realpathSync(anchor.path) !== anchor.canonical
+    ) {
+      throw new Error("Skill directory changed while it was being snapshotted");
+    }
+  }
+}
+
+function directoryEntries(
+  anchors: readonly DirectoryAnchor[],
+  maximum: number,
+): string[] {
+  verifyDirectories(anchors);
+  const result: string[] = [];
+  const directory = opendirSync(anchors[anchors.length - 1]!.path);
+  try {
+    for (
+      let entry = directory.readSync();
+      entry;
+      entry = directory.readSync()
+    ) {
+      if (result.length >= maximum)
+        throw new Error("Skill directory contains too many entries");
+      result.push(entry.name);
+    }
+  } finally {
+    directory.closeSync();
+  }
+  verifyDirectories(anchors);
+  return result.sort();
+}
+
+/** Read regular files without following a final symlink or allocating beyond
+ * the admitted size. Reject a file changed while being snapshotted. */
+function readStableBytes(
+  file: string,
+  maximum: number,
+  anchors: readonly DirectoryAnchor[],
+): Buffer {
+  verifyDirectories(anchors);
+  const initial = lstatSync(file);
+  if (!initial.isFile() || initial.isSymbolicLink() || initial.nlink !== 1) {
+    throw new Error("Skill resources must be regular files without links");
+  }
+  if (initial.size > maximum)
+    throw new Error("Skill file exceeds its byte limit");
+  const expected = realpathSync(file);
+  if (
+    expected !== join(anchors[anchors.length - 1]!.canonical, basename(file))
+  ) {
+    throw new Error("Skill file escaped its pinned directory");
+  }
+  verifyDirectories(anchors);
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = fstatSync(fd);
+    if (
+      !before.isFile() ||
+      before.dev !== initial.dev ||
+      before.ino !== initial.ino ||
+      before.size > maximum
+    ) {
+      throw new Error("Skill file changed before it could be read");
+    }
+    const bytes = Buffer.alloc(before.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    const after = fstatSync(fd);
+    verifyDirectories(anchors);
+    if (
+      length !== before.size ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      realpathSync(file) !== expected
+    ) {
+      throw new Error("Skill file changed while it was being read");
+    }
+    return bytes.subarray(0, length);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function textBytes(bytes: Buffer): string {
+  const text = bytes.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(bytes))
+    throw new Error("SKILL.md must contain valid UTF-8 text");
+  return text;
+}
+
+/** Metadata discovery stays compatible with existing Tenant Registries. A
+ * missing configured root is an empty library; malformed files fail visibly.
+ * Only bounded SKILL.md files are inspected, not their supporting resources. */
+export function loadSkillsFromDirectory(root: string): SkillDescriptor[] {
+  const absolute = resolve(root);
+  if (!existsSync(absolute)) return [];
+  const rootAnchor = captureDirectory(absolute);
+  const descriptors: SkillDescriptor[] = [];
+  const names = new Set<string>();
+  for (const entry of directoryEntries([rootAnchor], 1000)) {
+    const skillDirectory = join(absolute, entry);
+    const stat = lstatSync(skillDirectory);
+    if (stat.isSymbolicLink())
+      throw new Error("Skill directories must not be symbolic links");
+    if (!stat.isDirectory()) continue;
+    const skillAnchor = captureDirectory(skillDirectory, rootAnchor);
+    const file = join(skillDirectory, "SKILL.md");
+    if (!existsSync(file)) continue;
+    const { metadata } = parseFrontmatter(
+      textBytes(
+        readStableBytes(file, SKILL_BUNDLE_LIMITS.maxSkillMdBytes, [
+          rootAnchor,
+          skillAnchor,
+        ]),
+      ),
+    );
+    const name =
+      typeof metadata?.name === "string" && metadata.name.length > 0
+        ? metadata.name
+        : entry;
+    if (names.has(name))
+      throw new Error(`Duplicate skill name '${name}' in configured library`);
+    names.add(name);
+    descriptors.push({
       name,
-      description,
-      path: skillFile,
+      description:
+        typeof metadata?.description === "string" &&
+        metadata.description.length > 0
+          ? metadata.description
+          : `Skill '${name}' (no description provided)`,
+      path: file,
       metadata,
     });
   }
-  // Stable order so list_skills returns the same list on every boot — keeps
-  // prompt caching effective.
-  out.sort((a, b) => a.name.localeCompare(b.name));
-  return out;
+  verifyDirectories([rootAnchor]);
+  return descriptors.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/**
- * Read a skill's full body. Caller is responsible for matching the name
- * against the loaded descriptors first; this helper only reads the file.
- */
+/** Capture complete, validated bytes before retaining an immutable version.
+ * Supporting files are read here, not each time a model loads instructions. */
+export function readSkillBundleFromDirectory(root: string): SkillBundle {
+  const absolute = resolve(root);
+  const rootAnchor = captureDirectory(absolute);
+  const files: SkillFile[] = [];
+  let totalBytes = 0;
+  let visited = 0;
+  function walk(anchors: readonly DirectoryAnchor[], prefix: string): void {
+    const parent = anchors[anchors.length - 1]!;
+    for (const entry of directoryEntries(
+      anchors,
+      SKILL_BUNDLE_LIMITS.maxFiles * 2,
+    )) {
+      if (++visited > SKILL_BUNDLE_LIMITS.maxFiles * 2)
+        throw new Error("Skill directory contains too many entries");
+      const relative = prefix ? `${prefix}/${entry}` : entry;
+      assertSafeSkillPath(relative);
+      const full = join(parent.path, entry);
+      const stat = lstatSync(full);
+      if (stat.isSymbolicLink())
+        throw new Error("Skill resources must not contain symbolic links");
+      if (stat.isDirectory()) {
+        walk([...anchors, captureDirectory(full, parent)], relative);
+        continue;
+      }
+      if (files.length >= SKILL_BUNDLE_LIMITS.maxFiles)
+        throw new Error("Skill bundle contains too many files");
+      const maximum = Math.min(
+        relative === "SKILL.md"
+          ? SKILL_BUNDLE_LIMITS.maxSkillMdBytes
+          : SKILL_BUNDLE_LIMITS.maxFileBytes,
+        SKILL_BUNDLE_LIMITS.maxBundleBytes - totalBytes,
+      );
+      const bytes = readStableBytes(full, maximum, anchors);
+      totalBytes += bytes.length;
+      const text = bytes.toString("utf8");
+      const utf8 = Buffer.from(text, "utf8").equals(bytes);
+      files.push({
+        path: relative,
+        content: utf8 ? text : bytes.toString("base64"),
+        encoding: utf8 ? "utf8" : "base64",
+      });
+    }
+    verifyDirectories(anchors);
+  }
+  walk([rootAnchor], "");
+  const bundle = { files };
+  const validated = assertValidSkillBundle(bundle);
+  if (validated.metadata?.name !== basename(absolute))
+    throw new Error("Skill folder must match the name declared in SKILL.md");
+  return bundle;
+}
+
+/** Legacy body helper; callers still own descriptor authorization. */
 export function readSkillBody(path: string): string {
-  const raw = readFileSync(path, "utf8");
-  return parseFrontmatter(raw).body;
+  return parseFrontmatter(
+    textBytes(
+      readStableBytes(path, SKILL_BUNDLE_LIMITS.maxSkillMdBytes, [
+        captureDirectory(dirname(path)),
+      ]),
+    ),
+  ).body;
 }
 
-/**
- * Minimal YAML-ish frontmatter parser. Accepts:
- *   ---
- *   name: foo
- *   description: |
- *     multi-line
- *     description
- *   custom_key: value
- *   ---
- *   body...
- *
- * No external YAML dep — we only care about top-level string + scalar
- * values and a single multi-line `|` block. Anything more exotic
- * (nested objects, arrays) falls through as a raw string. Tenants that
- * need structured metadata can keep it inside the body.
- */
+/** Preserve the legacy return shape, backed by real bounded YAML parsing. */
 export function parseFrontmatter(source: string): {
   metadata: Record<string, unknown> | undefined;
   body: string;
 } {
-  if (!source.startsWith("---")) {
+  const parsed = parseSkillFrontmatter(source);
+  if (
+    parsed.metadata === undefined &&
+    parsed.diagnostics.every((issue) => issue.code === "missing_frontmatter")
+  ) {
     return { metadata: undefined, body: source };
   }
-  const end = source.indexOf("\n---", 3);
-  if (end < 0) return { metadata: undefined, body: source };
-  const header = source.slice(3, end).trim();
-  // Body starts after the closing `---\n` (or `---` at EOF).
-  const after = end + "\n---".length;
-  let body = source.slice(after);
-  if (body.startsWith("\n")) body = body.slice(1);
-
-  const metadata: Record<string, unknown> = {};
-  const lines = header.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const m = line.match(/^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
-    if (!m) continue;
-    const key = m[1]!;
-    let value: string = m[2]!.trim();
-    if (value === "|" || value === ">") {
-      // Multi-line block — consume indented continuation lines.
-      const parts: string[] = [];
-      let j = i + 1;
-      while (j < lines.length && /^\s+/.test(lines[j]!)) {
-        parts.push(lines[j]!.replace(/^\s+/, ""));
-        j++;
-      }
-      metadata[key] = parts.join(value === "|" ? "\n" : " ").trim();
-      i = j - 1;
-    } else {
-      // Strip surrounding quotes if present.
-      const unquoted = value.replace(/^["'](.*)["']$/, "$1");
-      metadata[key] = unquoted;
-    }
-  }
-  return {
-    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-    body: body.trim(),
-  };
-}
-
-function stringOr(v: unknown, fallback: string): string {
-  return typeof v === "string" && v.length > 0 ? v : fallback;
+  const errors = parsed.diagnostics.filter(
+    (issue) => issue.severity === "error",
+  );
+  if (errors.length)
+    throw new Error(errors.map((issue) => issue.message).join("; "));
+  return { metadata: parsed.metadata, body: parsed.body.trim() };
 }

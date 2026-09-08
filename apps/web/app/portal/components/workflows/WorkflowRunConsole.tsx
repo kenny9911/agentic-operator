@@ -1867,6 +1867,12 @@ function AgentRunEvidence({ run }: { run: WorkflowTestAgentRun }) {
                     {step.error.code}: {step.error.message}
                   </div>
                 ) : null}
+                {step.skillEvidence && (step.skillEvidence.activations.length > 0 || step.skillEvidence.accesses.length > 0) && (
+                  <details style={{ marginTop: 7 }}>
+                    <summary style={detailsSummaryStyle}>{t("nav.skills")}</summary>
+                    <pre style={preStyle}>{JSON.stringify(step.skillEvidence, null, 2)}</pre>
+                  </details>
+                )}
                 <details style={{ marginTop: 7 }}>
                   <summary style={detailsSummaryStyle}>
                     {t("workflowRunConsole.inputOutput")}

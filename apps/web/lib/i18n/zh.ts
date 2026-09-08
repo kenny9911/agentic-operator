@@ -1,9 +1,11 @@
+import { skillsZh } from "./skills";
 import type { Dict } from "./types";
 
 /**
  * Chinese UI strings — must mirror `en.ts`'s key set exactly (parity test).
  */
 export const zh = {
+  skills: skillsZh,
   common: {
     notConnected: "尚未接入",
     loading: "正在加载…",
@@ -47,6 +49,7 @@ export const zh = {
     },
   },
   nav: {
+    skills: "技能",
     group: { run: "运行", observe: "观测", manage: "管理" },
     dashboard: "仪表盘",
     workflows: "工作流",

@@ -1,0 +1,46 @@
+{
+  "files": [
+    {
+      "path": "SKILL.md",
+      "encoding": "utf8",
+      "content": "---\nname: supplier-exception-digest\ndescription: Prepare a supplier exception digest from provided purchase-order rows for the weekly procurement review.\nlicense: LicenseRef-Customer\nmetadata:\n  owner: operations\n---\n\n# Supplier exception digest\n\nUse the supplied rows and reportDate. Preserve supplier identifiers exactly.\nRead [thresholds](references/thresholds.md) to classify exceptions. Calculate\ndaysOverdue as the number of calendar days from expectedDate to the supplied\nreportDate, including weekends and holidays; do not estimate it from today.\nExclude rows with no outstanding quantity.\n\nUse [the digest template](assets/digest-template.md) for output headings.\n[The customer brand mark](assets/brand-mark.png) is supplied for downstream\nrenderers; a text-only response should link it, not claim to embed or render it.\nDo not update any purchase order or contact suppliers.\n"
+    }
+  ],
+  "assumptions": [],
+  "suggestedTests": [
+    {
+      "id": "report-date-and-threshold-stability",
+      "prompt": "Prepare the weekly supplier exception digest using reportDate 2026-09-09 and these rows: [{\"poId\":\"PO-7\",\"supplier\":\"SUP-007\",\"expectedDate\":\"2026-09-02\",\"orderedQuantity\":10,\"receivedQuantity\":4},{\"poId\":\"PO-6\",\"supplier\":\"SUP-006\",\"expectedDate\":\"2026-09-03\",\"orderedQuantity\":8,\"receivedQuantity\":2},{\"poId\":\"PO-FULL\",\"supplier\":\"SUP-000\",\"expectedDate\":\"2026-08-01\",\"orderedQuantity\":5,\"receivedQuantity\":5}]. This report is being rerun on 2026-09-20.",
+      "shouldTrigger": true,
+      "expectedCriteria": [
+        "PO-7 has daysOverdue 7 and classification Escalate; PO-6 has daysOverdue 6 and classification Watch, using reportDate despite the later rerun date.",
+        "PO-FULL is excluded and supplier identifiers are preserved exactly.",
+        "Uses the supplied digest template headings, including the report date and Data requiring correction, and links the supplied brand mark without claiming it was rendered.",
+        "Does not update purchase orders or contact suppliers."
+      ]
+    },
+    {
+      "id": "month-boundary-and-correction",
+      "prompt": "Prepare the supplier exception digest for reportDate 2026-03-02. Rows: [{\"poId\":\"PO-MONTH\",\"supplier\":\"SUP-M\",\"expectedDate\":\"2026-02-27\",\"orderedQuantity\":10,\"receivedQuantity\":1},{\"poId\":\"PO-BAD\",\"supplier\":\"SUP-B\",\"expectedDate\":\"unknown\",\"orderedQuantity\":4,\"receivedQuantity\":0}].",
+      "shouldTrigger": true,
+      "expectedCriteria": [
+        "PO-MONTH has 3 calendar days overdue, outstanding quantity 9, and classification Watch.",
+        "PO-BAD appears under Data requiring correction and is excluded from overdue calculations.",
+        "Includes weekends in the calendar-day count."
+      ]
+    },
+    {
+      "id": "supplier-email-near-miss",
+      "prompt": "Draft a short thank-you note for a supplier who helped with our annual conference; do not send it.",
+      "shouldTrigger": false,
+      "expectedCriteria": [
+        "Drafts the requested thank-you note without requesting purchase-order data or producing an exception digest.",
+        "Does not send a message."
+      ]
+    }
+  ],
+  "changeSummary": [
+    "Replaces the estimate from today with calendar days from expectedDate to the supplied reportDate.",
+    "Preserves the existing frontmatter, threshold reference, template reference, brand-mark reference, and report-only boundary; unrelated resources remain unchanged."
+  ]
+}

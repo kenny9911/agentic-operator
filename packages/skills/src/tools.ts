@@ -1,134 +1,266 @@
-/**
- * Built-in skill tools — every tenant that exports `skills: SkillDescriptor[]`
- * gets these two tools registered automatically by the runtime bootstrap.
- *
- * The progressive-disclosure pattern:
- *   1. The agent's system prompt lists skill names + one-line descriptions
- *      (metadata only, cheap to ship to the LLM).
- *   2. When the model needs a skill's full body, it calls `load_skill`
- *      with the name; the runtime returns the SKILL.md body verbatim.
- *
- * This mirrors Anthropic's Skills design (markdown that loads on demand)
- * so future migration to Anthropic's hosted Skills API is a thin shim.
- */
-
-import { defineTool } from "@agentic/agent-kit";
-import type { ToolDescriptor } from "@agentic/agent-kit";
+/** Model-facing adapters. Business Tool authorization remains owned by the
+ * calling harness; registering these descriptors grants no Tool access. */
+import { basename, dirname } from "node:path";
+import { defineTool, type ToolDescriptor } from "@agentic/agent-kit";
 import { z } from "zod";
+import { assertValidSkillBundle } from "./bundle";
+import { readSkillBundleFromDirectory, type SkillDescriptor } from "./loader";
+import {
+  type SkillActivationOrigin,
+  type SkillSelector,
+  type SkillSession,
+} from "./session";
 
-import { readSkillBody, type SkillDescriptor } from "./loader";
+const pageSchema = z
+  .object({
+    cursor: z.string().max(4096).optional(),
+    limit: z.number().int().positive().max(100).optional(),
+  })
+  .strict();
+const selectionFields = {
+  name: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe(
+      "A name from the available skill catalog; use name or id, not both.",
+    ),
+  id: z
+    .string()
+    .min(1)
+    .max(512)
+    .optional()
+    .describe(
+      "An id from the available skill catalog; use id or name, not both.",
+    ),
+};
+const selected = (value: { name?: string; id?: string }) =>
+  Boolean(value.name) !== Boolean(value.id);
+const selectionSchema = z
+  .object(selectionFields)
+  .strict()
+  .refine(selected, "Specify exactly one skill name or id");
+const resourcesSchema = z
+  .object({ ...selectionFields, ...pageSchema.shape })
+  .strict()
+  .refine(selected, "Specify exactly one skill name or id");
+const resourceSchema = z
+  .object({ ...selectionFields, path: z.string().min(1).max(240) })
+  .strict()
+  .refine(selected, "Specify exactly one skill name or id");
 
-/**
- * Build the `skills.list_skills` and `skills.load_skill` tools, closed
- * over the tenant's skill set. Returns descriptors keyed by qualified
- * tool name so the runtime can spread them straight into
- * `tenantRegistry.tools`.
- *
- * `qualified` names use the `skills.` prefix so a tenant tool named
- * `list_skills` (unlikely but possible) doesn't collide.
- */
-export function buildSkillTools(
-  skills: SkillDescriptor[],
-): Record<string, ToolDescriptor> {
-  // Snapshot the descriptor list so later mutations to the input array
-  // don't leak into the closure. Cheap — descriptors are tiny.
-  const byName = new Map<string, SkillDescriptor>();
-  for (const s of skills) byName.set(s.name, s);
+// Model schemas use one required selector. A refinement on two optional
+// fields disappears in JSON Schema and caused real models to send both.
+// Trusted SDK/legacy callers may still use a name through the strict parser.
+const modelSelectionFields = {
+  id: z
+    .string()
+    .min(1)
+    .max(512)
+    .describe(
+      "Exact Skill id from the available catalog or already active instructions.",
+    ),
+};
+const modelSelectionSchema = z.object(modelSelectionFields).strict();
+const modelResourcesSchema = z
+  .object({ ...modelSelectionFields, ...pageSchema.shape })
+  .strict();
+const modelResourceSchema = z
+  .object({ ...modelSelectionFields, path: z.string().min(1).max(240) })
+  .strict();
 
-  const listSkills = defineTool({
-    name: "skills.list_skills",
-    description:
-      "Return the catalogue of skills (name + one-line description) available to this agent. Call this FIRST before requesting any specific skill body.",
-    output: z.object({
-      skills: z.array(
-        z.object({
-          name: z.string(),
-          description: z.string(),
-          metadata: z.record(z.string(), z.unknown()).optional(),
-        }),
-      ),
-    }),
-    async handler() {
-      return {
-        data: {
-          skills: skills.map((s) => ({
-            name: s.name,
-            description: s.description,
-            metadata: s.metadata,
-          })),
-        },
-        meta: { skillsCount: skills.length },
-      };
-    },
-  });
+function selector(value: { name?: string; id?: string }): SkillSelector {
+  return value.id ? { id: value.id } : { name: value.name! };
+}
 
-  const loadSkill = defineTool({
-    name: "skills.load_skill",
-    description:
-      "Load the full SKILL.md body for one skill by name. Use this only after `list_skills` confirms the skill exists and you actually need its detailed guidance.",
-    output: z.object({
-      name: z.string(),
-      body: z.string(),
-      bytes: z.number(),
-    }),
-    async handler(ctx) {
-      // The tool-use loop puts the model's `arguments` under `ctx.event.data`
-      // (set in step-engine's loop). Accept either `name` (preferred) or
-      // a bare string for resilience.
-      const raw = ctx.event?.data ?? {};
-      const requested =
-        typeof raw === "object" && raw !== null
-          ? String(
-              (raw as Record<string, unknown>).name ??
-                (raw as Record<string, unknown>).skill ??
-                "",
-            )
-          : String(raw);
-      if (!requested) {
-        throw new Error(
-          "skills.load_skill: required argument `name` missing or empty",
-        );
-      }
-      const descriptor = byName.get(requested);
-      if (!descriptor) {
-        throw new Error(
-          `skills.load_skill: unknown skill '${requested}'. Known: ${Array.from(
-            byName.keys(),
-          ).join(", ")}`,
-        );
-      }
-      const body = readSkillBody(descriptor.path);
-      return {
-        data: {
-          name: descriptor.name,
-          body,
-          bytes: Buffer.byteLength(body, "utf8"),
-        },
-        meta: { skill: descriptor.name, path: descriptor.path },
-      };
-    },
-  });
-
+function withInput<T>(
+  tool: ToolDescriptor<T>,
+  schema: z.ZodType,
+): ToolDescriptor<T> {
   return {
-    [listSkills.name]: listSkills,
-    [loadSkill.name]: loadSkill,
+    ...tool,
+    inputSchema: z.toJSONSchema(schema) as Record<string, unknown>,
   };
 }
 
-/**
- * Build a one-line snippet for inclusion in an agent's system prompt so
- * the model knows the skills exist without us having to teach it about
- * the `list_skills`/`load_skill` tools in every prompt. The runtime
- * doesn't auto-inject this — tenants opt in by interpolating it inside
- * their `definePrompt({system: ...})` body.
- */
-export function buildSkillsPromptHint(skills: SkillDescriptor[]): string {
-  if (skills.length === 0) return "";
-  const lines = skills.map(
-    (s) => `  - ${s.name}: ${s.description}`,
+/** Compatibility tools use a fixed validated source snapshot, never a mutable
+ * path read during an Agent turn. No activation state is shared across Runs.
+ * New harness integrations should use buildSessionSkillTools instead. */
+export function buildSkillTools(
+  skills: SkillDescriptor[],
+): Record<string, ToolDescriptor> {
+  const byName = new Map<string, ReturnType<typeof assertValidSkillBundle>>();
+  for (const source of skills) {
+    if (basename(source.path) !== "SKILL.md")
+      throw new Error("Skill descriptors must identify SKILL.md");
+    const bundle = readSkillBundleFromDirectory(dirname(source.path));
+    const validated = assertValidSkillBundle(bundle);
+    if (validated.metadata.name !== source.name)
+      throw new Error("Skill descriptor name no longer matches its source");
+    if (byName.has(source.name))
+      throw new Error(`Duplicate skill '${source.name}'`);
+    byName.set(source.name, validated);
+  }
+  const catalog = [...byName.values()]
+    .filter((entry) => entry.metadata["disable-model-invocation"] !== true)
+    .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
+
+  const list = withInput(
+    defineTool({
+      name: "skills.list_skills",
+      description:
+        "List skill names and descriptions available to this agent. Load the relevant skill when its procedure is needed.",
+      async handler() {
+        return {
+          data: {
+            skills: catalog.map((entry) => ({
+              name: entry.metadata.name,
+              description: entry.metadata.description,
+              metadata: structuredClone(entry.metadata),
+            })),
+          },
+          meta: { skillsCount: catalog.length },
+        };
+      },
+    }),
+    z.object({}).strict(),
   );
-  return [
-    "Available skills (use the `skills.load_skill` tool to fetch the full body of any of these):",
-    ...lines,
-  ].join("\n");
+
+  const loadInput = z.object({ name: z.string().min(1).max(64) }).strict();
+  const load = withInput(
+    defineTool({
+      name: "skills.load_skill",
+      description:
+        "Load the instructions for an available skill by name. Skill instructions do not grant tools or other permissions.",
+      async handler(ctx) {
+        // Keep the historical bare-name and `skill` alias call shape accepted.
+        const raw: unknown = ctx.event?.data;
+        const candidate =
+          typeof raw === "string"
+            ? { name: raw }
+            : raw &&
+                typeof raw === "object" &&
+                "skill" in raw &&
+                !("name" in raw)
+              ? { name: (raw as Record<string, unknown>).skill }
+              : raw;
+        const { name } = loadInput.parse(candidate);
+        const entry = byName.get(name);
+        if (!entry || entry.metadata["disable-model-invocation"] === true)
+          throw new Error(
+            "Requested skill is not available for model invocation",
+          );
+        return {
+          data: {
+            name: entry.metadata.name,
+            body: entry.body,
+            bytes: Buffer.byteLength(entry.body, "utf8"),
+          },
+          meta: { skill: entry.metadata.name, contentDigest: entry.digest },
+        };
+      },
+    }),
+    loadInput,
+  );
+
+  return { [list.name]: list, [load.name]: load };
+}
+
+/** Bind descriptors to ONE host-owned execution session. Model arguments
+ * cannot choose an activation origin, authorizer, catalog or version. */
+export function buildSessionSkillTools(
+  session: SkillSession,
+  options: { activationOrigin?: SkillActivationOrigin } = {},
+): Record<string, ToolDescriptor> {
+  // Only a trusted harness supplies this option. It never comes from tool args.
+  const origin = options.activationOrigin ?? "model";
+  const list = withInput(
+    defineTool({
+      name: "skills.list_skills",
+      description:
+        "List available skill names, descriptions and exact versions. Use nextCursor to continue a large catalog.",
+      async handler(ctx) {
+        const data = await session.list({
+          ...pageSchema.parse(ctx.event?.data ?? {}),
+          origin,
+        });
+        return { data };
+      },
+    }),
+    pageSchema,
+  );
+  const load = withInput(
+    defineTool({
+      name: "skills.load_skill",
+      description:
+        "Activate an available skill's instructions by its exact catalog id. Already active instructions do not need loading again. Read supporting resources only when relevant; activation grants no business tools or execution permissions.",
+      async handler(ctx) {
+        const input = selectionSchema.parse(ctx.event?.data);
+        const data = await session.activate(selector(input), { origin });
+        return {
+          data,
+          meta: {
+            skill: data.name,
+            skillVersionId: data.versionId,
+            contentDigest: data.contentDigest,
+          },
+        };
+      },
+    }),
+    modelSelectionSchema,
+  );
+  const resources = withInput(
+    defineTool({
+      name: "skills.list_resources",
+      description:
+        "List resource paths and sizes in an activated skill by its exact id; paginate with nextCursor.",
+      async handler(ctx) {
+        const input = resourcesSchema.parse(ctx.event?.data);
+        const data = await session.listResources(selector(input), {
+          cursor: input.cursor,
+          limit: input.limit,
+        });
+        return { data };
+      },
+    }),
+    modelResourcesSchema,
+  );
+  const read = withInput(
+    defineTool({
+      name: "skills.read_resource",
+      description:
+        "Read one relative resource path from an activated skill. Returns UTF-8 text or base64 binary bytes with limits. Reading a script does not execute it.",
+      async handler(ctx) {
+        const input = resourceSchema.parse(ctx.event?.data);
+        const data = await session.readResource(selector(input), input.path);
+        return {
+          data,
+          meta: {
+            skill: data.skill.name,
+            skillVersionId: data.skill.versionId,
+            contentDigest: data.skill.contentDigest,
+            resourcePath: data.path,
+          },
+        };
+      },
+    }),
+    modelResourceSchema,
+  );
+  return Object.fromEntries(
+    [list, load, resources, read].map((tool) => [tool.name, tool]),
+  );
+}
+
+/** Compatibility prompt helper. New sessions provide their own paginated
+ * catalog. Metadata is serialized so descriptions cannot corrupt formatting. */
+export function buildSkillsPromptHint(skills: SkillDescriptor[]): string {
+  const catalog = skills
+    .filter((entry) => entry.metadata?.["disable-model-invocation"] !== true)
+    .map(({ name, description }) => ({ name, description }));
+  if (!catalog.length) return "";
+  return (
+    "Available skills (load applicable instructions with skills.load_skill; skills grant no Tool permissions):\n" +
+    JSON.stringify(catalog)
+  );
 }

@@ -122,8 +122,18 @@ describe("workflow authoring HTTP API", () => {
   });
 
   afterAll(() => {
-    getDb().delete(tenants).where(eq(tenants.id, tenantAId)).run();
-    getDb().delete(tenants).where(eq(tenants.id, tenantBId)).run();
+    // Test Lab now retains immutable Skill snapshots. Archive these scoped
+    // fixtures; global teardown removes the entire invocation-owned database.
+    getDb()
+      .update(tenants)
+      .set({ archivedAt: new Date() })
+      .where(eq(tenants.id, tenantAId))
+      .run();
+    getDb()
+      .update(tenants)
+      .set({ archivedAt: new Date() })
+      .where(eq(tenants.id, tenantBId))
+      .run();
   });
 
   it("returns the API-owned template catalog", async () => {

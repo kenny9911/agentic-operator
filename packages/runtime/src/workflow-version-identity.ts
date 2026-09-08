@@ -11,7 +11,7 @@ export function workflowVersionContentSha256(
   manifest: unknown,
   actions: unknown,
 ): string {
-  // Content identity is defined over the agents only. A manifest persisted as
+  // Content identity covers agents and authored workflow Skill bindings. A manifest persisted as
   // the V2 envelope ({ $schemaVersion, agents, extensions }) and its bare
   // agents array MUST produce the same id, otherwise a commit that stores the
   // envelope and a bootstrap that re-derives the bare on-disk form disagree on
@@ -52,7 +52,7 @@ export function legacyWorkflowVersionId(manifest: unknown): string {
  * agents array (the runtime shape) or as the envelope-preserving V2 object
  * (`{ $schemaVersion, agents, extensions }`) that authoring/import writes so
  * top-level metadata survives publication. Content identity is defined over the
- * agents only; extract them so an envelope and its bare array compare equal.
+ * agents and Skill bindings; metadata-only envelopes keep historical array identity.
  */
 function bareAgentsForIdentity(value: unknown): unknown {
   if (
@@ -61,7 +61,10 @@ function bareAgentsForIdentity(value: unknown): unknown {
     !Array.isArray(value) &&
     Array.isArray((value as { agents?: unknown }).agents)
   ) {
-    return (value as { agents: unknown }).agents;
+    const envelope = value as { agents: unknown; skills?: unknown };
+    // Skill bindings affect execution authority and must change version identity.
+    // Preserve historical hashes for envelopes without this runtime field.
+    return envelope.skills === undefined ? envelope.agents : { agents: envelope.agents, skills: envelope.skills };
   }
   return value;
 }

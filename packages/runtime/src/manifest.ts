@@ -14,6 +14,8 @@ import { validateConditionSyntax } from "./action-plan";
 import { RuleGateDeclarationSchema } from "./rule-guard";
 import type { DecisionTable } from "@agentic/shared";
 import {
+  SkillBindingsSchema,
+  type SkillBindings,
   ProviderIdSchema,
   ReasoningConfigSchema,
   TaskClassIdSchema,
@@ -853,6 +855,7 @@ const AgentObjectSchema = z
     compensation_event: emptyStringToUndef,
     input_data: z.record(z.string(), z.unknown()).optional(),
     ontology_instructions: emptyStringToUndef,
+    skills: SkillBindingsSchema.optional(),
     tool_use: toolUseSchema,
     typescript_code: emptyStringToUndef,
     // Agent Factory marker: this agent was machine-generated and has NO hand-written tenant
@@ -1174,6 +1177,7 @@ export const RulesManifestSchema = z
   .passthrough();
 
 export interface LoadedManifest {
+  skills?: SkillBindings;
   manifest: WorkflowManifest;
   actionsExt: ActionsManifest;
   manifestPath: string;
@@ -1312,6 +1316,7 @@ export async function loadManifestFromDisk(
   return {
     manifest,
     actionsExt,
+    skills: Array.isArray(rawWorkflow) ? undefined : WorkflowManifestCompatSchema.parse(rawWorkflow).skills,
     manifestPath: workflowPath,
     actionsPath: actionsPath ?? path.join(workflowDir, "actions.json"),
   };

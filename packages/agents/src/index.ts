@@ -26,6 +26,7 @@ export {
 } from "./code-agent-fn";
 export type {
   AgentContext,
+  AgentExecutionOptions,
   AgentResult,
   AgentKind,
   AgentRunScope,

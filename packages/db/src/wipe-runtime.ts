@@ -13,12 +13,14 @@
  *        `event_listeners` (regenerated on bootstrap),
  *        `agent_memory_short`, `agent_memory_long` (per-run scratch),
  *        `llm_budget_reservations` (legacy), `event_store`, `acceptance_scores`,
- *        `tool_stats`, and `idempotency_keys`.
+ *        `tool_stats`, `idempotency_keys`, and runtime Skill snapshots,
+ *        legacy byte captures, invocation grants and script reservations.
  *
  * KEPT:  `tenants`, `users`, `memberships`, `workflows`, `workflow_versions`,
  *        `deployments`, `agents`, `agent_versions`, `event_types`,
  *        `entity_types`, `api_tokens`, `webhook_subscriptions`,
  *        `agent_drafts`, `agent_draft_revisions`, `tenant_budgets`, `_meta`.
+ *        Managed Skill libraries, drafts, publications and evaluations remain.
  *        These are identity + configuration,
  *        not runtime traffic.
  *
@@ -45,6 +47,10 @@ import { closeDb, getRawSqlite } from "./client";
  * the trace clean even though SQLite is permissive in WAL mode.
  */
 const TABLES_TO_WIPE = [
+  "skill_script_reservations",
+  "skill_invocation_grants",
+  "run_skill_snapshots",
+  "skill_legacy_bundles",
   "acceptance_scores",
   "run_trace_events",
   "run_emitted_events",
@@ -70,6 +76,16 @@ const TABLES_TO_WIPE = [
   "audit_log",
 ] as const;
 
+// Runtime retention prevents ordinary application deletion. Only this
+// explicit administrative wipe temporarily suspends these exact triggers.
+// Library publication/evaluation protections are never changed.
+const RUNTIME_SKILL_RETENTION_TRIGGERS = {
+  skill_script_reservations: "skill_script_reservations_no_delete",
+  skill_invocation_grants: "skill_invocation_grants_no_delete",
+  run_skill_snapshots: "run_skill_snapshots_no_delete",
+  skill_legacy_bundles: "skill_legacy_bundles_no_delete",
+} as const;
+
 interface WipeReport {
   table: string;
   beforeRows: number;
@@ -81,10 +97,18 @@ export function wipeRuntime(): WipeReport[] {
   const sqlite = getRawSqlite();
   const report: WipeReport[] = [];
 
-  // Defer foreign-key enforcement so a child→parent chain doesn't trip on
-  // intra-batch ordering. We re-enable + integrity-check at the end.
+  // Suspend enforcement while deleting cyclic runtime references. The
+  // transaction must pass foreign_key_check before it may commit.
   sqlite.pragma("foreign_keys = OFF");
   const tx = sqlite.transaction(() => {
+    const restoreTriggers: string[] = [];
+    for (const [table, name] of Object.entries(RUNTIME_SKILL_RETENTION_TRIGGERS)) {
+      if (!sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
+      const trigger = sqlite.prepare("SELECT tbl_name, sql FROM sqlite_master WHERE type='trigger' AND name=?").get(name) as { tbl_name: string; sql: string } | undefined;
+      if (!trigger || trigger.tbl_name !== table || !trigger.sql) throw new Error(`Runtime Skill retention trigger is missing or mismatched: ${name}`);
+      restoreTriggers.push(trigger.sql);
+      sqlite.exec(`DROP TRIGGER ${name}`);
+    }
     for (const table of TABLES_TO_WIPE) {
       // The table may not exist on databases that pre-date a migration; the
       // existence probe keeps this script forward + backward compatible
@@ -135,6 +159,9 @@ export function wipeRuntime(): WipeReport[] {
         )
         .run(periodStart, now);
     }
+    for (const definition of restoreTriggers) sqlite.exec(definition);
+    const violations = sqlite.pragma("foreign_key_check") as unknown[];
+    if (violations.length) throw new Error(`Runtime wipe would leave ${violations.length} foreign-key violation(s); all changes rolled back`);
   });
   try {
     tx();
@@ -240,6 +267,7 @@ async function main(): Promise<void> {
   console.log(
     "[wipe-runtime]          webhook_subscriptions, tenant_budgets, _meta",
   );
+  console.log("[wipe-runtime]          managed Skill libraries, drafts, versions and evaluations");
   const clearedRoots = wipeRuntimeFiles();
   const report = wipeRuntime();
   console.log(formatReport(report));

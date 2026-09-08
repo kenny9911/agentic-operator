@@ -10,7 +10,13 @@
  */
 
 import { createHash } from "node:crypto";
-import type { MemoryHandle, SpawnResult } from "@agentic/agent-sdk";
+import type { AgentSpawnOptions, MemoryHandle, SpawnResult } from "@agentic/agent-sdk";
+import type { ChatMessage } from "@agentic/llm-gateway";
+import type { SkillSession } from "@agentic/skills";
+import { z } from "zod";
+import { isSkillIntrinsic, prepareSkillMessages } from "./skill-execution";
+import { createCodeActSkillDispatch, type GeneratedCodeSkillAccess } from "./codeact-skills";
+export type { GeneratedCodeSkillAccess } from "./codeact-skills";
 import {
   globalToolExecutionPolicy,
   globalToolRegistry,
@@ -197,6 +203,7 @@ async function generateSubAgentCode(
     tenantId?: string;
     agentName?: string;
     runId?: string;
+    skillSession?: SkillSession;
   },
 ): Promise<string | null> {
   const gateway = getRuntimeGateway();
@@ -208,13 +215,14 @@ async function generateSubAgentCode(
   }
   const system =
     "你为一个正在运行的 agent 生成一个子 agent TypeScript 处理器。" +
-    "只输出完整 defineAgent 代码；可使用 ctx.reason、ctx.tool、ctx.emit，最后返回对象。";
+    "只输出完整 defineAgent 代码；可使用 ctx.reason、ctx.tool、ctx.emit，最后返回对象。" +
+    "Skill guidance is available through ctx.skills.list(), load({id}), listResources({id}), and readResource({id}, path); loading never grants business tools or script execution.";
   const user = `子任务：${task}\n可用工具：${options.tools?.join("、") || "（以 ctx.reason 为主）"}`;
   const response = await gateway.chat({
-    messages: [
+    messages: await prepareSkillMessages([
       { role: "system", content: system },
       { role: "user", content: user },
-    ],
+    ], options.skillSession),
     tenantSlug: options.tenantSlug,
     tenantId: options.tenantId,
     runId: options.runId,
@@ -340,7 +348,10 @@ async function runSandboxTool(
 /** Host-side capabilities reachable through worker RPC. */
 export interface GeneratedCodeHostRuntime {
   reason?(systemPrompt: string, input: unknown): Promise<unknown>;
-  tool?(name: string, args?: unknown): Promise<unknown>;
+  /** Send these prepared messages unchanged. The host retains ownership of
+   * model routing and response semantics while preserving Skill guidance. */
+  reasonPrepared?(request: { systemPrompt: string; input: unknown; messages: ChatMessage[] }): Promise<unknown>;
+  tool?(name: string, args?: unknown, context?: { skillSession?: SkillSession }): Promise<unknown>;
   invoke?(
     agentRef: string,
     input?: unknown,
@@ -349,7 +360,8 @@ export interface GeneratedCodeHostRuntime {
   spawn?(
     task: string,
     input?: unknown,
-    options?: { tools?: string[] },
+    options?: AgentSpawnOptions,
+    context?: { skillSession?: SkillSession },
   ): Promise<SpawnResult>;
   log?(level: "info" | "warn" | "error", message: string, data?: unknown): void;
 }
@@ -364,6 +376,8 @@ export interface GeneratedCodeProductionPolicy {
 }
 
 export interface RunGeneratedCodeOptions {
+  /** Trusted host state; never accept from input or serialize to an executor. */
+  skillSession?: SkillSession;
   systemPrompt?: string;
   /** Reviewed user input and scoped history, included in each reasoning call. */
   runInputMessage?: string;
@@ -440,6 +454,8 @@ interface GeneratedCodeTelemetry {
   attestation: CodeActAttestationStatus;
   /** Host-observed tool boundary classifications for evidence grading. */
   toolDispatches: GeneratedCodeToolDispatch[];
+  /** Exact versions and decoded byte counts; no instruction/resource bodies. */
+  skillAccesses: GeneratedCodeSkillAccess[];
 }
 
 export type GeneratedCodeExecutionResult =
@@ -545,6 +561,8 @@ export async function runGeneratedCodeIsolated(
   const tenantSlug = options.tenantSlug ?? "";
   const sandbox = !tenantSlug || isSandboxTenant(tenantSlug);
   const toolDispatches: GeneratedCodeToolDispatch[] = [];
+  const skillAccesses: GeneratedCodeSkillAccess[] = [];
+  const skillDispatch = createCodeActSkillDispatch(options.skillSession, (access) => skillAccesses.push(access));
   const initialAttestation: CodeActAttestationStatus = sandbox
     ? "sandbox_not_required"
     : "not_checked";
@@ -562,6 +580,7 @@ export async function runGeneratedCodeIsolated(
     ...(containerEvidence ? { containerEvidence } : {}),
     attestation,
     toolDispatches: [...toolDispatches],
+    skillAccesses: [...skillAccesses],
   });
   const deny = (
     failure: GeneratedCodeFailure,
@@ -690,7 +709,7 @@ export async function runGeneratedCodeIsolated(
   const spawn = async (
     task: string,
     spawnInput?: unknown,
-    spawnOptions?: { tools?: string[] },
+    rawSpawnOptions?: AgentSpawnOptions,
   ): Promise<SpawnResult> => {
     if (!sandbox) {
       return {
@@ -707,6 +726,12 @@ export async function runGeneratedCodeIsolated(
       };
     }
 
+    const parsed = z.object({
+      tools: z.array(z.string().min(1).max(512)).max(1000).optional(),
+      skillIds: z.array(z.string().min(1).max(512)).max(1000).optional(),
+    }).strict().safeParse(rawSpawnOptions ?? {});
+    if (!parsed.success) return { ok: false, error: "Invalid CodeAct spawn capability options" };
+    const spawnOptions = parsed.data;
     const childAllowedTools = [
       ...new Set(
         (spawnOptions?.tools ?? []).map((name) => name.trim()).filter(Boolean),
@@ -721,13 +746,24 @@ export async function runGeneratedCodeIsolated(
         error: `[generated_tool_not_declared] 子 Agent 请求了父 Agent 未获审查的工具：${escalated.join("、")}`,
       };
     }
+    let childSkillSession: SkillSession | undefined;
+    try {
+      if (options.skillSession) {
+        const skillIds = spawnOptions.skillIds ?? (await options.skillSession.snapshot()).catalog.map((entry) => entry.id);
+        childSkillSession = await options.skillSession.fork({ skillIds });
+      } else if (spawnOptions.skillIds?.length) {
+        throw new Error("The parent has no authorized Skill catalog");
+      }
+    } catch (error) {
+      return { ok: false, error: `Child Skill catalog denied: ${String((error as Error).message)}` };
+    }
     // A custom host is still behind the parent's immutable capability set;
     // it is an execution adapter, not an authorization boundary.
     if (options.hostRuntime?.spawn) {
       return options.hostRuntime.spawn(task, spawnInput, {
         ...spawnOptions,
         tools: childAllowedTools,
-      });
+      }, { skillSession: childSkillSession });
     }
 
     let generated: string | null = null;
@@ -741,7 +777,8 @@ export async function runGeneratedCodeIsolated(
         const candidate = await generateSubAgentCode(
           `${String(task ?? "")}${feedback}`,
           {
-            tools: spawnOptions?.tools,
+            tools: childAllowedTools,
+            skillSession: childSkillSession,
             tenantSlug,
             tenantId: options.tenantId,
             agentName: options.agentName,
@@ -781,6 +818,7 @@ export async function runGeneratedCodeIsolated(
         ...options,
         production: undefined,
         allowedTools: childAllowedTools,
+        skillSession: childSkillSession,
         toolPolicies: Object.fromEntries(
           childAllowedTools
             .map((name) => [name, options.toolPolicies?.[name]] as const)
@@ -793,6 +831,7 @@ export async function runGeneratedCodeIsolated(
     );
     entry.ok = child.ok;
     entry.durationMs = Date.now() - spawnStarted;
+    skillAccesses.push(...child.skillAccesses);
 
     if (options.runId) {
       // A parent run id turns spawn trace persistence into required evidence.
@@ -837,6 +876,13 @@ export async function runGeneratedCodeIsolated(
         const reasonInput = options.runInputMessage
           ? { input: args[1], userContext: options.runInputMessage }
           : args[1];
+        const messages = await prepareSkillMessages([
+          { role: "system", content: systemPrompt || options.systemPrompt || "" },
+          { role: "user", content: JSON.stringify(reasonInput ?? {}) },
+        ], options.skillSession);
+        if (hostRuntime?.reasonPrepared) return hostRuntime.reasonPrepared({ systemPrompt, input: reasonInput, messages });
+        if (hostRuntime?.reason && options.skillSession)
+          throw new Error("[skills_reason_adapter_unsupported] Custom CodeAct reason adapters with Skills must implement reasonPrepared and preserve prepared messages");
         if (hostRuntime?.reason)
           return hostRuntime.reason(systemPrompt, reasonInput);
         const gateway = getRuntimeGateway();
@@ -847,13 +893,7 @@ export async function runGeneratedCodeIsolated(
           );
         }
         const response = await gateway.chat({
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt || options.systemPrompt || "",
-            },
-            { role: "user", content: JSON.stringify(reasonInput ?? {}) },
-          ],
+          messages,
           tenantSlug: options.tenantSlug,
           tenantId: options.tenantId,
           runId: options.runId,
@@ -874,10 +914,11 @@ export async function runGeneratedCodeIsolated(
         const name = args[0];
         if (typeof name !== "string" || !name.trim())
           throw new Error("tool name is required");
+        if (isSkillIntrinsic(name)) return skillDispatch.intrinsic(name, args[1] ?? {});
         assertToolAllowed(name);
         const toolInput = args[1] ?? input;
         if (!sandbox) {
-          if (hostRuntime?.tool) return hostRuntime.tool(name, toolInput);
+          if (hostRuntime?.tool) return hostRuntime.tool(name, toolInput, name === "skills.run_script" ? { skillSession: options.skillSession } : undefined);
           throw new Error(`production tool '${name}' has no host binding`);
         }
         return runSandboxTool(
@@ -890,7 +931,7 @@ export async function runGeneratedCodeIsolated(
           options.factoryExecutionScope,
           options.factoryToolReplayRefs?.[name],
           (dispatch) => toolDispatches.push(dispatch),
-          hostRuntime?.tool,
+          hostRuntime?.tool ? (toolName, args) => hostRuntime.tool!(toolName, args, toolName === "skills.run_script" ? { skillSession: options.skillSession } : undefined) : undefined,
         );
       }
       case "memory.get":
@@ -909,8 +950,13 @@ export async function runGeneratedCodeIsolated(
         return spawn(
           String(args[0] ?? ""),
           args[1],
-          args[2] as { tools?: string[] } | undefined,
+          args[2] as AgentSpawnOptions | undefined,
         );
+      case "skills.list":
+      case "skills.load":
+      case "skills.listResources":
+      case "skills.readResource":
+        return skillDispatch.rpc(method, args);
     }
   };
 

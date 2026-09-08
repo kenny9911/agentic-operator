@@ -15,7 +15,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@agentic/codex-protocol": "workspace:*"
+    "@agentic/codex-protocol": "workspace:*",
+    "@agentic/skills": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

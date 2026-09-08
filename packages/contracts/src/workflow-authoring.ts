@@ -561,6 +561,21 @@ export const WorkflowTestRunBodySchema = z
   });
 export type WorkflowTestRunBody = z.infer<typeof WorkflowTestRunBodySchema>;
 
+export const WorkflowTestSkillEvidenceSchema = z.object({
+  catalogDigest: z.string(),
+  activations: z.array(z.object({
+    id: z.string(), versionId: z.string(), contentDigest: z.string(),
+    origin: z.enum(["model", "explicit"]),
+  })),
+  accesses: z.array(z.object({
+    operation: z.string(), ok: z.boolean(),
+    skillId: z.string().optional(), versionId: z.string().optional(),
+    contentDigest: z.string().optional(), path: z.string().optional(),
+    bytes: z.number().int().nonnegative().optional(), error: z.string().optional(),
+  })),
+});
+export type WorkflowTestSkillEvidence = z.infer<typeof WorkflowTestSkillEvidenceSchema>;
+
 export const WorkflowTestStepResultSchema = z.object({
   id: z.string(),
   order: z.string(),
@@ -579,6 +594,7 @@ export const WorkflowTestStepResultSchema = z.object({
   attempts: z.number().int().positive(),
   branchTarget: z.string().nullable(),
   simulation: z.string().nullable(),
+  skillEvidence: WorkflowTestSkillEvidenceSchema.optional(),
   error: z
     .object({
       code: z.string(),

@@ -21,7 +21,7 @@ export function removeWorkflowAgent(
   const wasAdded = added.delete(agentId);
   const removed = new Set(draft.removed);
   if (!wasAdded) removed.add(agentId);
-  let next: WorkflowDraft = { agents, added, removed };
+  let next: WorkflowDraft = { ...draft, agents, added, removed };
 
   for (const agent of effective) {
     if (agent.kebabId === agentId || !agent.definition) continue;

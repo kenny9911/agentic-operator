@@ -282,6 +282,11 @@ export function inspectGeneratedToolCalls(code: string): GeneratedToolCallInspec
       isContextIdentifier(value.expression)
     );
   };
+  const isContextSkills = (expression: import("typescript").Expression): boolean => {
+    const value = unwrap(expression);
+    return ts.isPropertyAccessExpression(value) && value.name.text === "skills" && isContextIdentifier(value.expression);
+  };
+  const skillMethods = new Set(["list", "load", "listResources", "readResource", "runScript"]);
   // These are the runtime surface actually exposed by the CodeAct worker.
   // Keep this explicit: an unknown ctx property must not become an accidental
   // capability merely because generated TypeScript can spell it.
@@ -333,6 +338,8 @@ export function inspectGeneratedToolCalls(code: string): GeneratedToolCallInspec
 
   const visit = (node: import("typescript").Node): void => {
     if (ts.isCallExpression(node)) {
+      const invoked = unwrap(node.expression);
+      if (ts.isPropertyAccessExpression(invoked) && isContextSkills(invoked.expression) && invoked.name.text === "runScript") called.add("skills.run_script");
       const capability = directCapability(node.expression);
       if (capability) {
         const name = node.arguments[0];
@@ -397,6 +404,7 @@ export function inspectGeneratedToolCalls(code: string): GeneratedToolCallInspec
         name !== "tool" &&
         name !== "tools" &&
         name !== "memory" &&
+        name !== "skills" &&
         !directContextValues.has(name)
       ) {
         violations.add(`生成代码在 ${location(node)} 访问了未声明的运行时上下文能力 ctx.${name}`);
@@ -432,6 +440,22 @@ export function inspectGeneratedToolCalls(code: string): GeneratedToolCallInspec
       }
     }
 
+    // Skills are a separate host namespace, never business Tool authorization.
+    if (ts.isPropertyAccessExpression(node) && isContextSkills(node)) {
+      const parent = node.parent;
+      if (!(ts.isPropertyAccessExpression(parent) && parent.expression === node &&
+        skillMethods.has(parent.name.text) && ts.isCallExpression(parent.parent) &&
+        unwrap(parent.parent.expression) === parent)) {
+        violations.add(`Generated code at ${location(node)} must call ctx.skills.list/load/listResources/readResource/runScript directly`);
+      }
+    }
+    if (ts.isPropertyAccessExpression(node) && isContextSkills(node.expression)) {
+      const parent = node.parent;
+      if (!skillMethods.has(node.name.text) || !(ts.isCallExpression(parent) && unwrap(parent.expression) === node)) {
+        violations.add(`Generated code at ${location(node)} uses an unknown or indirect ctx.skills capability`);
+      }
+    }
+
     // The whole context may only be the direct receiver of `.tool/.tools` or
     // a simple `const alias = ctx`. Assignment, arrays, objects, spreads,
     // returns and helper arguments all transfer capabilities beyond exact
@@ -447,6 +471,7 @@ export function inspectGeneratedToolCalls(code: string): GeneratedToolCallInspec
           parent.name.text === "tool" ||
           parent.name.text === "tools" ||
           parent.name.text === "memory" ||
+          parent.name.text === "skills" ||
           directContextMethods.has(parent.name.text) ||
           directContextValues.has(parent.name.text)
         );
@@ -472,7 +497,8 @@ export function inspectGeneratedToolCalls(code: string): GeneratedToolCallInspec
           : null;
       if (
         (isContextIdentifier(target) && (key === "tool" || key === "tools" || key === null)) ||
-        (isContextTools(target) && (key === "run" || key === null))
+        (isContextTools(target) && (key === "run" || key === null)) ||
+        (isContextIdentifier(target) && key === "skills") || isContextSkills(target)
       ) {
         violations.add(
           `生成代码在 ${location(node)} 使用了计算属性访问工具能力；请改为直接的字符串字面量调用`,

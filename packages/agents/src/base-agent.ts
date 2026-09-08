@@ -30,6 +30,7 @@ import type {
 import type { ZodType } from "zod";
 import type {
   AgentContext,
+  AgentExecutionOptions,
   AgentKind,
   AgentRunScope,
   AgentScope,
@@ -82,8 +83,14 @@ export abstract class BaseAgent<TInput = unknown, TOutput = string> {
   readonly defaultVerbosity?: TextVerbosity;
   readonly storeResponses?: boolean;
 
-  /** Maximum provider turns in the tool-use loop (repair is one extra turn). */
+  /** Ordinary provider-turn budget, including the final answer. Business tool
+   * calls require a remaining ordinary turn to consume their results. */
   readonly maxSteps: number = 1;
+
+  /** Additional provider turns exclusively for session-owned read-only Skill
+   * operations. Mixed/business batches consume maxSteps instead. Range 0–32;
+   * zero disables extra turns. Applies only when the host supplies a session. */
+  readonly maxAdditionalSkillTurns: number = 8;
 
   /** Inngest concurrency hints when `inngestEnabled` is explicitly true. */
   readonly concurrency: { limit: number; key?: string } = { limit: 4 };
@@ -126,8 +133,12 @@ export abstract class BaseAgent<TInput = unknown, TOutput = string> {
    * above instead. Run-row + step-row + file-log management lives in the
    * run engine to keep the contract uniform.
    */
-  async run(input: TInput, ctx: AgentContext): Promise<AgentResult<TOutput>> {
-    return executeAgentRun<TInput, TOutput>(this, input, ctx);
+  async run(
+    input: TInput,
+    ctx: AgentContext,
+    execution?: AgentExecutionOptions,
+  ): Promise<AgentResult<TOutput>> {
+    return executeAgentRun<TInput, TOutput>(this, input, ctx, execution);
   }
 
   /** Internal accessor for run-engine; not part of the public surface. */

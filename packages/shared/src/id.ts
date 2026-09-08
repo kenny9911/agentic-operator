@@ -44,6 +44,11 @@ export type IdPrefix =
   | "llc"
   | "spf"
   | "use"
+  | "skl"
+  | "skr"
+  | "skv"
+  | "ske"
+  | "sks"
   | "exe";
 
 export function makeId(prefix: IdPrefix): string {

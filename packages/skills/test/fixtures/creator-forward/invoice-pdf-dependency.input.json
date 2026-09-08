@@ -1,0 +1,14 @@
+{
+  "id": "invoice-pdf-dependency",
+  "request": "Create an invoice-intake skill that accepts invoice PDFs, extracts vendor, invoice number, currency, subtotal, tax and total, checks subtotal plus tax against total, and returns the results as a JSON object for our workflow. Do not make up missing numbers. I want this to work in our Operator agents, regardless of whether the model is DeepSeek or Anthropic.",
+  "targetCapabilities": {
+    "tools": [
+      {
+        "name": "fs.readFromInbox",
+        "description": "Read a tenant-scoped inbox file and return file content as base64. No OCR or PDF text extraction."
+      }
+    ],
+    "providedInput": "PDF file key or already extracted invoice text",
+    "execution": "No script execution, OCR, PDF parsing, network API or vision capability is configured"
+  }
+}

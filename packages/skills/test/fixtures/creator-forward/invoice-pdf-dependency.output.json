@@ -1,0 +1,52 @@
+{
+  "files": [
+    {
+      "path": "SKILL.md",
+      "encoding": "utf8",
+      "content": "---\nname: invoice-intake\ndescription: Extract invoice fields and check subtotal plus tax against total for workflow JSON intake. Use for supplied invoice text or a request to intake an invoice PDF; PDF-only input requires an available extraction capability before fields can be read.\n---\n\n# Invoice intake\n\nReturn one JSON object containing vendor, invoice number, currency, subtotal, tax, total, and an arithmetic check. Use supplied invoice evidence only. Do not invent missing numbers, infer tax by subtraction, or treat a missing tax as zero.\n\n## Resolve the input\n\nAlready extracted invoice text is a supported input. Read the explicit labels and values in that text.\n\nA PDF file key alone cannot currently be extracted in this target environment. The available `fs.readFromInbox` tool returns file bytes as base64 and supplies neither PDF text extraction nor OCR. Reading or decoding those bytes is not evidence of invoice fields. No PDF parser, OCR, vision route, script execution, or network extraction API is configured.\n\nFor PDF-only input, return the JSON shape below with status `needs_input`, all six invoice fields null, arithmetic status `insufficient_data`, and an issue requesting already extracted invoice text or a configured PDF text-extraction/OCR capability. Stop there. Do not claim to have opened, read, parsed, or OCR'd the invoice. Do not invent a tool, install software, change runtime settings, or assume that a particular model provider can read the PDF. These instructions apply identically across model providers; they do not establish tested provider compatibility.\n\nIf text is supplied alongside a PDF key, use the supplied text and do not imply that the PDF was independently verified. If a future target supplies an extraction interface, it must be explicitly available and used under that interface's documented contract before extracted content can be treated as evidence.\n\n## Extract and check\n\n- Preserve the vendor name and invoice number as strings, including leading zeros.\n- Use the currency explicitly identified in the text. Preserve an ambiguous currency symbol as written and identify the ambiguity in issues; do not silently convert `$` into a specific currency code.\n- Set a missing or unreadable field to null and explain which field needs input. When multiple conflicting values could represent a requested field, set that field to null and identify the conflict.\n- Read subtotal, tax, and total from their explicit invoice labels. Do not substitute amount due, a payment, or a discount for an invoice total.\n- Return readable, unambiguous amounts as JSON numbers, without currency symbols or grouping separators. Do not guess an ambiguous decimal format.\n- If all three amounts are known, add subtotal and tax using decimal arithmetic at the precision shown in the source. Compare the sum with total exactly. Compute difference as `total - (subtotal + tax)`; do not apply an undocumented tolerance or alter a source amount to make the check pass.\n- If an amount is missing or ambiguous, leave calculatedSubtotalPlusTax and difference null and set arithmetic status to `insufficient_data`.\n\n## Output contract\n\nReturn JSON only, with exactly these top-level keys:\n\n- `status`: `ok` when all six fields are available, currency is unambiguous, and arithmetic matches; `needs_input` when a field or required extraction capability is missing or ambiguous; otherwise `needs_review` for a mismatch. Missing-input status takes precedence when multiple issues apply.\n- `vendor`: string or null.\n- `invoiceNumber`: string or null.\n- `currency`: string or null.\n- `subtotal`, `tax`, `total`: number or null.\n- `arithmeticCheck`: an object with `status` (`match`, `mismatch`, or `insufficient_data`), `calculatedSubtotalPlusTax` (number or null), and `difference` (number or null).\n- `issues`: an array of concise strings describing missing input, ambiguity, or the arithmetic mismatch. Use an empty array when there are no issues.\n\nReport a mismatch without changing the extracted figures. This skill returns intake data; it does not approve invoices, make payments, or write to external workflow systems.\n"
+    }
+  ],
+  "assumptions": [
+    "The target currently supports intake from already extracted invoice text. PDF-only intake remains dependent on a configured extraction or OCR capability; fs.readFromInbox returning base64 does not provide it.",
+    "No existing workflow JSON schema was supplied, so this draft defines a fixed JSON shape with nulls for missing values and explicit intake/arithmetic status fields.",
+    "No rounding tolerance was supplied, so the arithmetic check uses exact decimal equality at the source precision. Currency symbols are not assumed to identify a unique currency.",
+    "Cross-provider behavior is an intended portability property, not an executed compatibility result."
+  ],
+  "suggestedTests": [
+    {
+      "id": "extracted-text-matches",
+      "prompt": "Intake this already extracted invoice text and return workflow JSON: Vendor: North Supply Ltd; Invoice number: 00042; Currency: SGD; Subtotal: 100.00; Tax: 9.00; Total: 109.00.",
+      "shouldTrigger": true,
+      "expectedCriteria": [
+        "Returns a parseable JSON object with vendor North Supply Ltd, invoiceNumber 00042 as a string, currency SGD, subtotal 100, tax 9, and total 109.",
+        "Reports status ok, arithmetic status match, calculatedSubtotalPlusTax 109, difference 0, and an empty issues array.",
+        "Does not claim the original PDF was independently read or verified."
+      ]
+    },
+    {
+      "id": "pdf-only-missing-capability",
+      "prompt": "Intake the invoice PDF at inbox file key invoices/september-042.pdf. Extract its invoice fields and return workflow JSON.",
+      "shouldTrigger": true,
+      "expectedCriteria": [
+        "Returns status needs_input with vendor, invoiceNumber, currency, subtotal, tax, and total all null.",
+        "Returns arithmetic status insufficient_data with both calculatedSubtotalPlusTax and difference null.",
+        "Identifies the missing PDF text-extraction/OCR capability and requests extracted text or that configured capability.",
+        "Does not fabricate extracted values, treat base64 as invoice text, invoke an invented parser, or claim provider compatibility or completed extraction."
+      ]
+    },
+    {
+      "id": "invoice-definition-near-miss",
+      "prompt": "Explain in one paragraph what an invoice subtotal is and how it differs from the total.",
+      "shouldTrigger": false,
+      "expectedCriteria": [
+        "Explains the concepts in prose without producing an invoice-intake JSON record or requesting a PDF.",
+        "Does not claim to have checked any actual invoice."
+      ]
+    }
+  ],
+  "changeSummary": [
+    "Adds provider-neutral invoice-text intake instructions and a JSON contract with explicit missing-value and arithmetic-check handling.",
+    "Makes the unavailable PDF extraction dependency explicit while preserving a useful text-input workflow.",
+    "Adds proposed successful intake, PDF dependency, and near-miss cases without claiming execution results."
+  ]
+}

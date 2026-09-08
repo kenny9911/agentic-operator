@@ -21,6 +21,14 @@ function focusableElements(root: HTMLElement): HTMLElement[] {
   );
 }
 
+function topmostDialog(): HTMLElement | undefined {
+  // DOM order follows the shared modal stacking order, including dialogs
+  // mounted inside an existing dialog. Effect order does not.
+  return Array.from(
+    document.querySelectorAll<HTMLElement>("[data-modal-dialog='true']"),
+  ).at(-1);
+}
+
 /**
  * Modal — fixed full-screen backdrop with click-to-close.
  *
@@ -64,6 +72,7 @@ export function ModalOverlay({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.defaultPrevented || topmostDialog() !== dialogRef.current) return;
       if (e.key === "Escape") {
         e.preventDefault();
         onCloseRef.current();
@@ -95,7 +104,12 @@ export function ModalOverlay({
 
     const frame = window.requestAnimationFrame(() => {
       const dialog = dialogRef.current;
-      if (!dialog || dialog.contains(document.activeElement)) return;
+      if (
+        !dialog ||
+        topmostDialog() !== dialog ||
+        dialog.contains(document.activeElement)
+      )
+        return;
       const explicit = dialog.querySelector<HTMLElement>(
         "[autofocus], [data-autofocus='true']",
       );
@@ -107,13 +121,20 @@ export function ModalOverlay({
       window.cancelAnimationFrame(frame);
       document.removeEventListener("keydown", onKey);
       const opener = returnFocusRef.current;
-      if (opener?.isConnected) opener.focus();
+      const activeDialog = topmostDialog();
+      if (
+        opener?.isConnected &&
+        (!activeDialog || activeDialog.contains(opener))
+      )
+        opener.focus();
     };
   }, []);
 
   return (
     <div
-      onClick={onClose}
+      onClick={() => {
+        if (topmostDialog() === dialogRef.current) onClose();
+      }}
       style={{
         position: "fixed",
         inset: 0,
@@ -129,6 +150,7 @@ export function ModalOverlay({
       <div
         ref={dialogRef}
         role="dialog"
+        data-modal-dialog="true"
         aria-modal="true"
         aria-label={
           ariaLabel ?? (ariaLabelledBy ? undefined : t("common.dialog"))

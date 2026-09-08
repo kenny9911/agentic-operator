@@ -261,8 +261,36 @@ An external Model Context Protocol process or endpoint whose Tools are folded in
 _Avoid_: plugin, extension, tool server
 
 **Skill**:
-A markdown skill document listed by its frontmatter at boot and loaded on demand by an Agent. A Factory Skill is different: a reusable prompt fragment the Factory authored and scores.
+A portable bundle of task guidance and supporting resources available to an Agent. A Skill is separate from business Tool authority and from a Factory Skill.
 _Avoid_: prompt, instruction, playbook
+
+**Skill Library**:
+A Tenant-owned or platform-shared collection of managed Skills, including their drafts and published versions.
+_Avoid_: tool registry, plugin store
+
+**Skill Draft**:
+An editable revision of a managed Skill awaiting publication.
+_Avoid_: Skill Version, live Skill
+
+**Skill Version**:
+An immutable publication of a Skill's complete bundle, identified by its version and content digest.
+_Avoid_: draft, latest (when an exact publication is meant)
+
+**Skill Bindings**:
+A Workflow or Agent's declared Skill scope: inherited, selected or disabled, with optional version pins and explicit activation.
+_Avoid_: tool grants, skill permissions
+
+**Skill Session**:
+A run's captured, authorized Skill catalog and its activation and resource-access state. A child Skill Session is confined to its parent's captured scope.
+_Avoid_: library, model memory
+
+**Skill Comparison**:
+A recorded pair of model responses for the same task, with and without Skill instructions, tied to an exact Skill source. Its human grade is distinct from execution completion.
+_Avoid_: proof of reliability, automatic pass
+
+**Factory Skill**:
+Reusable authoring guidance learned and scored by the Factory, distinct from a portable Skill in the Skill Library.
+_Avoid_: Skill (without the Factory qualifier)
 
 ### Models and usage
 

@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { skillBindingsCopy } from "@/lib/i18n/skill-bindings";
+
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Badge, Icon, ModalOverlay } from "@/app/portal/components";
@@ -14,6 +17,7 @@ export type WorkflowHelpTopic =
   | "troubleshooting";
 
 export interface WorkflowHelpProps {
+  tenant?: string;
   open: boolean;
   onClose: () => void;
   initialTopic?: WorkflowHelpTopic;
@@ -40,8 +44,9 @@ export function WorkflowHelp({
   open,
   onClose,
   initialTopic = "start",
+  tenant,
 }: WorkflowHelpProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const titleId = useId();
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -155,6 +160,7 @@ export function WorkflowHelp({
             >
               {t("workflowHelp.subtitle")}
             </p>
+            {tenant ? <Link href={`/portal/${encodeURIComponent(tenant)}/skills/help` as never} target="_blank" rel="noopener noreferrer" style={{ color: "var(--signal)", fontSize: 12, textDecoration: "underline" }}>{skillBindingsCopy(language).help}</Link> : null}
           </div>
           <button
             ref={closeRef}

@@ -27,3 +27,11 @@ export type {
   CodexAppServerProbeOptions,
   CodexAppServerProbeResult,
 } from "./probe";
+export { materializeCodexSkills, CodexSkillError } from "./skills";
+export type {
+  CodexSkillSource,
+  MaterializeCodexSkillsOptions,
+  CodexSkillInput,
+  CodexSkillErrorCode,
+  CodexSkillSet,
+} from "./skills";

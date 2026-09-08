@@ -4,6 +4,7 @@ import {
   WorkflowTestRunResponseSchema,
   normalizeWorkflowManifest,
   type AgentDefinitionV2,
+  type SkillBindings,
   type WorkflowRunEntrypoint,
   type WorkflowRunInputBinding,
   type WorkflowRunInputDescriptor,
@@ -27,11 +28,14 @@ import {
   readRunInputHistory,
   rememberRunInput,
   runAction,
+  getRuntimeSkillHost,
+  type RunSkillSnapshotRef,
   type ActionSpec,
 } from "@agentic/runtime";
 import { getGlobalToolCatalogEntry } from "@agentic/tools";
 import type { AuthedContext } from "../plugins/auth";
 import { boundConversationHistory } from "./conversation-history";
+import { workflowSkillEvidence } from "./workflow-skill-evidence";
 import {
   getWorkflowDraft,
   getWorkflowRunVersionSnapshot,
@@ -51,6 +55,9 @@ interface QueuedTestEvent {
 
 interface ExecuteAgentInput {
   workflowSlug: string;
+  workflowSkills?: SkillBindings;
+  skillParent?: RunSkillSnapshotRef;
+  skillSnapshots: Map<string, RunSkillSnapshotRef>;
   definition: AgentDefinitionV2;
   event: QueuedTestEvent;
   tenantId: string;
@@ -405,6 +412,11 @@ async function executeAgent(
 
   try {
     const runInputHistory = await readRunInputHistory(contextMemory, runId);
+    const host = getRuntimeSkillHost();
+    if (!host && (input.workflowSkills || definition.skills)) throw new Error("Authored Skill bindings require a configured runtime Skill host");
+    const snapshot = host?.capture({ tenantId: input.tenantId, tenantSlug: input.tenantSlug, executionId: runId, agentId: definition.id, agentName: definition.name, kind: "test", parent: input.skillParent, workflowSkills: input.workflowSkills, agentSkills: definition.skills });
+    if (snapshot) input.skillSnapshots.set(runId, snapshot);
+    const skillSession = snapshot ? await host!.restore(snapshot, { tenantId: input.tenantId, executionId: runId, agentId: definition.id }) : undefined;
     const prepared = await harness.prepare({
       event: {
         name: input.event.name,
@@ -520,6 +532,7 @@ async function executeAgent(
 
         const outcome = await runAction({
           runInputHistory,
+          skillSession,
           ctx: {
             agentName: definition.name,
             actionName: action.name,
@@ -592,7 +605,9 @@ async function executeAgent(
           ? null
           : {
               code: String(outcome.meta?.error ?? "step_failed"),
-              message: `Action '${action.name}' failed.`,
+              message: typeof outcome.meta?.message === "string"
+                ? outcome.meta.message.slice(0, 4000)
+                : `Action '${action.name}' failed.`,
               ...(outcome.meta?.validationIssues === undefined
                 ? {}
                 : { details: outcome.meta.validationIssues }),
@@ -615,6 +630,7 @@ async function executeAgent(
           attempts,
           branchTarget,
           simulation,
+          ...(skillSession ? { skillEvidence: workflowSkillEvidence(await skillSession.snapshot(), outcome.meta?.toolCalls) } : {}),
           error: stepError,
         });
         if (!outcome.ok) {
@@ -853,6 +869,7 @@ export async function runWorkflowDraftTest(
     },
   ];
   const agentRuns: WorkflowTestAgentRun[] = [];
+  const skillSnapshots = new Map<string, RunSkillSnapshotRef>();
   const eventRecords: WorkflowTestEventRecord[] = [];
   // Keep both shapes: the flat strings for API clients, and the structured
   // issues the portal needs to render a localized message (the `code` is what
@@ -902,6 +919,9 @@ export async function runWorkflowDraftTest(
       }
       const result = await executeAgent({
         workflowSlug: slug,
+        workflowSkills: manifest.skills,
+        skillParent: event.sourceAgentRunId ? skillSnapshots.get(event.sourceAgentRunId) : undefined,
+        skillSnapshots,
         definition,
         event,
         tenantId: ctx.tenantId,

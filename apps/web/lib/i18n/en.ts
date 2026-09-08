@@ -1,3 +1,4 @@
+import { skillsEn } from "./skills";
 import type { Dict } from "./types";
 
 /**
@@ -7,6 +8,7 @@ import type { Dict } from "./types";
  * set exactly — enforced by `parity.test.ts`.
  */
 export const en = {
+  skills: skillsEn,
   common: {
     notConnected: "Not connected yet",
     loading: "Loading…",
@@ -50,6 +52,7 @@ export const en = {
     },
   },
   nav: {
+    skills: "Skills",
     group: { run: "Run", observe: "Observe", manage: "Manage" },
     dashboard: "Dashboard",
     workflows: "Workflows",

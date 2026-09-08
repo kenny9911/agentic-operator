@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import type {
   CodeActContainerResult,
 } from "./codeact-container";
-import type { CodeActRpcMethod } from "./codeact-worker";
+import { CODEACT_RPC_METHODS, type CodeActRpcMethod } from "./codeact-worker";
 
 const EXECUTE_SCHEMA = "agentic-production-codeact-execute/v1" as const;
 const TERMINAL_SCHEMA = "agentic-production-codeact-terminal/v1" as const;
@@ -14,16 +14,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const PINNED_IMAGE = /^(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[a-f0-9]{64}$/;
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_RPC_RESPONSES = 4_096;
-const RPC_METHODS = new Set<CodeActRpcMethod>([
-  "reason",
-  "tool",
-  "memory.get",
-  "memory.put",
-  "memory.delete",
-  "memory.search",
-  "invoke",
-  "spawn",
-]);
+const RPC_METHODS = new Set<CodeActRpcMethod>(CODEACT_RPC_METHODS);
 
 function canonicalJsonValue(value: unknown, arrayEntry = false): unknown {
   if (

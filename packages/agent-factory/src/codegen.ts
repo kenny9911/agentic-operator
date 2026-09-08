@@ -175,18 +175,46 @@ interface AgentMemory {
   search(query: string, opts?: Record<string, unknown>): Promise<unknown[]>;
 }
 interface AgentSpawnResult { ok: boolean; data?: unknown; error?: string; emitted?: unknown[]; code?: string }
+type AgentSkillSelector = { id: string } | { name: string };
+interface AgentSkillPageOptions { cursor?: string; limit?: number }
+interface AgentSkillReference {
+  readonly id: string;
+  readonly versionId: string;
+  readonly contentDigest: string;
+  readonly name: string;
+  readonly description: string;
+}
+interface AgentSkillResource {
+  readonly path: string;
+  readonly encoding: "utf8" | "base64";
+  readonly bytes: number;
+}
+interface AgentSkills {
+  runScript(input: { id: string; scriptPath: string; interpreter: "node" | "python"; args?: string[]; stdin?: string }): Promise<unknown>;
+  list(options?: AgentSkillPageOptions): Promise<{ skills: readonly AgentSkillReference[]; nextCursor?: string }>;
+  load(selector: AgentSkillSelector): Promise<Omit<AgentSkillReference, "description"> & { origin: "model" | "explicit"; body: string; bytes: number }>;
+  listResources(selector: AgentSkillSelector, options?: AgentSkillPageOptions): Promise<{ skill: AgentSkillReference; resources: readonly AgentSkillResource[]; nextCursor?: string }>;
+  readResource(selector: AgentSkillSelector, path: string): Promise<AgentSkillResource & { skill: AgentSkillReference; content: string }>;
+}
+interface AgentSpawnOptions {
+  tools?: string[];
+  /** Omit to inherit the exact parent catalog; provide IDs to narrow it. */
+  skillIds?: string[];
+}
+
 interface AgentRuntimeCtx {
   agentName: string;
   tenantSlug: string;
   correlationId: string;
   subject?: string;
   memory: AgentMemory;
+  skills: AgentSkills;
   log?: (level: "info" | "warn" | "error", msg: string, data?: unknown) => void;
   reason(systemPrompt: string, input: unknown): Promise<Record<string, unknown>>;
   emit(event: string, payload?: Record<string, unknown>): Promise<void> | void;
   tools: { run(name: string, args?: unknown): Promise<unknown> };
   tool(name: string, args?: unknown): Promise<unknown>;
-  spawn(task: string, input?: unknown, opts?: { tools?: string[] }): Promise<AgentSpawnResult>;
+  spawn(task: string, input?: unknown, opts?: AgentSpawnOptions): Promise<AgentSpawnResult>;
   invoke(agentRef: string, input?: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
 }
 interface AgentDefinition {

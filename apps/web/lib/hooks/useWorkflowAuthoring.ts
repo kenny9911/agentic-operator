@@ -25,7 +25,8 @@ import {
   type GenerateWorkflowResponse,
 } from "@agentic/contracts";
 import { z, type ZodType } from "zod";
-import { tenantHeader } from "./tenant-header";
+import { usePathname } from "next/navigation";
+import { tenantFromPathname, tenantHeader } from "./tenant-header";
 import { usageAttributionHeaders } from "./usage-attribution";
 
 interface ApiOk {
@@ -290,14 +291,16 @@ export function useWorkflowCatalog() {
 }
 
 export function useWorkflowDetail(slug?: string | null) {
+  const tenant = tenantFromPathname(usePathname() ?? "");
   return useQuery({
-    queryKey: WORKFLOW_AUTHORING_KEYS.detail(slug ?? "__none__"),
-    queryFn: () =>
+    queryKey: [...WORKFLOW_AUTHORING_KEYS.detail(slug ?? "__none__"), tenant],
+    queryFn: ({ signal }) =>
       callV1(
         `/v1/workflows/${encodeURIComponent(slug!)}`,
         WorkflowDetailSchema,
+        { signal, headers: { "x-agentic-tenant": tenant! } },
       ),
-    enabled: Boolean(slug),
+    enabled: Boolean(slug && tenant),
     staleTime: 3_000,
   });
 }

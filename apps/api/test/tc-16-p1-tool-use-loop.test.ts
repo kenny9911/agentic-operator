@@ -371,10 +371,10 @@ describe("TC-16: Phase 1 tool-use loop (P1-RT-01..02 + RT-06..07)", () => {
       tenantId: expect.stringMatching(/^ten/),
       purpose: "agent:scorerAgent/role:primary/repair",
     });
-    // Primary turn is task-class routed; the repair turn intentionally sends
-    // no explicit routing (the gateway derives it), so pin that contract here.
+    // Primary turns use the agent task class; schema repair follows the
+    // tenant's dedicated output.repair route.
     expect(gw.captured[0]!.routing?.taskType).toBe("tool.loop");
-    expect(gw.captured[1]!.routing).toBeUndefined();
+    expect(gw.captured[1]!.routing?.taskType).toBe("output.repair");
     // Tokens summed across both turns
     expect(result.tokensIn).toBe(10);
     expect(result.tokensOut).toBe(10);

@@ -16,6 +16,10 @@ import type {
   ModelListResponse,
   ServerNotification,
   ServerRequest,
+  SkillsListParams,
+  SkillsListResponse,
+  SkillsConfigWriteParams,
+  SkillsConfigWriteResponse,
   ThreadForkParams,
   ThreadItem,
   ThreadReadResponse,
@@ -286,6 +290,15 @@ export class AppServerClient extends EventEmitter {
 
   modelList(params: ModelListParams = {}): Promise<ModelListResponse> {
     return this.request("model/list", params);
+  }
+
+  /** Pinned 0.150.1 discovery: no newer extra-root parameters. */
+  skillsList(params: SkillsListParams = {}): Promise<SkillsListResponse> {
+    return this.request("skills/list", params);
+  }
+
+  skillsConfigWrite(params: SkillsConfigWriteParams): Promise<SkillsConfigWriteResponse> {
+    return this.request("skills/config/write", params);
   }
 
   async runTurn(

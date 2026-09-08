@@ -65,6 +65,41 @@ events to the existing `runs`, `steps`, logs, usage ledger, cancellation, and
 approval model before enabling Codex as a selectable production execution
 path.
 
+## Frozen Run Skill bridge
+
+`apps/api/src/services/codex-skill-runtime.ts` connects an existing durable Run
+Skill snapshot to the native Skill adapter. A trusted host supplies its snapshot
+reference and tenant/run/agent identity to `materializeRunCodexSkills`. The
+`ManagedSkillRuntime.materializationSources` reader checks the exact scope,
+current authorization, immutable publication or copied legacy bytes, and total
+size before the bridge writes a fresh private Skill root. Neither a request body
+nor a model message can supply the reader or filesystem paths.
+
+The caller supplies the returned private environment to an `AppServerClient`
+with `inheritEnv:false`, then calls `prepareDiscovery(client, cwd)`. Preparation
+disables native built-ins in the private home and rejects ambient repository or
+user Skills. `explicitInputs(client, cwd)` rechecks authorization, snapshot
+identity, native discovery and on-disk integrity before returning only the
+snapshot's explicit activation IDs as native Skill inputs. These checks are
+serialized. Restricted invocation policies that the pinned native protocol
+cannot represent are rejected; the provider-neutral SkillSession supports them.
+
+This bridge is a verified adapter capability. It does not start a thread or
+model turn and does not enable Codex as a selectable production agent. Manifest,
+BaseAgent and CodeAct execution continue through their gateway-backed paths.
+The native bridge test starts the pinned app-server with no provider credentials
+and asserts that its outgoing protocol methods are limited to initialization,
+Skill discovery and private Skill configuration. Run it without touching the
+application database:
+
+```bash
+pnpm --filter @agentic/api exec vitest run --config test/codex-skill-runtime.isolated.config.ts
+```
+
+The host remains responsible for preventing untrusted concurrent filesystem
+writes, supplying allow-listed launch configuration, and cleaning up the private
+home after the client closes. Materialization is not a process sandbox.
+
 ## Upgrade procedure
 
 1. Set the reviewed stable release in `codex.version` and the exact same value

@@ -1,3 +1,5 @@
+import type { SkillBindings } from "@agentic/contracts";
+
 export type JsonObject = Record<string, unknown>;
 
 export type InputKind = "prompt" | "value" | "file";
@@ -59,6 +61,7 @@ export interface StudioDefinition extends JsonObject {
   output_config: JsonObject;
   output_bindings: JsonObject;
   tool_use: StudioToolBinding[];
+  skills?: SkillBindings;
   provider: string;
   model: string;
   reasoning?: JsonObject;

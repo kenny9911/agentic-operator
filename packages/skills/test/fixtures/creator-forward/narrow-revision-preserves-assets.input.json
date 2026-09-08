@@ -1,0 +1,31 @@
+{
+  "id": "narrow-revision-preserves-assets",
+  "request": "Update this skill so daysOverdue means calendar days from expectedDate to the supplied reportDate. It currently says to estimate days overdue from today, which makes repeated reports inconsistent. Keep our thresholds, metadata, template, and brand mark.",
+  "targetCapabilities": {
+    "tools": [],
+    "providedInput": "Structured supplier rows and reportDate",
+    "execution": "No script execution route supplied"
+  },
+  "existingFiles": [
+    {
+      "path": "SKILL.md",
+      "encoding": "utf8",
+      "content": "---\nname: supplier-exception-digest\ndescription: Prepare a supplier exception digest from provided purchase-order rows for the weekly procurement review.\nlicense: LicenseRef-Customer\nmetadata:\n  owner: operations\n---\n\n# Supplier exception digest\n\nUse the supplied rows and reportDate. Preserve supplier identifiers exactly.\nRead [thresholds](references/thresholds.md) to classify exceptions. Estimate\ndays overdue from today. Exclude rows with no outstanding quantity.\n\nUse [the digest template](assets/digest-template.md) for output headings.\n[The customer brand mark](assets/brand-mark.png) is supplied for downstream\nrenderers; a text-only response should link it, not claim to embed or render it.\nDo not update any purchase order or contact suppliers.\n"
+    },
+    {
+      "path": "references/thresholds.md",
+      "encoding": "utf8",
+      "content": "# Exception thresholds\n\nEscalate rows at least 7 calendar days overdue. Label other overdue rows Watch.\nUnparseable dates need correction; exclude them from the overdue calculation.\n"
+    },
+    {
+      "path": "assets/digest-template.md",
+      "encoding": "utf8",
+      "content": "# Weekly supplier exceptions\n\nReport date: {{reportDate}}\n\n| PO | Supplier | Outstanding | Days overdue | Classification |\n| --- | --- | --- | --- | --- |\n\n## Data requiring correction\n"
+    },
+    {
+      "path": "assets/brand-mark.png",
+      "encoding": "base64",
+      "content": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jH7YAAAAASUVORK5CYII="
+    }
+  ]
+}

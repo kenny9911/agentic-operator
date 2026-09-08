@@ -1,30 +1,11 @@
-/**
- * @agentic/skills — Anthropic-style Skills (progressive disclosure of
- * markdown capability files) for tenant agents.
- *
- * Tenants declare a directory of skills:
- *
- *     tenants/<slug>/skills/
- *       candidate-sourcing/SKILL.md
- *       resume-screening/SKILL.md
- *
- * Each SKILL.md starts with a YAML frontmatter block (`name`,
- * `description`, plus arbitrary metadata) followed by the skill's full
- * instructions. The tenant index loads descriptors at boot:
- *
- *     import { loadSkillsFromDirectory } from "@agentic/skills";
- *     const skills = loadSkillsFromDirectory("./skills");
- *     const registry = { ..., skills };
- *
- * The runtime wires two tools into `tenantRegistry.tools` automatically:
- *   - `skills.list_skills` — metadata-only catalogue (cheap)
- *   - `skills.load_skill`  — full body of a named skill (on demand)
- *
- * Agents reference these in `agent.tool_use[]` like any other tool.
- */
+/** Portable Skill bundles, safe import/export, immutable execution sessions
+ * and the maintained Creator policy. Hosts own catalog authorization and
+ * durable storage; loading Skill text never grants business Tool authority.
+ * Filesystem descriptor/tool helpers preserve the checked-in Tenant API. */
 
 export {
   loadSkillsFromDirectory,
+  readSkillBundleFromDirectory,
   readSkillBody,
   parseFrontmatter,
   type SkillDescriptor,
@@ -32,5 +13,14 @@ export {
 
 export {
   buildSkillTools,
+  buildSessionSkillTools,
   buildSkillsPromptHint,
 } from "./tools";
+
+export * from "./bundle";
+export * from "./archive";
+export * from "./session";
+export * from "./creator";
+
+export * from "./script-tool";
+export type { SkillSessionScriptExecution, SkillScriptUsage } from "./session";

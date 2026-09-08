@@ -1,3 +1,4 @@
+import { runSkillScript } from "./skills/run-script";
 /**
  * @agentic/tools/registry — the GLOBAL tool registry.
  *
@@ -425,6 +426,19 @@ const GOHIRE_CONFIG_EXAMPLE = {
 };
 
 const REGISTRATIONS: ToolRegistration[] = [
+  {
+    descriptor: runSkillScript,
+    catalog: {
+      name: "skills.run_script", category: "skills", sideEffect: "call", operation: "compute",
+      effectScope: "sandbox_local", sandboxPolicy: "sandbox_local", testPolicy: "block",
+      credentialPosture: "none", probeRequired: false,
+      summary: "Execute an active Skill script with a separately approved isolated runner.",
+      description: "Requires the agent and action business tool allowlist plus the operator's tenant, image and interpreter policy. Skill text and tool config cannot grant execution. Returns bounded output and persisted artifacts with execution evidence.",
+      argsSchema: { id: { type: "string", required: true }, scriptPath: { type: "string", required: true }, interpreter: { type: "node | python", required: true }, args: { type: "string[]" }, stdin: { type: "string" } },
+      configSchema: {},
+      sourcePath: "packages/tools/src/skills/run-script.ts",
+    },
+  },
   // ── records.project — verbatim field copy out of the previous tool result. ─
   {
     descriptor: recordsProject,

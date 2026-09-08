@@ -125,3 +125,7 @@ apps/api/logs/
 # password — so the file is denied by name wherever it appears.
 config.local
 **/config.local
+
+# Temporary verified-download staging; completed source snapshots are tracked.
+skills-library/.skill-download-*/
+scripts/__pycache__/

@@ -1,0 +1,48 @@
+{
+  "files": [
+    {
+      "path": "SKILL.md",
+      "encoding": "utf8",
+      "content": "---\nname: purchase-order-exceptions\ndescription: Prepare a weekly purchase-order exception report from supplied rows and a report date, identifying overdue orders with outstanding quantities and listing invalid rows for correction. Use for this procurement report, not general supplier analysis.\n---\n\n# Purchase-order exceptions\n\nUse only the supplied report date and rows. Required row fields are `poId`, `supplier`, `expectedDate`, `orderedQuantity`, and `receivedQuantity`. Preserve PO and supplier identifiers exactly. This is a report-only task: do not email anyone or update purchase orders.\n\n## Establish valid inputs\n\nUse the supplied report date for every row, never today's date. Treat dates as calendar dates. Accept valid date-only values such as YYYY-MM-DD, or another clearly stated date format. Do not guess ambiguous dates or normalize impossible dates into another month.\n\nIf the report date is missing, invalid, or ambiguous, ask for its correction and do not calculate the report. For each row, check its expected date and quantities before classifying it. Quantities must be valid numbers and nonnegative. List rows with invalid dates or negative quantities separately under **Needs correction**, preserving their supplied values and identifying each issue. Missing or ambiguous values needed for a calculation also need correction; do not invent them. Exclude these rows from exception calculations.\n\n## Calculate and select\n\nFor each valid row:\n\n- Flag it only if `expectedDate < reportDate` and `receivedQuantity < orderedQuantity`. A row due on the report date is not overdue.\n- Calculate remaining quantity as `orderedQuantity - receivedQuantity`.\n- Calculate calendar days overdue as the number of calendar-date boundaries from `expectedDate` to `reportDate`, including weekends and holidays. Do not count elapsed hours, business days, or both endpoint dates.\n- Exclude fully received orders, over-received orders, and orders due on or after the report date.\n\nSort flagged rows by days overdue descending. Keep their input order when days overdue are tied.\n\n## Return the report\n\nState the report date, then provide a table with **PO**, **Supplier**, **Remaining quantity**, and **Calendar days overdue**. Include only flagged, valid rows in this table. If none qualify, state that there are no purchase-order exceptions for the supplied date.\n\nFollow with **Needs correction**, listing each invalid row's PO or input row position, supplied values, and correction needed. State when no rows need correction.\n\nCheck the selection against both conditions, verify subtraction and calendar-day counts, and ensure every invalid row is accounted for separately. No tool or script execution is required.\n"
+    }
+  ],
+  "assumptions": [
+    "Dates are calendar dates; ambiguous date formats require correction rather than an inferred locale.",
+    "Equal days-overdue values retain input order because no secondary sort was requested."
+  ],
+  "suggestedTests": [
+    {
+      "id": "overdue-boundaries-and-order",
+      "prompt": "Prepare the weekly purchase-order exception report for reportDate 2026-09-09. Rows: [{\"poId\":\"PO-A\",\"supplier\":\"Alpha\",\"expectedDate\":\"2026-09-07\",\"orderedQuantity\":10,\"receivedQuantity\":4},{\"poId\":\"PO-B\",\"supplier\":\"Beta\",\"expectedDate\":\"2026-09-01\",\"orderedQuantity\":12,\"receivedQuantity\":2},{\"poId\":\"PO-C\",\"supplier\":\"Gamma\",\"expectedDate\":\"2026-09-09\",\"orderedQuantity\":8,\"receivedQuantity\":0},{\"poId\":\"PO-D\",\"supplier\":\"Delta\",\"expectedDate\":\"2026-09-01\",\"orderedQuantity\":5,\"receivedQuantity\":5},{\"poId\":\"PO-E\",\"supplier\":\"Epsilon\",\"expectedDate\":\"2026-09-01\",\"orderedQuantity\":3,\"receivedQuantity\":4},{\"poId\":\"PO-F\",\"supplier\":\"Zeta\",\"expectedDate\":\"2026-09-10\",\"orderedQuantity\":9,\"receivedQuantity\":0}].",
+      "shouldTrigger": true,
+      "expectedCriteria": [
+        "The exception table contains PO-B followed by PO-A, with no other rows.",
+        "PO-B has remaining quantity 10 and 8 calendar days overdue; PO-A has remaining quantity 6 and 2 calendar days overdue.",
+        "The report identifies 2026-09-09 as its report date and does not send messages or update purchase orders."
+      ]
+    },
+    {
+      "id": "invalid-rows-separated",
+      "prompt": "Prepare our PO exception report for reportDate 2026-03-02. Rows: [{\"poId\":\"PO-LEAP\",\"supplier\":\"Date Co\",\"expectedDate\":\"2026-02-29\",\"orderedQuantity\":5,\"receivedQuantity\":0},{\"poId\":\"PO-NEG\",\"supplier\":\"Qty Co\",\"expectedDate\":\"2026-02-27\",\"orderedQuantity\":4,\"receivedQuantity\":-1},{\"poId\":\"PO-GOOD\",\"supplier\":\"Valid Co\",\"expectedDate\":\"2026-02-28\",\"orderedQuantity\":5,\"receivedQuantity\":2}].",
+      "shouldTrigger": true,
+      "expectedCriteria": [
+        "PO-LEAP and PO-NEG are listed under Needs correction, with their impossible date and negative received quantity identified respectively.",
+        "Neither invalid row appears in the exception table or receives a calculated days-overdue value.",
+        "PO-GOOD is the sole exception with remaining quantity 3 and 2 calendar days overdue."
+      ]
+    },
+    {
+      "id": "procurement-definition-near-miss",
+      "prompt": "Explain the difference between a purchase order and a supplier invoice in two sentences.",
+      "shouldTrigger": false,
+      "expectedCriteria": [
+        "Provides a concise explanation of the two documents without requesting report rows or a report date.",
+        "Does not produce a purchase-order exception report."
+      ]
+    }
+  ],
+  "changeSummary": [
+    "Adds a report-only skill with the exact overdue-and-outstanding selection rule, calendar-day arithmetic, descending sort, and separate correction reporting.",
+    "Includes proposed normal, invalid-input, and near-miss cases."
+  ]
+}

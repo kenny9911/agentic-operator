@@ -12,6 +12,15 @@ import type {
   RunInputContext,
 } from "@agentic/contracts";
 import type { createMemoryHandle } from "@agentic/runtime";
+import type { SkillSession } from "@agentic/skills";
+
+/** Host-owned execution capabilities, passed separately from input and AgentContext.
+ * Never hydrate this object from an HTTP body, Inngest event, or serialized checkpoint. */
+export interface AgentExecutionOptions {
+  readonly skillSession?: SkillSession;
+  /** Trusted host callback runs after the durable run row exists. */
+  readonly createSkillSession?: (scope: { runId: string; tenantId: string; agentId: string }) => Promise<SkillSession | undefined>;
+}
 
 export type AgentKind = "manifest" | "code";
 export type AgentScope = "tenant" | "system";

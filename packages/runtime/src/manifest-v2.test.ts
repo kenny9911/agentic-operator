@@ -15,6 +15,15 @@ after(async () => {
 });
 
 describe("versioned workflow manifest loading", () => {
+  it("retains workflow and agent Skill ceilings through the disk boundary", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "agentic-manifest-skills-"));
+    tempDirs.push(dir);
+    const skills = { mode: "selected", skills: [{ id: "policy", versionId: "policy-v1", activate: true }] };
+    await writeFile(path.join(dir, "workflow.json"), JSON.stringify({ $schemaVersion: 2, skills, agents: [{ id: "skill-agent", name: "skillAgent", actor: ["Agent"], trigger: ["RUN"], skills: { mode: "disabled", skills: [{ id: "policy" }] } }] }));
+    const loaded = await loadManifestFromDisk(dir);
+    assert.deepEqual(loaded.skills, skills);
+    assert.deepEqual(loaded.manifest[0]!.skills, { mode: "disabled", skills: [{ id: "policy" }] });
+  });
   it("retains the legacy shape for bare arrays", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "agentic-manifest-v1-"));
     tempDirs.push(dir);

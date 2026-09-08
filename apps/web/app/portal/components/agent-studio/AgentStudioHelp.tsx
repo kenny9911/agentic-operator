@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { skillBindingsCopy } from "@/lib/i18n/skill-bindings";
+
 import {
   Children,
   cloneElement,
@@ -24,6 +27,7 @@ export type AgentStudioHelpTopic =
   | "glossary";
 
 export interface AgentStudioHelpProps {
+  tenant?: string;
   /** Controls whether the guide is visible. */
   open: boolean;
   /** Called by the close button, Escape key, or backdrop click. */
@@ -902,8 +906,9 @@ export function AgentStudioHelp({
   open,
   onClose,
   initialTopic = "start",
+  tenant,
 }: AgentStudioHelpProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const titleId = useId();
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -1029,6 +1034,7 @@ export function AgentStudioHelp({
                 "Create, edit, test, publish, and operate an agent safely—no coding required.",
               )}
             </p>
+            {tenant ? <Link href={`/portal/${encodeURIComponent(tenant)}/skills/help` as never} target="_blank" rel="noopener noreferrer" style={{ color: "var(--signal)", fontSize: 12, textDecoration: "underline" }}>{skillBindingsCopy(language).help}</Link> : null}
           </div>
           <button
             ref={closeRef}

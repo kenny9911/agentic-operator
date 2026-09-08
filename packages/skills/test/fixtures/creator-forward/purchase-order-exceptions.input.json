@@ -1,0 +1,9 @@
+{
+  "id": "purchase-order-exceptions",
+  "request": "Create a skill for our weekly purchase-order exception report. I will supply a report date and rows with poId, supplier, expectedDate, orderedQuantity and receivedQuantity. Flag a row only when expectedDate is before the report date and receivedQuantity is less than orderedQuantity. Report PO, supplier, remaining quantity and calendar days overdue, sorted by days overdue descending. If a row has invalid dates or negative quantities, list it separately as needing correction. We do not want the skill to email anyone or update purchase orders.",
+  "targetCapabilities": {
+    "tools": [],
+    "providedInput": "Text or structured rows in the user request",
+    "execution": "No script execution route supplied"
+  }
+}

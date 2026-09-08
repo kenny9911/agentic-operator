@@ -238,3 +238,9 @@ describe("generated CodeAct tool allowlist inspection", () => {
     }
   });
 });
+
+it("requires a separate declared script tool for the Skill convenience API", () => {
+  const code = `export const agent = defineAgent({ async handler(input, ctx) { return ctx.skills.runScript({id:"skill",scriptPath:"scripts/main.js",interpreter:"node"}); }});`;
+  expect(validateGeneratedToolAllowlist(code, []).undeclaredTools).toEqual(["skills.run_script"]);
+  expect(validateGeneratedToolAllowlist(code, ["skills.run_script"]).ok).toBe(true);
+});

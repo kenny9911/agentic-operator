@@ -37,6 +37,7 @@ export const PERMISSIONS = [
   "events.read",
   "tasks.read",
   "tools.read",
+  "skills.read",
   "deployments.read",
   "usage.read",
   "audit.read",
@@ -55,6 +56,8 @@ export const PERMISSIONS = [
 
   // Admin writes (configuration + membership within a tenant)
   "agents.write",
+  "skills.write",
+  "skills.publish",
   "workflows.write",
   "deployments.write",
   "events.write",
@@ -97,6 +100,7 @@ const VIEWER_PERMS: Permission[] = [
   "events.read",
   "tasks.read",
   "tools.read",
+  "skills.read",
   "deployments.read",
   "models.read",
   "usage.read",
@@ -119,6 +123,8 @@ const ADMIN_EXTRA: Permission[] = [
   "audit.read",
   "tokens.read",
   "agents.write",
+  "skills.write",
+  "skills.publish",
   "workflows.write",
   "deployments.write",
   "events.write",

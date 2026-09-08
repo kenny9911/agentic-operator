@@ -16,6 +16,7 @@ import { useDirty } from "@/app/portal/lib/dirty-context";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { useAgents } from "@/lib/hooks/useAgents";
+import { useWorkflowDetail } from "@/lib/hooks/useWorkflowAuthoring";
 import {
   useAgentEditor,
   useAgentVersions,
@@ -54,6 +55,8 @@ import { PortsEditor } from "./PortsEditor";
 import { StepsEditor } from "./StepsEditor";
 import { TestLab } from "./TestLab";
 import { ToolsEditor } from "./ToolsEditor";
+import { SkillBindingsEditor } from "../skills/SkillBindingsEditor";
+import { skillBindingsCopy } from "@/lib/i18n/skill-bindings";
 import { AgentStudioHelp, type AgentStudioHelpTopic } from "./AgentStudioHelp";
 import { workflowCanvasHref } from "../workflows/workflow-navigation";
 import { studioLocale, studioUi, type StudioTranslate } from "./copy";
@@ -65,6 +68,7 @@ type SectionId =
   | "outputs"
   | "steps"
   | "tools"
+  | "skills"
   | "runtime"
   | "workflow"
   | "test"
@@ -93,6 +97,7 @@ const SECTIONS: Array<{
   { id: "outputs", label: "Outputs", icon: "external" },
   { id: "steps", label: "Steps", icon: "workflow" },
   { id: "tools", label: "Tools", icon: "settings" },
+  { id: "skills", label: "Skills", icon: "spark" },
   { id: "runtime", label: "Runtime", icon: "settings" },
   { id: "workflow", label: "Workflow", icon: "event" },
   { id: "test", label: "Test Lab", icon: "play" },
@@ -419,6 +424,7 @@ export function AgentStudio({
   const toast = useToast();
   const dirtyStore = useDirty();
   const editor = useAgentEditor(agentId, initialDraftId);
+  const workflowContext = useWorkflowDetail(workflowSlug);
   const agents = useAgents();
   const [section, setSection] = useState<SectionId>(
     initialSection ?? "overview",
@@ -1536,6 +1542,10 @@ export function AgentStudio({
           />
         </StudioPanel>
       );
+    if (section === "skills")
+      return <StudioPanel title={skillBindingsCopy(language).title}>
+        <SkillBindingsEditor tenant={tenant} scope="agent" value={definition.skills} inherited={workflowContext.data?.manifest.skills} disabled={!editable || Boolean(workflowSlug && !workflowContext.data)} onChange={(skills) => update({ ...definition, skills })} />
+      </StudioPanel>;
     if (section === "runtime")
       return (
         <div style={{ display: "grid", gap: 14 }}>
@@ -2943,7 +2953,7 @@ export function AgentStudio({
                 }}
               >
                 <Icon name={item.icon} size={11} />
-                <span style={{ flex: 1 }}>{studioUi(t, item.label)}</span>
+                <span style={{ flex: 1 }}>{item.id === "skills" ? skillBindingsCopy(language).title : studioUi(t, item.label)}</span>
                 {item.id === "inputs" && (
                   <span className="mono agent-studio-section-nav-count">
                     {definition.inputs.length}
@@ -3196,6 +3206,7 @@ export function AgentStudio({
         </aside>
       </div>
       <AgentStudioHelp
+        tenant={tenant}
         open={helpOpen}
         initialTopic={helpTopic}
         onClose={() => setHelpOpen(false)}

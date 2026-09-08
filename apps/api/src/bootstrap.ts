@@ -1,3 +1,6 @@
+import { createSkillScriptExecutionFactory, skillScriptPolicyFromEnvironment } from "./services/skill-script-runtime";
+import { ManagedSkillRuntime } from "./services/skill-runtime";
+import { setRuntimeSkillHost } from "@agentic/runtime";
 /**
  * Boot-time wiring: runs `bootstrapAll()` from @agentic/runtime which reads
  * manifests from `models/<slug>/` and returns an array of Inngest functions,
@@ -510,6 +513,10 @@ export async function bootstrapRuntime(
   installFactoryModelAdapter(gateway);
   setAgentGateway(gateway);
   setRuntimeGateway(gateway);
+  setRuntimeSkillHost(new ManagedSkillRuntime({
+    scriptExecution: createSkillScriptExecutionFactory({ policy: skillScriptPolicyFromEnvironment(), socketPath: process.env.AGENTIC_SKILL_SCRIPT_DOCKER_SOCKET }),
+    legacySkills: (slug) => (getRuntimeTenantRegistrySnapshot(slug)?.registry.skills ?? PRODUCTION_TENANT_REGISTRIES[slug]?.skills ?? []) as SkillDescriptor[],
+  }));
   // Wire the integration credential resolver so DB-backed integrations
   // (Settings → Integrations, e.g. GoHire) reach the global tool family at
   // dispatch time. @agentic/tools stays DB-free — it just calls this seam.

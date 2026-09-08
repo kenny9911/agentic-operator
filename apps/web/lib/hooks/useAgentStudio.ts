@@ -237,7 +237,7 @@ export const AGENT_STUDIO_KEYS = {
     ["agent-studio", "session", sessionId] as const,
 };
 
-function prepareDefinition(definition: StudioDefinition): unknown {
+export function prepareDefinition(definition: StudioDefinition): unknown {
   const value = JSON.parse(JSON.stringify(definition)) as Record<
     string,
     unknown

@@ -302,6 +302,7 @@ export function Sidebar({
               label={t("nav.toolLibrary")}
               matchPrefix
             />
+            {can("skills.read") && <NavItem href={`${base}/skills`} icon="library" label={t("skills.title")} matchPrefix />}
             <NavItem
               href={`${base}/tenants`}
               icon="agent"

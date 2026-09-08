@@ -561,6 +561,27 @@
       "when": 1786377621000,
       "tag": "0079_agent_execution_live_window",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "6",
+      "when": 1788940800000,
+      "tag": "0080_managed_skills",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1788940801000,
+      "tag": "0081_run_skill_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "6",
+      "when": 1788940802000,
+      "tag": "0082_skill_script_reservations",
+      "breakpoints": true
     }
   ]
 }

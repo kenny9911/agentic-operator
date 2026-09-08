@@ -1,8 +1,11 @@
 # Skills runtime and Skill Builder
 
-Status: proposed, 2026-09-09. Research and repository audit are complete; product
-decisions on sharing and publication are awaiting the user. This document
-describes the intended implementation, not currently shipped behavior.
+Status: implemented and verified, 2026-09-09. Research,
+managed libraries, portable bundles, execution sessions, Creator generation,
+file editing, evaluations, import/export and harness integrations are present.
+This document describes the full intended outcome; the
+[implementation status](skills-implementation-status.md) distinguishes working
+code and verified evidence from remaining work.
 
 ## Outcome
 
@@ -26,29 +29,28 @@ The user requested all of these together:
 Primary-source findings and links belong in
 [the research note](../research/2026-09-09-skills-and-agent-harnesses.md).
 
-## Product decisions awaiting an answer
+## Implementation defaults
 
-| Decision | Recommended behavior | Alternative |
-| --- | --- | --- |
-| Sharing | A Tenant library visible to that Tenant's Agents and Workflows, plus an explicitly shared platform library maintained by superadmins | Tenant-only libraries, or a single cross-Tenant editable library |
-| Publication | Save drafts; publish immutable versions; bindings can pin a version or follow the latest published version | Every save immediately changes runtime behavior |
-
-The remaining design below uses the recommendations. Implementing those
-recommendations requires the user's answers to these two decisions. Routine
-engineering choices and correctness requirements do not need another approval.
+Tenant-owned libraries are visible to that Tenant's Agents and Workflows.
+Superadmins can maintain an explicitly shared platform library. Operators save
+editable drafts and publish immutable versions; bindings may follow the latest
+publication or pin a version. These are the recommended defaults stated to the
+user during implementation, not answers inferred from an unanswered question.
+They preserve tenant isolation and reproducible runs while keeping the product
+policy reviewable. The task authorizes implementing the feature; these
+reversible defaults do not require a separate permission gate.
 
 ## Existing implementation and compatibility
 
-`@agentic/skills` currently discovers filesystem `SKILL.md` descriptors and
-provides `skills.list_skills` and `skills.load_skill`. It does not implement
-managed storage, resource access, a user interface or comprehensive runtime
-integration. Its parser is permissive and its body reads are mutable; it cannot
-be the trust or reproducibility boundary for imported bundles.
-
-Bootstrap adds the tools only when a custom Tenant Registry already provides
-Skills. The nine checked-in Skills in Northwind, InsightLab and RoboHire must
-remain usable. Preserve their existing tool names and manifest behavior while
-validating and snapshotting their contents through the common resolver.
+The prior `@agentic/skills` implementation discovered filesystem `SKILL.md`
+descriptors and provided `skills.list_skills` and `skills.load_skill`. Its
+permissive parser and mutable body reads have been replaced by validated,
+byte-preserving bundles and bounded per-execution sessions. Compatibility tools
+capture immutable source bytes. The managed resolver supplies published
+Tenant and shared Skills even for declarative-only Tenants. The nine checked-in
+Skills in Northwind, InsightLab and RoboHire remain compatible, with validated
+bytes captured through the common resolver. Legacy named Tool aliases remain
+available; model-facing session tools advertise a single required Skill ID.
 
 Factory Skills are a separate concept: learned authoring guidance with
 effectiveness scoring and domain governance. Keep those records and behavior.
@@ -116,7 +118,7 @@ Use new managed records rather than overloading `factory_skills`:
 - **Skill evaluation**: selected draft revision or published version, examples,
   run references, observed results and operator/model review provenance.
 
-Every record retains an owning `tenant_id`. Shared entries, if approved, have
+Every record retains an owning `tenant_id`. Shared entries have
 the platform's `__system` owner and an explicit shared visibility. Shared
 visibility is never inferred from an omitted Tenant filter. Private drafts,
 evaluations and history do not become public merely because a published
@@ -181,6 +183,18 @@ performs the call with Usage Attribution, real provider errors and bounded
 generation/repair attempts. No mock response or template is silently substituted
 for failed AI generation. Store the creator policy version, requested/served
 model, assumptions, validation issues and generation timestamp.
+
+An omitted Model Route uses the host's explicit Pro authoring default, not the
+general tenant chat route. `SKILL_CREATOR_MODEL_ROUTE` can select a configured
+Pro route; for a native OpenAI base model, also set
+`SKILL_CREATOR_REASONING_MODE=pro`. Default Pro calls use high reasoning, a
+16,000-token output cap and a five-minute timeout. The same route handles the
+single permitted format repair. Pro results must identify a Pro model or Pro
+reasoning mode in the raw provider response, retained separately from normalized
+controls in generation provenance. Deliberate
+editor route choices remain available; provider failures never cause a switch
+to an unrelated model. These settings choose authoring compute and do not
+establish that generated Skills are behaviorally superior.
 
 After validation, persist the generated draft and open that exact revision in
 the editor. The user can immediately change instructions and supporting files.

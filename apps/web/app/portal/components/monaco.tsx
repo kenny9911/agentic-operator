@@ -23,7 +23,7 @@
  *   props: { value, onChange?, language?, height?, readOnly?, minHeight? }
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 
@@ -204,9 +204,11 @@ export function MonacoEditor({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
+  const valueRef = useRef(value);
+  const applyingExternalValue = useRef(false);
   const [ready, setReady] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
 
@@ -216,7 +218,7 @@ export function MonacoEditor({
       .then((monaco) => {
         if (cancelled || !containerRef.current) return;
         editorRef.current = monaco.editor.create(containerRef.current, {
-          value: value || "",
+          value: valueRef.current || "",
           language,
           theme: editorThemeName(),
           automaticLayout: true,
@@ -237,7 +239,8 @@ export function MonacoEditor({
           guides: { indentation: true },
         });
         editorRef.current.onDidChangeModelContent(() => {
-          onChangeRef.current?.(editorRef.current.getValue());
+          if (!applyingExternalValue.current)
+            onChangeRef.current?.(editorRef.current.getValue());
         });
         setReady(true);
       })
@@ -260,11 +263,22 @@ export function MonacoEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language, readOnly]);
 
-  // External value updates — only push when divergent so we don't fight the user.
-  useEffect(() => {
+  // Synchronize at commit, before the next native keystroke. A passive effect
+  // can otherwise replay an older parent value over newer text and reset the
+  // caret while someone is typing quickly.
+  useLayoutEffect(() => {
+    valueRef.current = value;
     const ed = editorRef.current;
     if (ed && value != null && ed.getValue() !== value) {
-      ed.setValue(value);
+      // A server refresh is already reflected in the parent's value. Monaco
+      // emits a content event for setValue too; do not turn that event back
+      // into a user edit or replace other fields in a newly accepted bundle.
+      applyingExternalValue.current = true;
+      try {
+        ed.setValue(value);
+      } finally {
+        applyingExternalValue.current = false;
+      }
     }
   }, [value]);
 

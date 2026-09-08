@@ -70,6 +70,10 @@ function lessonsBlock(priorReflections: ReflectionLite[], lang: BrainLang): stri
  *  knowledge that separates a hand-written production agent (per-step durable, failure-classified,
  *  timezone-correct, vendor-quirk-aware) from a single LLM decision. Bilingual; injected into both
  *  system prompts. Includes one multi-step `plan` exemplar (create-jd shape) as few-shot. */
+function skillsRuntimeBlock(): string {
+  return "\n\n[CodeAct Skill guidance] When a trusted host binds a Skill catalog, generated handlers may use ctx.skills.list({limit:20}) with nextCursor pagination, ctx.skills.load({id} or {name}), ctx.skills.listResources(selector, page?), and ctx.skills.readResource(selector, relativePath). Use returned IDs and paths; do not invent catalog entries. All generated-code activation is model-origin; explicit-only Skills cannot be activated by code. ctx.reason receives current Skill metadata and activated instructions on every call. These read-only intrinsics grant no business Tool permissions, credentials or script execution. Keep external calls in the reviewed business Tool allowlist. ctx.spawn options.skillIds may only narrow the parent's exact catalog; production spawn remains disabled.";
+}
+
 function productionPatternsBlock(lang: BrainLang): string {
   if (lang === "en") {
     return `
@@ -185,7 +189,7 @@ ${factoryRoles("zh").map((r) => `· 【${r.role}】(${r.phase}) — ${r.blurb}�
   · 需求歧义、缺背景、某测试反复失败你判断不了根因（哪个 API 没调通 / 哪个用例不对 / 哪项真实配置缺失）→ 问用户。
   · 没合适工具可绑、或工具身份 / I/O 契约仍不唯一 → ask_user 合并询问具体业务选择，禁止私自造工具或伪契约。若真实工具和完整契约已经唯一，只是外部平台暂不可用或没有真实 key，而用户只要求沙箱跑通，则直接把所有缺口合并进 prepare_sandbox_evidence_plan 的一次 sandbox-only 确认；只有真实连通或 production 发布才询问凭证配置。signed replay 永远不能把真实集成或发布验收标绿。
   · design_agent 回了 provisioning.gaps 含 missing_credential（已绑定工具需要某环境变量，但当前部署没配）→ 先判断目标阶段：仅沙箱编排就合并进 prepare_sandbox_evidence_plan，不索要真实 key；用户明确要求 live / production 时才 ask_user 点名缺少的 env，并推荐在服务器配置或改用另一个真实接入工具。
-只有真拿不准 / 真缺信息才问；问就问清楚、给选项、给推荐。${productionPatternsBlock("zh")}${lessonsBlock(priorReflections, "zh")}`;
+只有真拿不准 / 真缺信息才问；问就问清楚、给选项、给推荐。${skillsRuntimeBlock()}${productionPatternsBlock("zh")}${lessonsBlock(priorReflections, "zh")}`;
 }
 
 function systemPromptEn(domain: string, priorReflections: ReflectionLite[]): string {
@@ -239,7 +243,7 @@ Solve what you can judge yourself; but on an information gap or an uncertain cal
   · Ambiguous requirements, missing background, or a test that keeps failing whose root cause you can't determine (which API didn't connect / which case is wrong / which real configuration is missing) → ask the user.
   · When no suitable tool exists, or tool identity / I/O contract remains ambiguous, combine the concrete business choices into ask_user; never invent a tool or contract. If one real tool and its full contract are already known but the platform or real key is unavailable, and the user only asked for a sandbox run, put all such gaps into one prepare_sandbox_evidence_plan sandbox-only confirmation. Ask about credentials only for explicit live connectivity or production. Signed replay never turns real integration or promotion green.
   · If design_agent reports missing_credential, first distinguish the target stage: for sandbox orchestration, combine it into prepare_sandbox_evidence_plan and do not request a real key; for explicit live / production work, use ask_user to name the missing env var and recommend server-side configuration or another genuinely integrated tool.
-Only ask when truly unsure / truly missing info; when you ask, ask clearly, give options, give a recommendation.${productionPatternsBlock("en")}${lessonsBlock(priorReflections, "en")}`;
+Only ask when truly unsure / truly missing info; when you ask, ask clearly, give options, give a recommendation.${skillsRuntimeBlock()}${productionPatternsBlock("en")}${lessonsBlock(priorReflections, "en")}`;
 }
 
 export function systemPrompt(domain: string, priorReflections: ReflectionLite[], lang: BrainLang = "zh"): string {

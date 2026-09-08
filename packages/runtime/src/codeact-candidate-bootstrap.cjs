@@ -103,6 +103,13 @@ async function execute(command) {
       reason: (systemPrompt, input) => rpc('reason', [systemPrompt, input]),
       tool: (name, args) => rpc('tool', [name, args]),
       tools: { run: (name, args) => rpc('tool', [name, args]) },
+      skills: {
+        runScript: (input) => rpc('tool', ['skills.run_script', input]),
+        list: (options) => rpc('skills.list', [options]),
+        load: (selector) => rpc('skills.load', [selector]),
+        listResources: (selector, options) => rpc('skills.listResources', [selector, options]),
+        readResource: (selector, path) => rpc('skills.readResource', [selector, path]),
+      },
       emit(event, payload = {}) {
         if (typeof event !== 'string' || !event.trim()) throw new TypeError('emit event must be a non-empty string');
         emitted.push(jsonClone({ event, payload }, 'emit payload'));

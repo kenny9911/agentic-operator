@@ -205,3 +205,13 @@ repository owner's GHCR namespace. It contains no placeholder registry.
 
 Production variables and their validation rules are documented in
 `.env.production.example`. Operational procedures live in `docs/RUNBOOK.md`.
+
+## User guides
+
+- [Skills: create, maintain, publish and use](docs/user-guides/skills.md)
+- [Official Skill collection: local sources, refresh and shared import](skills-library/README.md)
+- [Agent Studio](docs/user-guides/agent-studio.md)
+- [Workflow authoring](docs/user-guides/workflow-authoring.md)
+
+The portal also provides contextual English and Chinese help from the Skills
+library, Workflow Skills controls and Agent Studio.

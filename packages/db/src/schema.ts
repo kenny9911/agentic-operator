@@ -19,6 +19,7 @@ import {
   text,
   index,
   uniqueIndex,
+  type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 
 const now = sql`(unixepoch() * 1000)`;
@@ -4492,7 +4493,106 @@ export const ontocodeSessionPurges = sqliteTable(
 
 // ─── Helper: full schema export for drizzle() ───────────────────────────────
 
+// Managed portable Skills are independent of Factory tool/skill artifacts.
+export const managedSkills = sqliteTable("managed_skills", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  name: text("name").notNull(), description: text("description").notNull(),
+  visibility: text("visibility", { enum: ["tenant", "shared"] }).notNull().default("tenant"),
+  latestVersionId: text("latest_version_id").references((): AnySQLiteColumn => skillVersions.id, { onDelete: "restrict" }),
+  createdBy: text("created_by"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+  archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+}, (t) => ({ ownerName: uniqueIndex("managed_skills_owner_name_uq").on(t.tenantId, t.name), available: index("managed_skills_available_idx").on(t.visibility, t.archivedAt, t.updatedAt) }));
+
+export const skillDrafts = sqliteTable("skill_drafts", {
+  skillId: text("skill_id").primaryKey().references(() => managedSkills.id, { onDelete: "restrict" }),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  creatorNotesJson: text("creator_notes_json", { mode: "json" }),
+  revision: integer("revision").notNull(), bundleJson: text("bundle_json", { mode: "json" }).notNull(),
+  diagnosticsJson: text("diagnostics_json", { mode: "json" }).notNull(), provenanceJson: text("provenance_json", { mode: "json" }),
+  updatedBy: text("updated_by"), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+}, (t) => ({ owner: index("skill_drafts_owner_idx").on(t.tenantId, t.skillId) }));
+
+export const skillDraftRevisions = sqliteTable("skill_draft_revisions", {
+  id: text("id").primaryKey(), skillId: text("skill_id").notNull().references(() => managedSkills.id, { onDelete: "restrict" }),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  creatorNotesJson: text("creator_notes_json", { mode: "json" }),
+  revision: integer("revision").notNull(), source: text("source", { enum: ["create", "import", "manual", "generate", "restore"] }).notNull(),
+  bundleJson: text("bundle_json", { mode: "json" }).notNull(), diagnosticsJson: text("diagnostics_json", { mode: "json" }).notNull(),
+  provenanceJson: text("provenance_json", { mode: "json" }), updatedBy: text("updated_by"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+}, (t) => ({ revision: uniqueIndex("skill_draft_revisions_number_uq").on(t.skillId, t.revision), owner: index("skill_draft_revisions_owner_idx").on(t.tenantId, t.skillId) }));
+
+export const skillVersions = sqliteTable("skill_versions", {
+  id: text("id").primaryKey(), skillId: text("skill_id").notNull().references(() => managedSkills.id, { onDelete: "restrict" }),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  versionNo: integer("version_no").notNull(), draftRevision: integer("draft_revision").notNull(),
+  name: text("name").notNull(), description: text("description").notNull(), contentDigest: text("content_digest").notNull(),
+  bundleJson: text("bundle_json", { mode: "json" }).notNull(), createdBy: text("created_by"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+}, (t) => ({ version: uniqueIndex("skill_versions_number_uq").on(t.skillId, t.versionNo), owner: index("skill_versions_owner_idx").on(t.tenantId, t.skillId) }));
+
+/** Reserved for real future evaluation receipts; no import/generation marks an evaluation passed. */
+export const skillEvaluations = sqliteTable("skill_evaluations", {
+  id: text("id").primaryKey(), skillId: text("skill_id").notNull().references(() => managedSkills.id, { onDelete: "restrict" }),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  versionId: text("version_id").references(() => skillVersions.id, { onDelete: "restrict" }), draftRevision: integer("draft_revision"),
+  status: text("status", { enum: ["pending", "running", "completed", "passed", "failed", "cancelled"] }).notNull(),
+  resultJson: text("result_json", { mode: "json" }), createdBy: text("created_by"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+  completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+}, (t) => ({ owner: index("skill_evaluations_owner_idx").on(t.tenantId, t.skillId) }));
+
+/** Immutable run catalogs contain references, never mutable filesystem paths. */
+export const runSkillSnapshots = sqliteTable("run_skill_snapshots", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  executionId: text("execution_id").notNull(),
+  kind: text("kind", { enum: ["root", "run", "test"] }).notNull(),
+  agentId: text("agent_id"),
+  parentSnapshotId: text("parent_snapshot_id").references((): AnySQLiteColumn => runSkillSnapshots.id, { onDelete: "restrict" }),
+  rootSnapshotId: text("root_snapshot_id").references((): AnySQLiteColumn => runSkillSnapshots.id, { onDelete: "restrict" }),
+  contentDigest: text("content_digest").notNull(),
+  catalogJson: text("catalog_json", { mode: "json" }).notNull(),
+  activationsJson: text("activations_json", { mode: "json" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+}, (t) => ({ execution: uniqueIndex("run_skill_snapshots_execution_uq").on(t.tenantId, t.executionId, t.kind), owner: index("run_skill_snapshots_owner_idx").on(t.tenantId, t.id) }));
+
+export const skillLegacyBundles = sqliteTable("skill_legacy_bundles", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  name: text("name").notNull(), description: text("description").notNull(),
+  contentDigest: text("content_digest").notNull(), bundleJson: text("bundle_json", { mode: "json" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+}, (t) => ({ content: uniqueIndex("skill_legacy_bundles_content_uq").on(t.tenantId, t.contentDigest) }));
+
+/** Host-minted invocation capabilities bind an exact durable parent and recipient. */
+export const skillInvocationGrants = sqliteTable("skill_invocation_grants", {
+  id: text("id").primaryKey(), tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  parentRunId: text("parent_run_id").notNull().references(() => runs.id, { onDelete: "restrict" }),
+  parentSnapshotId: text("parent_snapshot_id").notNull().references(() => runSkillSnapshots.id, { onDelete: "restrict" }),
+  stepId: text("step_id").notNull().references(() => steps.id, { onDelete: "restrict" }),
+  recipient: text("recipient").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+}, (t) => ({ step: uniqueIndex("skill_invocation_grants_step_uq").on(t.tenantId, t.stepId, t.recipient) }));
+
+/** Immutable worst-case reservations count interrupted script attempts too. */
+export const skillScriptReservations = sqliteTable("skill_script_reservations", {
+  id: text("id").primaryKey(), tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
+  runId: text("run_id").notNull().references(() => runs.id, { onDelete: "restrict" }),
+  rootSnapshotId: text("root_snapshot_id").notNull().references(() => runSkillSnapshots.id, { onDelete: "restrict" }),
+  agentId: text("agent_id").notNull(), skillId: text("skill_id").notNull(), versionId: text("version_id").notNull(),
+  contentDigest: text("content_digest").notNull(), policyDigest: text("policy_digest").notNull(),
+  scriptPath: text("script_path").notNull(), interpreter: text("interpreter").notNull(), inputDigest: text("input_digest").notNull(),
+  timeoutMs: integer("timeout_ms").notNull(), inputBytes: integer("input_bytes").notNull(), outputBytes: integer("output_bytes").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+}, (t) => ({ run: index("skill_script_reservations_root_idx").on(t.tenantId, t.rootSnapshotId) }));
+
 export const schema = {
+  skillScriptReservations,
+  runSkillSnapshots, skillLegacyBundles, skillInvocationGrants,
+  managedSkills, skillDrafts, skillDraftRevisions, skillVersions, skillEvaluations,
   tenants,
   users,
   memberships,

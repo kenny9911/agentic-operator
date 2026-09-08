@@ -18,6 +18,7 @@ import { runsLogsRoute } from "./routes/v1/runs-logs";
 import { tasksRoutes } from "./routes/v1/tasks";
 import { agentsRoutes } from "./routes/v1/agents";
 import { agentAuthoringRoutes } from "./routes/v1/agent-authoring";
+import { skillLibraryRoutes } from "./routes/v1/skills";
 import { agentInvokeRoutes } from "./routes/v1/agent-invoke";
 import { runInputRoutes } from "./routes/v1/run-inputs";
 import { agentFactoryRoutes } from "./routes/v1/agent-factory";
@@ -311,6 +312,7 @@ export async function build() {
         // Agent authoring + Agent Studio (enterprise): agent draft/spec
         // authoring endpoints and the studio run/observability surface.
         await v1.register(agentAuthoringRoutes);
+        await v1.register(skillLibraryRoutes);
         await v1.register(agentInvokeRoutes);
         await v1.register(runInputRoutes);
         await v1.register(agentStudioRoutes);

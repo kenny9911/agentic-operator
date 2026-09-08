@@ -32,6 +32,12 @@ export {
 // #REDESIGN P2 — the power-strip contract both tiers implement.
 export {
   type AgentRuntime,
+  type AgentSkills,
+  type AgentSkillSelector,
+  type AgentSkillReference,
+  type AgentSkillPageOptions,
+  type AgentSkillResource,
+  type AgentSpawnOptions,
   type UnifiedAgentContract,
   type AgentTier,
   type SpawnResult,

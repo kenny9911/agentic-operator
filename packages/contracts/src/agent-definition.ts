@@ -1,3 +1,4 @@
+import { SkillBindingsSchema } from "./skill-bindings";
 import { z } from "zod";
 import {
   ProviderIdSchema,
@@ -371,6 +372,7 @@ export type AgentRuntimeConfigV2 = z.infer<typeof AgentRuntimeConfigV2Schema>;
 
 const AgentDefinitionV2BaseSchema = z
   .object({
+    skills: SkillBindingsSchema.optional(),
     id: z.string().trim().min(1).max(160),
     name: z.string().trim().min(1).max(160),
     title: z.string().max(240).optional(),
@@ -497,6 +499,7 @@ export type AgentDefinitionV2Input = z.input<typeof AgentDefinitionV2Schema>;
 export const WorkflowManifestV2Schema = z
   .object({
     $schemaVersion: z.literal(AGENT_DEFINITION_SCHEMA_VERSION),
+    skills: SkillBindingsSchema.optional(),
     agents: z.array(AgentDefinitionV2Schema),
   })
   .passthrough();

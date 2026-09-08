@@ -24,6 +24,7 @@ import {
   TEXT_VERBOSITIES,
   normalizeAgentDefinition,
   type AgentPromptProvenanceV2,
+  type SkillBindings,
   type WorkflowAgentPromptBody,
 } from "@agentic/contracts";
 import { ActorTag, Badge, Button, MonacoEditor } from "@/app/portal/components";
@@ -39,6 +40,7 @@ import {
   providerModelIds,
 } from "@/app/portal/components/agent-studio/test-model-selector";
 import { Section, type EventCatalogItem } from "./inspectors";
+import { SkillBindingsEditor } from "../skills/SkillBindingsEditor";
 import {
   deriveEventEdges,
   patchAgentDefinition,
@@ -50,6 +52,8 @@ import {
 
 export interface AgentEditorProps {
   agent: DagAgent;
+  tenant?: string;
+  inheritedSkills?: SkillBindings;
   workflowSlug?: string;
   events: EventCatalogItem[];
   /** All effective workflow agents, used to preview event-derived links. */
@@ -73,6 +77,8 @@ export interface AgentEditorProps {
 
 export function AgentEditor({
   agent,
+  tenant,
+  inheritedSkills,
   workflowSlug,
   events,
   workflowAgents,
@@ -1256,6 +1262,8 @@ export function AgentEditor({
               {toolsError ? <ErrorText>{toolsError}</ErrorText> : null}
               <div style={hintStyle}>{t("agentEditor.toolsHelp")}</div>
             </Section>
+
+            {tenant ? <div style={{ padding: "14px 0" }}><SkillBindingsEditor tenant={tenant} scope="agent" value={currentDefinition?.skills} inherited={inheritedSkills} onChange={(skills) => commitDefinitionFields({ skills })} /></div> : null}
 
             <Section title={t("agentEditor.handoffBindings")}>
               <BindingJsonEditor

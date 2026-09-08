@@ -81,6 +81,8 @@ import { ConfirmPublishOverwriteModal } from "@/app/portal/components/workflows/
 import { ImportManifestModal } from "@/app/portal/components/import-manifest/ImportManifestModal";
 import { AgentEditor } from "@/app/portal/components/workflows/AgentEditor";
 import { removeWorkflowAgent } from "@/app/portal/components/workflows/workflow-handoff-draft";
+import { SkillBindingsEditor } from "@/app/portal/components/skills/SkillBindingsEditor";
+import { skillBindingsCopy } from "@/lib/i18n/skill-bindings";
 import { WorkflowHelp } from "@/app/portal/components/workflows/WorkflowHelp";
 import { WorkflowEdge } from "@/app/portal/components/workflows/WorkflowEdge";
 import {
@@ -103,6 +105,7 @@ import {
   draftStorageKey,
   emptyDraft,
   mergeAgentDefinitionIntoDraft,
+  mergeWorkflowManifest,
   moveAgent,
   serializeDraft,
   toManifest,
@@ -156,6 +159,7 @@ import {
   useDeleteWorkflow,
   usePublishWorkflow,
   useSaveWorkflow,
+  useWorkflowDetail,
   useValidateWorkflow,
   useWorkflowCatalog,
 } from "@/lib/hooks/useWorkflowAuthoring";
@@ -258,6 +262,7 @@ export default function WorkflowsPage() {
     [selectedWorkflow, workflows],
   );
   const dagQuery = useDag(selectedWorkflow);
+  const workflowDetail = useWorkflowDetail(selectedWorkflow);
   const returnedAgentEditor = useAgentEditor(
     returnedAgentDraftId ? requestedAgent : null,
     returnedAgentDraftId,
@@ -1164,7 +1169,7 @@ export default function WorkflowsPage() {
   }
 
   function editableManifest() {
-    return toManifest(agents).map((definition) => {
+    const editedAgents = toManifest(agents).map((definition) => {
       const position = positions.get(definition.id);
       if (!position) return definition;
       const extensions =
@@ -1185,6 +1190,11 @@ export default function WorkflowsPage() {
         },
       };
     });
+    const detail = workflowDetail.data;
+    if (!detail || detail.latestVersionId !== dagQuery.data?.workflowVersionId) {
+      throw new Error("Load the complete matching workflow revision before saving or testing.");
+    }
+    return mergeWorkflowManifest(detail.manifest, editedAgents, draft);
   }
 
   async function saveDraft(): Promise<WorkflowDetail | null> {
@@ -2139,6 +2149,12 @@ export default function WorkflowsPage() {
       </div>
 
       {editing && <EditDraftBanner counts={draftCounts} />}
+      {editing && selectedWorkflow ? <details style={{ padding: "12px 24px", borderBottom: "1px solid var(--border)", background: "var(--panel)" }}>
+        <summary style={{ color: "var(--text)", cursor: "pointer", fontSize: 12 }}>{skillBindingsCopy(language).workflowTitle}</summary>
+        <div style={{ paddingTop: 12, maxWidth: 760 }}>
+          {workflowDetail.data ? <SkillBindingsEditor tenant={tenant} scope="workflow" value={draft.skills ?? workflowDetail.data.manifest.skills} onChange={(skills) => { setDraft((current) => ({ ...current, skills })); setValidation(null); }} /> : <p role="status">{skillBindingsCopy(language).loading}</p>}
+        </div>
+      </details> : null}
 
       {/* Meta ERP reachability — a red run minutes from now is not a reminder. */}
       {!editing && <ErpIntegrationBanner />}
@@ -2751,6 +2767,8 @@ export default function WorkflowsPage() {
           {selectedAgent && editing && selectedAgentRecord ? (
             <AgentEditor
               agent={selectedAgentRecord}
+              tenant={tenant}
+              inheritedSkills={draft.skills ?? workflowDetail.data?.manifest.skills}
               workflowSlug={selectedWorkflow ?? undefined}
               workflowAgents={agents}
               events={events}
@@ -2904,7 +2922,7 @@ export default function WorkflowsPage() {
           onDraftCreated={selectCreatedWorkflow}
         />
       )}
-      {showRunConsole && selectedWorkflow && agents.length > 0 && (
+      {showRunConsole && selectedWorkflow && agents.length > 0 && workflowDetail.data?.latestVersionId === dagQuery.data?.workflowVersionId && (
         <WorkflowRunConsole
           workflowSlug={selectedWorkflow}
           workflowName={selectedSummary?.name ?? selectedWorkflow}
@@ -2919,7 +2937,7 @@ export default function WorkflowsPage() {
           onClose={() => setShowRunConsole(false)}
         />
       )}
-      <WorkflowHelp open={showHelp} onClose={() => setShowHelp(false)} />
+      <WorkflowHelp tenant={tenant} open={showHelp} onClose={() => setShowHelp(false)} />
     </div>
   );
 }

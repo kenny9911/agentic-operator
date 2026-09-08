@@ -4,7 +4,8 @@
  * and one per tool dispatch (`type: "tool"`), aggregates tokens across turns,
  * and persists prompt + response sidecars under `data/artifacts/<runId>/`.
  *
- * Single-shot agents (default `maxSteps = 1`) take exactly one provider turn.
+ * Single-shot agents take one ordinary provider turn. A trusted SkillSession
+ * may add bounded read-only guidance turns without increasing business budgets.
  *
  * Failure modes are caught and recorded; the LLMError is re-thrown for the
  * caller (HTTP layer) to convert into a 4xx/5xx envelope.
@@ -25,6 +26,7 @@ import {
   steps,
   tenants,
   workflows,
+  workflowVersions,
 } from "@agentic/db";
 import type { DB } from "@agentic/db";
 import { makeId } from "@agentic/shared";
@@ -40,8 +42,14 @@ import {
   publishStreamEvent,
   registerStepArtifactEvidence,
   writeRunLog,
+  captureSkillCheckpoint,
+  getRuntimeSkillHost,
+  isSkillIntrinsic,
+  prepareSkillMessages,
+  skillToolDefinitions,
 } from "@agentic/runtime";
-import type { ProviderId } from "@agentic/contracts";
+import { buildSessionSkillTools, buildSessionSkillScriptTool, SKILL_SCRIPT_TOOL_NAME, SkillSession } from "@agentic/skills";
+import { SkillBindingsSchema, type ProviderId } from "@agentic/contracts";
 import {
   LLMError,
   currentUsageAttribution,
@@ -56,6 +64,7 @@ import {
 import type { BaseAgent } from "./base-agent";
 import type {
   AgentContext,
+  AgentExecutionOptions,
   AgentResult,
   AgentScope,
   ToolHandlerResult,
@@ -304,11 +313,27 @@ function validateProviderToolCalls(
   }
 }
 
+/** Provider replay state is needed in memory, but never belongs in artifacts or previews. */
+function persistedMessages(messages: readonly ChatMessage[]): ChatMessage[] {
+  return messages.map(
+    ({ reasoningContent: _reasoningContent, ...message }) => message,
+  );
+}
+
 export async function executeAgentRun<TInput, TOutput>(
   agent: BaseAgent<TInput, TOutput>,
   input: TInput,
   ctx: AgentContext,
+  execution?: AgentExecutionOptions,
 ): Promise<AgentResult<TOutput>> {
+  let skillSession = execution?.skillSession;
+  if (execution?.skillSession && execution.createSkillSession) throw new TypeError("Supply one trusted Skill session source");
+  if (execution?.createSkillSession !== undefined && typeof execution.createSkillSession !== "function") throw new TypeError("Skill session factory must be a trusted function");
+  if (skillSession !== undefined && !(skillSession instanceof SkillSession)) {
+    throw new TypeError(
+      "Code-agent Skills require a trusted in-process SkillSession; serialized invocation data cannot supply one",
+    );
+  }
   const db = getDb();
   const gateway = getGateway();
   const requestedProvider =
@@ -519,6 +544,7 @@ export async function executeAgentRun<TInput, TOutput>(
   let lastModel: string | null = requestedModel ?? null;
   let ord = 0;
   let finalText = "";
+  let finalReasoningContent: string | undefined;
   let activeStep: {
     id: string;
     ord: number;
@@ -532,6 +558,16 @@ export async function executeAgentRun<TInput, TOutput>(
   } | null = null;
 
   try {
+    if (!skillSession && execution?.createSkillSession) {
+      skillSession = await execution.createSkillSession({ runId, tenantId, agentId });
+    } else if (!skillSession && getRuntimeSkillHost()) {
+      const host = getRuntimeSkillHost()!;
+      const version = agentVersionId ? db.select({ manifest: agentVersions.manifestJson, workflowManifest: workflowVersions.manifestJson }).from(agentVersions).innerJoin(workflowVersions, eq(workflowVersions.id, agentVersions.workflowVersionId)).where(and(eq(agentVersions.id, agentVersionId), eq(agentVersions.agentId, agentId))).get() : undefined;
+      const bindings = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) && "skills" in value && value.skills !== undefined ? SkillBindingsSchema.parse(value.skills) : undefined;
+      const ref = host.capture({ tenantId, tenantSlug, executionId: runId, agentId, agentName: agent.name, agentSkills: bindings(version?.manifest), workflowSkills: bindings(version?.workflowManifest) });
+      skillSession = await host.restore(ref, { tenantId, executionId: runId, agentId });
+    }
+    if (skillSession !== undefined && !(skillSession instanceof SkillSession)) throw new TypeError("Skill session factory returned an invalid capability");
     await writeRunLog(logCtx, "INFO", "run.start", {
       agent: agent.name,
       kind: "code",
@@ -554,7 +590,14 @@ export async function executeAgentRun<TInput, TOutput>(
     );
     if (runInputMessage) messages.push({ role: "user", content: runInputMessage });
 
-    const tools = agent.getTools(effectiveCtx);
+    const declaredTools = agent.getTools(effectiveCtx);
+    const tools = skillSession
+      ? [
+          ...declaredTools.filter((tool) => !isSkillIntrinsic(tool.name)),
+          ...skillToolDefinitions(skillSession),
+        ]
+      : declaredTools;
+    const skillTools: ReturnType<typeof buildSessionSkillTools> = skillSession ? { ...buildSessionSkillTools(skillSession), [SKILL_SCRIPT_TOOL_NAME]: buildSessionSkillScriptTool(skillSession) } : {};
     const toolHandlers = agent.getToolHandlers(effectiveCtx);
     if (!Number.isSafeInteger(agent.maxSteps) || agent.maxSteps < 1) {
       throw new LLMError(
@@ -564,6 +607,26 @@ export async function executeAgentRun<TInput, TOutput>(
       );
     }
     const maxSteps = agent.maxSteps;
+    if (
+      skillSession &&
+      (!Number.isSafeInteger(agent.maxAdditionalSkillTurns) ||
+        agent.maxAdditionalSkillTurns < 0 ||
+        agent.maxAdditionalSkillTurns > 32)
+    ) {
+      throw new LLMError(
+        `Agent '${agent.name}' declares invalid maxAdditionalSkillTurns=${String(agent.maxAdditionalSkillTurns)}; use 0–32`,
+        "bad_request",
+        provider,
+      );
+    }
+    const maxAdditionalSkillTurns = skillSession
+      ? agent.maxAdditionalSkillTurns
+      : 0;
+    let ordinaryTurnsUsed = 0;
+    let additionalSkillTurnsUsed = 0;
+    const initialSkillSnapshot = skillSession
+      ? await skillSession.snapshot()
+      : undefined;
     const advertisedToolNames = new Set<string>();
     for (const tool of tools) {
       if (!tool.name || !tool.name.trim()) {
@@ -583,7 +646,7 @@ export async function executeAgentRun<TInput, TOutput>(
       advertisedToolNames.add(tool.name);
     }
 
-    for (let turn = 0; turn < maxSteps; turn++) {
+    for (let turn = 0; turn < maxSteps + maxAdditionalSkillTurns; turn++) {
       if (isRunCancelled(db, runId)) throw new RunCancelledError(runId);
       ord += 1;
       const stepId = makeId("stp");
@@ -627,6 +690,9 @@ export async function executeAgentRun<TInput, TOutput>(
         /* broadcast best-effort */
       }
 
+      const requestMessages = skillSession
+        ? await prepareSkillMessages(messages, skillSession)
+        : [...messages];
       const inputArtifact = await writeArtifact(
         runId,
         `step-${ord}-input.json`,
@@ -636,8 +702,24 @@ export async function executeAgentRun<TInput, TOutput>(
           parentRunId: parentRunId ?? null,
           provider,
           model,
-          messages,
+          messages: persistedMessages(requestMessages),
           tools: tools.length > 0 ? tools : undefined,
+          ...(skillSession
+            ? {
+                ...(turn === 0
+                  ? { skillSession: initialSkillSnapshot }
+                  : {
+                      skillCheckpoint:
+                        await captureSkillCheckpoint(skillSession),
+                    }),
+                turnBudget: {
+                  maxSteps,
+                  maxAdditionalSkillTurns,
+                  ordinaryTurnsUsed,
+                  additionalSkillTurnsUsed,
+                },
+              }
+            : {}),
         },
       );
       await registerStepArtifactEvidence({
@@ -656,7 +738,7 @@ export async function executeAgentRun<TInput, TOutput>(
       if (isRunCancelled(db, runId)) throw new RunCancelledError(runId);
 
       const response: ChatResponse = await gateway.chat({
-        messages,
+        messages: requestMessages,
         provider,
         providers: effectiveCtx.providers,
         model: model ?? undefined,
@@ -735,7 +817,9 @@ export async function executeAgentRun<TInput, TOutput>(
             runId,
             stepId,
             ord: turn,
-            promptPreview: JSON.stringify(messages).slice(0, 4_000),
+            promptPreview: JSON.stringify(
+              persistedMessages(requestMessages),
+            ).slice(0, 4_000),
             responseText: (response.text ?? "").slice(0, 8_000),
             reasoning: null,
             toolCallsJson: response.toolCalls ?? [],
@@ -793,9 +877,26 @@ export async function executeAgentRun<TInput, TOutput>(
         );
       }
       validateProviderToolCalls(agent.name, response.provider, toolCalls);
-      if (toolCalls.length > 0 && turn === maxSteps - 1) {
+      if (
+        !skillSession &&
+        toolCalls.some((call) => isSkillIntrinsic(call.name))
+      ) {
         throw new LLMError(
-          `Agent '${agent.name}' exhausted maxSteps=${maxSteps} before completing its tool-use loop`,
+          "Skill operations require a trusted execution SkillSession; invocation input cannot grant Skill access",
+          "bad_request",
+          response.provider,
+        );
+      }
+      const usesAdditionalSkillTurn =
+        skillSession &&
+        toolCalls.length > 0 &&
+        toolCalls.every((call) => isSkillIntrinsic(call.name)) &&
+        additionalSkillTurnsUsed < maxAdditionalSkillTurns;
+      if (usesAdditionalSkillTurn) additionalSkillTurnsUsed += 1;
+      else ordinaryTurnsUsed += 1;
+      if (toolCalls.length > 0 && ordinaryTurnsUsed >= maxSteps) {
+        throw new LLMError(
+          `Agent '${agent.name}' exhausted maxSteps=${maxSteps} before completing its tool-use loop (additional read-only Skill turns used ${additionalSkillTurnsUsed}/${maxAdditionalSkillTurns})`,
           "bad_request",
           response.provider,
         );
@@ -835,6 +936,7 @@ export async function executeAgentRun<TInput, TOutput>(
 
       if (toolCalls.length === 0) {
         finalText = response.text;
+        finalReasoningContent = response.reasoningContent;
         break;
       }
 
@@ -842,6 +944,9 @@ export async function executeAgentRun<TInput, TOutput>(
       messages.push({
         role: "assistant",
         content: buildAssistantTurnContent(response.text, toolCalls),
+        ...(response.reasoningContent !== undefined
+          ? { reasoningContent: response.reasoningContent }
+          : {}),
       });
 
       // Dispatch tool calls in order, one tool step per call.
@@ -922,6 +1027,17 @@ export async function executeAgentRun<TInput, TOutput>(
                 message: `Provider requested unadvertised tool ${tc.name}`,
               },
             };
+          } else if (skillSession && (isSkillIntrinsic(tc.name) || tc.name === SKILL_SCRIPT_TOOL_NAME)) {
+            const result = await skillTools[tc.name]!.handler({
+              agentName: agent.name,
+              actionName: tc.name,
+              tenantSlug,
+              tenantId,
+              correlationId,
+              runId,
+              event: { name: tc.name, data: tc.input },
+            });
+            res = { ok: true, data: result.data, meta: result.meta };
           } else if (!handler) {
             res = {
               ok: false,
@@ -951,6 +1067,15 @@ export async function executeAgentRun<TInput, TOutput>(
             error: {
               code: "tool_threw",
               message: err instanceof Error ? err.message : String(err),
+            },
+          };
+        }
+        if (skillSession && (isSkillIntrinsic(tc.name) || tc.name === SKILL_SCRIPT_TOOL_NAME)) {
+          res = {
+            ...res,
+            meta: {
+              ...res.meta,
+              skillCheckpoint: await captureSkillCheckpoint(skillSession),
             },
           };
         }
@@ -1080,11 +1205,17 @@ export async function executeAgentRun<TInput, TOutput>(
         messages.push({
           role: "assistant",
           content: finalText,
+          ...(finalReasoningContent !== undefined
+            ? { reasoningContent: finalReasoningContent }
+            : {}),
         });
         messages.push({
           role: "user",
           content: `Your previous reply did not match the required schema. Issues: ${JSON.stringify(validation.error.issues)}. Reply with strict JSON only.`,
         });
+        const repairMessages = skillSession
+          ? await prepareSkillMessages(messages, skillSession)
+          : [...messages];
         const repairInputArtifact = await writeArtifact(
           runId,
           `step-${ord}-input.json`,
@@ -1092,8 +1223,11 @@ export async function executeAgentRun<TInput, TOutput>(
             agent: agent.name,
             provider,
             model,
-            messages,
+            messages: persistedMessages(repairMessages),
             jsonMode: true,
+            ...(skillSession
+              ? { skillCheckpoint: await captureSkillCheckpoint(skillSession) }
+              : {}),
           },
         );
         await registerStepArtifactEvidence({
@@ -1111,7 +1245,7 @@ export async function executeAgentRun<TInput, TOutput>(
         if (isRunCancelled(db, runId)) throw new RunCancelledError(runId);
 
         const repair = await gateway.chat({
-          messages,
+          messages: repairMessages,
           provider,
           providers: effectiveCtx.providers,
           model: model ?? undefined,
@@ -1120,6 +1254,10 @@ export async function executeAgentRun<TInput, TOutput>(
           tenantId,
           runId,
           purpose: `agent:${agent.name}/role:${runtimeRole}/repair`,
+          reasoning: effectiveCtx.reasoning ?? agent.defaultReasoning,
+          verbosity: effectiveCtx.verbosity ?? agent.defaultVerbosity,
+          store: effectiveCtx.store ?? agent.storeResponses,
+          routing: { taskType: "output.repair" },
         });
         totalTokensIn += repair.tokensIn ?? 0;
         totalTokensOut += repair.tokensOut ?? 0;
@@ -1174,7 +1312,9 @@ export async function executeAgentRun<TInput, TOutput>(
               runId,
               stepId: repairStepId,
               ord: completedProviderCalls - 1,
-              promptPreview: JSON.stringify(messages).slice(0, 4_000),
+              promptPreview: JSON.stringify(
+                persistedMessages(repairMessages),
+              ).slice(0, 4_000),
               responseText: (repair.text ?? "").slice(0, 8_000),
               reasoning: null,
               toolCallsJson: repair.toolCalls ?? [],

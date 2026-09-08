@@ -4,7 +4,7 @@
  * Drives `runAction()` (the manifest `logic` path) directly with a programmable
  * mock runtime gateway (same bypass-Inngest approach as tc-10) and asserts the
  * step's `meta.turns` carries, per tool-use-loop turn:
- *   - response text + extracted reasoning (from provider-native `raw.thinking`)
+ *   - response text + explicit reasoning summary, excluding opaque provider state
  *   - the tools the model requested (name + input)
  *   - provider / model / tokens / finishReason / latency
  *   - a bounded prompt preview, only on the first turn.
@@ -56,9 +56,9 @@ beforeAll(() => {
 });
 
 describe("W0: raw per-turn LLM capture (meta.turns)", () => {
-  it("captures response text, reasoning, and tool calls across a 2-turn loop", async () => {
+  it("captures response text, explicit reasoning summary, and tool calls without opaque provider state", async () => {
     queue.length = 0;
-    // Turn 0: model thinks (raw), then requests a tool.
+    // Turn 0: the provider exposes a summary separately from opaque state.
     queue.push({
       text: "let me check the weather",
       provider: "mock",
@@ -68,9 +68,11 @@ describe("W0: raw per-turn LLM capture (meta.turns)", () => {
       finishReason: "tool_calls",
       latencyMs: 3,
       toolCalls: [{ id: "c1", name: "echoTool", input: { q: "hi" } }],
+      reasoningSummary: "Checking weather with the available tool.",
+      reasoningContent: "opaque-replay-state-must-not-persist",
       raw: {
         content: [
-          { type: "thinking", thinking: "I should call echoTool to answer" },
+          { type: "thinking", thinking: "opaque-provider-thinking-must-not-persist" },
           { type: "text", text: "let me check the weather" },
         ],
       },
@@ -123,7 +125,9 @@ describe("W0: raw per-turn LLM capture (meta.turns)", () => {
     const t0 = turns![0]!;
     expect(t0.ord).toBe(0);
     expect(t0.responseText).toBe("let me check the weather");
-    expect(t0.reasoning).toContain("echoTool"); // extracted from raw.thinking
+    expect(t0.reasoning).toBe("Checking weather with the available tool.");
+    expect(JSON.stringify(turns)).not.toContain("opaque-replay-state-must-not-persist");
+    expect(JSON.stringify(turns)).not.toContain("opaque-provider-thinking-must-not-persist");
     expect(t0.toolCalls).toEqual([{ name: "echoTool", input: { q: "hi" } }]);
     expect(typeof t0.promptPreview).toBe("string"); // first turn carries the prompt
     expect(t0.promptPreview).toContain("user body here");
@@ -151,6 +155,8 @@ describe("W0: raw per-turn LLM capture (meta.turns)", () => {
       tokensOut: 1,
       finishReason: "stop",
       latencyMs: 1,
+      reasoningContent: "opaque-only-replay-state",
+      raw: { thinking: "opaque-only-provider-thinking" },
     });
     const prompt = definePrompt({ name: "act", template: () => "body" });
     const out = await runAction({
@@ -169,5 +175,7 @@ describe("W0: raw per-turn LLM capture (meta.turns)", () => {
     const turns = (out.meta as { turns?: TurnTrace[] }).turns!;
     expect(turns[0]!.responseText!.length).toBeLessThan(huge.length);
     expect(turns[0]!.responseText).toContain("[+");
+    expect(turns[0]!.reasoning).toBeNull();
+    expect(JSON.stringify(turns)).not.toContain("opaque-only-");
   });
 });

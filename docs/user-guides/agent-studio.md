@@ -552,3 +552,11 @@ To accept an uploaded document instead, change `document_text` to a File upload 
 - Workflow owners reviewed changed triggers, outputs, or event bindings.
 - Definition health has no blocking errors.
 - The publish impact confirmation matches the intended change.
+
+## Reusable Skills
+
+Use the **Skills** section to inherit the Workflow's catalog, restrict it to
+selected published Skills, or disable it. Save and publish the Agent definition
+through the normal flow. Skill selections and version pins do not grant
+business Tools. See the [Skills guide](skills.md#assign-skills-to-workflows-and-agents)
+for scope inheritance, explicit activation, resource loading and run snapshots.

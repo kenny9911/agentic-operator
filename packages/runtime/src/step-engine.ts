@@ -39,6 +39,16 @@ import {
   type GeneratedCodeHostRuntime,
 } from "./codeact";
 import type { CodeActDockerTransport } from "./codeact-container";
+import { buildSessionSkillTools, buildSessionSkillScriptTool, SKILL_SCRIPT_TOOL_NAME, type SkillSession } from "@agentic/skills";
+import {
+  advanceSkillCheckpoint,
+  captureSkillCheckpoint,
+  isSkillIntrinsic,
+  prepareSkillMessages,
+  skillToolDefinitions,
+  SkillCheckpointError,
+  type SkillExecutionCheckpoint,
+} from "./skill-execution";
 import {
   ActionTimeoutError,
   applyToolResultMap,
@@ -419,6 +429,9 @@ async function emitTraceBestEffort(
 
 export interface StepInput {
   ctx: ToolContext;
+  /** Trusted execution-local session from the immutable Run catalog. Never
+   * hydrate this from authored agent fields, tool args or event payloads. */
+  skillSession?: SkillSession;
   action: ActionSpec;
   /** Validated operator input, kept separate from authored action mappings. */
   runInput?: RunInputContext;
@@ -544,6 +557,7 @@ export async function dispatchGeneratedCodeTool(args: {
   ctx: ToolContext;
   agent: AgentSlots | undefined;
   declaredCodeToolSet: ReadonlySet<string>;
+  skillSession?: SkillSession;
   tenantRegistry?: TenantRegistry;
   scope: StepScope;
 }): Promise<unknown> {
@@ -553,7 +567,7 @@ export async function dispatchGeneratedCodeTool(args: {
       `[action_tool_not_allowed] generated-code tool '${name}' is outside the current action capability boundary`,
     );
   }
-  const tenantTool = tenantRegistry?.tools?.[name];
+  const tenantTool = name === SKILL_SCRIPT_TOOL_NAME && args.skillSession ? buildSessionSkillScriptTool(args.skillSession) : tenantRegistry?.tools?.[name];
   const globalTool = tenantTool ? undefined : globalToolRegistry.get(name);
   const descriptor = tenantTool ?? globalTool;
   if (!descriptor) throw new Error(`generated-code tool '${name}' is not registered`);
@@ -665,6 +679,7 @@ async function callLLM(
     runId?: string;
     stepId?: string;
     usageAttribution?: UsageAttribution;
+    skillSession?: SkillSession;
   },
 ): Promise<{
   text: string;
@@ -704,9 +719,22 @@ async function callLLM(
   const tools: ToolDef[] = [];
   const boundary = resolveActionToolBoundary(action ?? {}, agent);
   const effectiveToolAllowlist = new Set(boundary.effective);
+  const callableToolAllowlist = new Set(effectiveToolAllowlist);
+  const skillTools: ReturnType<typeof buildSessionSkillTools> = execution?.skillSession
+    ? { ...buildSessionSkillTools(execution.skillSession), [SKILL_SCRIPT_TOOL_NAME]: buildSessionSkillScriptTool(execution.skillSession) }
+    : {};
   const effectiveToolEntries = (agent?.tool_use ?? []).filter((entry) =>
-    effectiveToolAllowlist.has(entry.name.trim()),
+    effectiveToolAllowlist.has(entry.name.trim()) &&
+    !(execution?.skillSession && isSkillIntrinsic(entry.name.trim())),
   );
+  // Session-owned read operations are intrinsic guidance access. They cannot
+  // enlarge the business tool intersection or be replaced by Tenant handlers.
+  if (execution?.skillSession) {
+    for (const definition of skillToolDefinitions(execution.skillSession)) {
+      tools.push(definition);
+      callableToolAllowlist.add(definition.name);
+    }
+  }
   if (effectiveToolEntries.length > 0) {
     for (const entry of effectiveToolEntries) {
       // Tenant tool wins; otherwise fall back to the global registry so a
@@ -716,6 +744,7 @@ async function callLLM(
       // allow-list is the trust boundary — so this applies to hand-authored
       // agents too. The per-call gate below still rejects UNdeclared calls.
       const handler =
+        (entry.name === SKILL_SCRIPT_TOOL_NAME ? skillTools[entry.name] : undefined) ??
         tenantRegistry?.tools?.[entry.name] ??
         globalToolRegistry.get(entry.name);
       if (!handler) {
@@ -775,7 +804,7 @@ async function callLLM(
     // max_tokens/timeout) + gateway routing (task_class) + durable billing
     // attribution all ride the request. Omitted fields inherit gateway policy.
     const chatRequest: ChatRequest = {
-      messages,
+      messages: await prepareSkillMessages(messages, execution?.skillSession),
       model: preferredModel,
       provider: agent?.provider,
       reasoning: agent?.reasoning,
@@ -892,23 +921,20 @@ async function callLLM(
       ord: iter,
       promptPreview: iter === 0 ? capText(rendered, 4000) : undefined,
       responseText: capText(response.text ?? "", 8000),
-      requestMessages: structuredClone(messages),
+      // Trace the actual prepared request (including Skill guidance), while
+      // excluding opaque provider replay state from persisted evidence.
+      requestMessages: structuredClone(chatRequest.messages.map(({ reasoningContent: _opaque, ...message }) => message)),
       requestTools: structuredClone(tools),
       responseTextFull: response.text ?? "",
-      reasoningFull:
-        extractReasoning(response.raw) ?? response.reasoningSummary ?? null,
+      reasoningFull: response.reasoningSummary ?? null,
       responseToolCalls: requestedCalls.map((call) => ({
         id: call.id,
         name: call.name,
         input: call.input,
       })),
-      // Provider-native reasoning from raw, else the gateway's normalized
-      // deliberately-summarized reasoning. The opaque replay-only
-      // `reasoningContent` is intentionally NEVER persisted (contract).
-      reasoning: capText(
-        extractReasoning(response.raw) ?? response.reasoningSummary ?? null,
-        8000,
-      ),
+      // Only deliberate provider summaries are persisted. Raw provider
+      // envelopes can contain the same opaque reasoning used for replay.
+      reasoning: capText(response.reasoningSummary ?? null, 8000),
       toolCalls: requestedCalls.map((c) => ({
         name: c.name,
         input: capValue(c.input, 1500),
@@ -925,7 +951,7 @@ async function callLLM(
         ...new Set(
           requestedCalls
             .map((call) => call.name.trim())
-            .filter((name) => !effectiveToolAllowlist.has(name)),
+            .filter((name) => !callableToolAllowlist.has(name)),
         ),
       ];
       if (forbidden.length) {
@@ -978,16 +1004,19 @@ async function callLLM(
       // shadows a global tool. The MCP layer already folds its tools into
       // tenantRegistry under namespaced names ("<server>.<tool>"), so it's
       // covered by the first lookup.
-      const tenantHandler = tenantRegistry?.tools?.[call.name];
-      const globalHandler = tenantHandler
+      const skillHandler = Object.hasOwn(skillTools, call.name)
+        ? skillTools[call.name]
+        : undefined;
+      const tenantHandler = skillHandler ? undefined : tenantRegistry?.tools?.[call.name];
+      const globalHandler = skillHandler || tenantHandler
         ? undefined
         : globalToolRegistry.get(call.name);
-      const handler = tenantHandler ?? globalHandler;
+      const handler = skillHandler ?? tenantHandler ?? globalHandler;
 
       // Per-tenant config plumbing: lift the manifest's
       // `tool_use[i].config` blob into ctx.config so global tools can be
       // specialised per tenant (api_key_env, subdir, etc.) without code.
-      const toolUseEntry = agent?.tool_use?.find(
+      const toolUseEntry = skillHandler && isSkillIntrinsic(call.name) ? undefined : agent?.tool_use?.find(
         (t) => (t as { name?: string })?.name === call.name,
       );
       const toolConfig =
@@ -1025,10 +1054,12 @@ async function callLLM(
       // able to manufacture an undeclared call and reach any registered
       // handler. (Generated/explicit-boundary agents already fail the whole
       // loop above; this per-call gate covers hand-authored agents too.)
-      const callIsAllowed = effectiveToolAllowlist.has(call.name.trim());
+      const callIsAllowed = callableToolAllowlist.has(call.name.trim());
       const resolvedVia = !callIsAllowed
         ? "not-allowed"
-        : tenantHandler
+        : skillHandler
+          ? "skill-session"
+          : tenantHandler
           ? "tenant"
           : globalHandler
             ? "global"
@@ -1073,205 +1104,216 @@ async function callLLM(
             `tool '${call.name}' not registered for this tenant and not found in global registry`,
           );
         }
-        // v2 contract: a declared tool input schema is enforced immediately
-        // before dispatch (the error feeds back so the model self-corrects).
-        if (isV2Agent && isPlainSchema(toolUseEntry?.input_schema)) {
-          const schemaIssues = validateValueAgainstJsonSchema(
-            toolUseEntry.input_schema,
-            call.input,
-            "/tool/input",
-            "tool_input_schema",
-          );
-          if (schemaIssues.length > 0) {
-            throw new Error(
-              `tool_input_schema_invalid: ${schemaIssues
-                .map((issue) => `${issue.path}: ${issue.message}`)
-                .join("; ")}`,
-            );
-          }
-        }
-        // #ARG-CONTRACT (D3) — when the manifest declared no schema, the tool's
-        // own contract still applies. Types only, never required-ness: see
-        // `validateSuppliedArgTypes` for why omission is legitimate here.
-        if (!isPlainSchema(toolUseEntry?.input_schema)) {
-          const argIssues = validateSuppliedArgTypes(
-            isPlainSchema(handler?.inputSchema) ? handler.inputSchema : undefined,
-            call.input,
-          );
-          if (argIssues.length > 0) {
-            throw new Error(
-              `tool_arguments_invalid: ${argIssues
-                .map((issue) => `${issue.path}: ${issue.message}`)
-                .join("; ")}`,
-            );
-          }
-        }
-        // #RULE-GATE — ontology rule obligations are a PRECONDITION, evaluated
-        // here beside the schema check and before any sandbox/dispatch decision.
-        // A refusal comes back as a tool_result error so the model can go get
-        // the missing verdict instead of retrying the same illegal call.
-        const gate = evaluateToolRuleGate({
-          agent,
-          toolName: call.name,
-          scope: {
-            event: ctx?.event,
-            subject: ctx?.subject,
-            lastResult: ctx?.lastResult,
-            results: ctx?.results,
-            locals: ctx?.locals,
-          },
-        });
-        if (gate) {
-          ruleGateRecord = gate.record;
-          if (!gate.decision.allowed) {
-            throw new Error(
-              gate.decision.steer ??
-                `rule_gate_refused: tool '${call.name}' has unsatisfied ontology rule obligations`,
-            );
-          }
-        }
-        // #REDESIGN P1b — the LLM tool-use loop must honour sandbox gating too (not just the
-        // type:"tool" plan path): in a `-sb` tenant, READS run live, external WRITES are gated
-        // (marker, not fired) unless a server-owned attempt grant exists; mock/replay short-circuit.
-        const reviewedPolicy = reviewedExecutionPolicy(
-          call.name,
-          toolUseEntry,
-          !!globalHandler,
-        );
-        callReviewedPolicy = reviewedPolicy;
-        // #DISPATCH-VERIFY (D8) — a probe verified at promote time says nothing
-        // about the definition running now. Checked here, against the reviewed
-        // policy rather than the tool's name.
-        const probeResult = verifyToolProbeAtDispatch({
-          agent,
-          toolName: call.name,
-          policy: reviewedPolicy,
-          declaredSideEffect: toolUseEntry?.side_effect,
-        });
-        if (probeResult) {
-          probeRecord = probeResult;
-          // #PROBE-DEFER — a service that simply is not deployed yet must not
-          // block an FDE who has the credential wired. The deferral is carried
-          // on the call record instead; a rejection or a missing credential
-          // still refuses.
-          if (
-            !probeResult.verified &&
-            !probeResult.deferrable &&
-            probeVerificationPolicyFromEnv(process.env) === "refuse"
-          ) {
-            throw new Error(
-              `probe_verification_failed: ${probeResult.issues.map((i) => i.code).join(", ")} — ${probeResult.issues.map((i) => i.detail).join("; ")}`,
-            );
-          }
-        }
-        const factoryDecision = factorySandboxDispatchDecision(
-          reviewedPolicy,
-          callCtx.tenantSlug,
-          agent?.factoryExecutionScope,
-        );
-        const sbDecision =
-          factoryDecision ??
-          (isSandboxTenant(callCtx.tenantSlug)
-            ? toolDispatchDecision(reviewedPolicy, sandboxToolMode(), {
-                sandboxProfileVerified: hasVerifiedSandboxProfile(
-                  agent,
-                  call.name,
-                ),
-              })
-            : "live");
-        callDispatchDecision = sbDecision;
-        if (sbDecision === "reject") {
-          throw new Error(
-            `tool '${call.name}' is missing valid reviewed execution_policy metadata`,
-          );
-        }
-        if (factoryDecision === "replay") {
-          const scope = agent?.factoryExecutionScope;
-          if (!scope || scope.kind !== "sandbox" || !reviewedPolicy) {
-            throw new Error(
-              `factory sandbox replay scope is missing for tool '${call.name}'`,
-            );
-          }
-          const replayed = await replayFactorySandboxTool({
-            scope,
-            tenantSlug: callCtx.tenantSlug!,
-            toolName: call.name,
-            toolArgs: call.input,
-            policy: reviewedPolicy,
-            replayRef: agent.factoryToolReplayRefs?.[call.name],
+        if (skillHandler) {
+          const value = await skillHandler.handler({
+            ...callCtx,
+            config: undefined,
+            event: { name: `tool:${call.name}`, data: call.input },
           });
-          outputData = replayed.body;
-          sandboxDispatch = replayed.receipt;
-          const faultLoop = injectedFault(ctx?.event?.data, call.name);
-          if (faultLoop) outputData = faultResult(call.name, faultLoop.kind);
+          outputData = value.data;
           outputBody = stringifyToolPayload(outputData);
-        } else if (sbDecision !== "live") {
-          const replayed =
-            sbDecision === "replay"
-              ? await cassetteLookup(callCtx.tenantSlug!, call.name, call.input)
-              : undefined;
-          if (sbDecision === "replay" && replayed === undefined) {
+          toolReceipt = value.meta;
+        } else {
+          // v2 contract: a declared tool input schema is enforced immediately
+          // before dispatch (the error feeds back so the model self-corrects).
+          if (isV2Agent && isPlainSchema(toolUseEntry?.input_schema)) {
+            const schemaIssues = validateValueAgainstJsonSchema(
+              toolUseEntry.input_schema,
+              call.input,
+              "/tool/input",
+              "tool_input_schema",
+            );
+            if (schemaIssues.length > 0) {
+              throw new Error(
+                `tool_input_schema_invalid: ${schemaIssues
+                  .map((issue) => `${issue.path}: ${issue.message}`)
+                  .join("; ")}`,
+              );
+            }
+          }
+          // #ARG-CONTRACT (D3) — when the manifest declared no schema, the tool's
+          // own contract still applies. Types only, never required-ness: see
+          // `validateSuppliedArgTypes` for why omission is legitimate here.
+          if (!isPlainSchema(toolUseEntry?.input_schema)) {
+            const argIssues = validateSuppliedArgTypes(
+              isPlainSchema(handler?.inputSchema) ? handler.inputSchema : undefined,
+              call.input,
+            );
+            if (argIssues.length > 0) {
+              throw new Error(
+                `tool_arguments_invalid: ${argIssues
+                  .map((issue) => `${issue.path}: ${issue.message}`)
+                  .join("; ")}`,
+              );
+            }
+          }
+          // #RULE-GATE — ontology rule obligations are a PRECONDITION, evaluated
+          // here beside the schema check and before any sandbox/dispatch decision.
+          // A refusal comes back as a tool_result error so the model can go get
+          // the missing verdict instead of retrying the same illegal call.
+          const gate = evaluateToolRuleGate({
+            agent,
+            toolName: call.name,
+            scope: {
+              event: ctx?.event,
+              subject: ctx?.subject,
+              lastResult: ctx?.lastResult,
+              results: ctx?.results,
+              locals: ctx?.locals,
+            },
+          });
+          if (gate) {
+            ruleGateRecord = gate.record;
+            if (!gate.decision.allowed) {
+              throw new Error(
+                gate.decision.steer ??
+                  `rule_gate_refused: tool '${call.name}' has unsatisfied ontology rule obligations`,
+              );
+            }
+          }
+          // #REDESIGN P1b — the LLM tool-use loop must honour sandbox gating too (not just the
+          // type:"tool" plan path): in a `-sb` tenant, READS run live, external WRITES are gated
+          // (marker, not fired) unless a server-owned attempt grant exists; mock/replay short-circuit.
+          const reviewedPolicy = reviewedExecutionPolicy(
+            call.name,
+            toolUseEntry,
+            !!globalHandler,
+          );
+          callReviewedPolicy = reviewedPolicy;
+          // #DISPATCH-VERIFY (D8) — a probe verified at promote time says nothing
+          // about the definition running now. Checked here, against the reviewed
+          // policy rather than the tool's name.
+          const probeResult = verifyToolProbeAtDispatch({
+            agent,
+            toolName: call.name,
+            policy: reviewedPolicy,
+            declaredSideEffect: toolUseEntry?.side_effect,
+          });
+          if (probeResult) {
+            probeRecord = probeResult;
+            // #PROBE-DEFER — a service that simply is not deployed yet must not
+            // block an FDE who has the credential wired. The deferral is carried
+            // on the call record instead; a rejection or a missing credential
+            // still refuses.
+            if (
+              !probeResult.verified &&
+              !probeResult.deferrable &&
+              probeVerificationPolicyFromEnv(process.env) === "refuse"
+            ) {
+              throw new Error(
+                `probe_verification_failed: ${probeResult.issues.map((i) => i.code).join(", ")} — ${probeResult.issues.map((i) => i.detail).join("; ")}`,
+              );
+            }
+          }
+          const factoryDecision = factorySandboxDispatchDecision(
+            reviewedPolicy,
+            callCtx.tenantSlug,
+            agent?.factoryExecutionScope,
+          );
+          const sbDecision =
+            factoryDecision ??
+            (isSandboxTenant(callCtx.tenantSlug)
+              ? toolDispatchDecision(reviewedPolicy, sandboxToolMode(), {
+                  sandboxProfileVerified: hasVerifiedSandboxProfile(
+                    agent,
+                    call.name,
+                  ),
+                })
+              : "live");
+          callDispatchDecision = sbDecision;
+          if (sbDecision === "reject") {
             throw new Error(
-              `No replay cassette exists for tool '${call.name}'`,
+              `tool '${call.name}' is missing valid reviewed execution_policy metadata`,
             );
           }
-          outputData =
-            sbDecision === "gate_profile"
-              ? gatedToolMarker(call.name, call.input, "sandbox_profile")
-              : sbDecision === "gate_grant"
-                ? gatedToolMarker(
-                    call.name,
-                    call.input,
-                    "requires_attempt_grant",
-                  )
-                : (replayed ?? sandboxToolStub(call.name));
-          const faultLoop = injectedFault(ctx?.event?.data, call.name); // #W3-FAULT — poisoned tool in the LLM loop
-          if (faultLoop) outputData = faultResult(call.name, faultLoop.kind);
-          // #W1-9 — make the sandbox decision VISIBLE in the artifact: a mocked/gated call must never
-          // read like a real one in the run trace.
-          if (outputData && typeof outputData === "object")
-            (outputData as Record<string, unknown>).__sbDecision = sbDecision;
-          outputBody = stringifyToolPayload(outputData);
-        } else {
-          if (factoryDecision === "live") {
+          if (factoryDecision === "replay") {
             const scope = agent?.factoryExecutionScope;
             if (!scope || scope.kind !== "sandbox" || !reviewedPolicy) {
               throw new Error(
-                `factory sandbox local scope is missing for tool '${call.name}'`,
+                `factory sandbox replay scope is missing for tool '${call.name}'`,
               );
             }
-            sandboxDispatch = await recordFactorySandboxLocalDispatch({
+            const replayed = await replayFactorySandboxTool({
               scope,
               tenantSlug: callCtx.tenantSlug!,
               toolName: call.name,
               toolArgs: call.input,
               policy: reviewedPolicy,
+              replayRef: agent.factoryToolReplayRefs?.[call.name],
             });
-          }
-          // Merge the model's tool-call input into the context so handlers
-          // that prefer args over ctx.event.data have a single read site.
-          const handlerCtx = {
-            ...callCtx,
-            event: { name: `tool:${call.name}`, data: call.input },
-          };
-          const r = await handler.handler(handlerCtx);
-          if (handler.output) {
-            const parsed = handler.output.safeParse(r.data);
-            if (!parsed.success) {
+            outputData = replayed.body;
+            sandboxDispatch = replayed.receipt;
+            const faultLoop = injectedFault(ctx?.event?.data, call.name);
+            if (faultLoop) outputData = faultResult(call.name, faultLoop.kind);
+            outputBody = stringifyToolPayload(outputData);
+          } else if (sbDecision !== "live") {
+            const replayed =
+              sbDecision === "replay"
+                ? await cassetteLookup(callCtx.tenantSlug!, call.name, call.input)
+                : undefined;
+            if (sbDecision === "replay" && replayed === undefined) {
               throw new Error(
-                `tool '${call.name}' returned data that violates its output schema: ${JSON.stringify(parsed.error.issues)}`,
+                `No replay cassette exists for tool '${call.name}'`,
               );
             }
-            outputData = parsed.data;
+            outputData =
+              sbDecision === "gate_profile"
+                ? gatedToolMarker(call.name, call.input, "sandbox_profile")
+                : sbDecision === "gate_grant"
+                  ? gatedToolMarker(
+                      call.name,
+                      call.input,
+                      "requires_attempt_grant",
+                    )
+                  : (replayed ?? sandboxToolStub(call.name));
+            const faultLoop = injectedFault(ctx?.event?.data, call.name); // #W3-FAULT — poisoned tool in the LLM loop
+            if (faultLoop) outputData = faultResult(call.name, faultLoop.kind);
+            // #W1-9 — make the sandbox decision VISIBLE in the artifact: a mocked/gated call must never
+            // read like a real one in the run trace.
+            if (outputData && typeof outputData === "object")
+              (outputData as Record<string, unknown>).__sbDecision = sbDecision;
+            outputBody = stringifyToolPayload(outputData);
           } else {
-            outputData = r.data;
+            if (factoryDecision === "live") {
+              const scope = agent?.factoryExecutionScope;
+              if (!scope || scope.kind !== "sandbox" || !reviewedPolicy) {
+                throw new Error(
+                  `factory sandbox local scope is missing for tool '${call.name}'`,
+                );
+              }
+              sandboxDispatch = await recordFactorySandboxLocalDispatch({
+                scope,
+                tenantSlug: callCtx.tenantSlug!,
+                toolName: call.name,
+                toolArgs: call.input,
+                policy: reviewedPolicy,
+              });
+            }
+            // Merge the model's tool-call input into the context so handlers
+            // that prefer args over ctx.event.data have a single read site.
+            const handlerCtx = {
+              ...callCtx,
+              event: { name: `tool:${call.name}`, data: call.input },
+            };
+            const r = await handler.handler(handlerCtx);
+            if (handler.output) {
+              const parsed = handler.output.safeParse(r.data);
+              if (!parsed.success) {
+                throw new Error(
+                  `tool '${call.name}' returned data that violates its output schema: ${JSON.stringify(parsed.error.issues)}`,
+                );
+              }
+              outputData = parsed.data;
+            } else {
+              outputData = r.data;
+            }
+            if (r.meta && typeof r.meta === "object") {
+              toolReceipt = r.meta as Record<string, unknown>;
+            }
+            outputBody = stringifyToolPayload(outputData);
+            totalIn += r.tokensIn ?? 0;
+            totalOut += r.tokensOut ?? 0;
           }
-          if (r.meta && typeof r.meta === "object") {
-            toolReceipt = r.meta as Record<string, unknown>;
-          }
-          outputBody = stringifyToolPayload(outputData);
-          totalIn += r.tokensIn ?? 0;
-          totalOut += r.tokensOut ?? 0;
         }
       } catch (err) {
         isError = true;
@@ -1362,7 +1404,8 @@ async function callLLM(
                       gateAllowed = false;
                     }
                     return {
-                      allowed: effectiveToolAllowlist.has(name.trim()),
+                      allowed: effectiveToolAllowlist.has(name.trim()) &&
+                        !(execution?.skillSession && isSkillIntrinsic(name.trim())),
                       ...(tenantRead ?? globalRead
                         ? { handler: (tenantRead ?? globalRead)! }
                         : {}),
@@ -1496,35 +1539,6 @@ function capValue(v: unknown, max: number): unknown {
   }
   if (s.length <= max) return v;
   return { _truncated: true, _bytes: s.length, _preview: s.slice(0, max) };
-}
-
-/**
- * Best-effort extraction of provider-native reasoning/thinking from a chat
- * response's `raw` payload. Anthropic surfaces `thinking` content blocks;
- * OpenAI-family adapters may expose `reasoning`/`reasoning_content`. Returns
- * null when the provider didn't surface any (the common case).
- */
-function extractReasoning(raw: unknown): string | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  // Anthropic: content[].{thinking|redacted_thinking}
-  if (Array.isArray(r.content)) {
-    const parts: string[] = [];
-    for (const b of r.content as Array<Record<string, unknown>>) {
-      if (b?.type === "thinking" && typeof b.thinking === "string")
-        parts.push(b.thinking);
-      else if (b?.type === "redacted_thinking")
-        parts.push("[redacted thinking]");
-    }
-    if (parts.join("").trim()) return parts.join("\n");
-  }
-  // OpenAI-ish: choices[0].message.{reasoning_content|reasoning}
-  const choices = r.choices as Array<Record<string, unknown>> | undefined;
-  const msg = choices?.[0]?.message as Record<string, unknown> | undefined;
-  const rc = msg?.reasoning_content ?? msg?.reasoning;
-  if (typeof rc === "string" && rc.trim()) return rc;
-  if (typeof r.reasoning === "string" && r.reasoning.trim()) return r.reasoning;
-  return null;
 }
 
 /**
@@ -2075,6 +2089,7 @@ async function runTenantPrompt(
     conversationHistory?: AgentConversationTurn[];
     runInputMessage?: string;
     usageAttribution?: UsageAttribution;
+    skillSession?: SkillSession;
   },
 ): Promise<StepOutput> {
   const rendered = prompt.template(ctx);
@@ -2221,6 +2236,7 @@ async function runTenantPrompt(
       runId,
       stepId,
       usageAttribution,
+      skillSession: execution?.skillSession,
     },
   );
   const sandboxDispatches = result.toolCalls.flatMap((call) =>
@@ -2795,9 +2811,16 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
         } catch {
           isV2ToolAgent = false;
         }
+        const directSkillTool = input.skillSession && isSkillIntrinsic(toolName)
+          ? buildSessionSkillTools(input.skillSession, { activationOrigin: "explicit" })[toolName]
+          : undefined;
         const boundary = resolveActionToolBoundary(action, agent);
+        if (toolName === SKILL_SCRIPT_TOOL_NAME && !boundary.effective.includes(toolName)) {
+          result = { ok: false, type: "tool", data: null, meta: { error: "action_tool_not_allowed", tool: toolName } };
+          break;
+        }
         if (
-          boundary.explicit &&
+          !directSkillTool && boundary.explicit &&
           (boundary.actionAllowed.length !== 1 ||
             boundary.actionAllowed[0] !== action.name ||
             !boundary.effective.includes(action.name))
@@ -2871,9 +2894,22 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
         // trigger payload: an explicit `tool_arguments` mapping is the real
         // dispatched input and is what a read-back must be built from.
         directToolDispatch.input = invocationCtx.event?.data ?? null;
+        if (directSkillTool) {
+          const value = await directSkillTool.handler({ ...invocationCtx, config: undefined });
+          directToolDispatch.decision = "skill-session";
+          result = {
+            ok: true,
+            type: "tool",
+            data: value.data,
+            meta: { ...value.meta, tool: toolName, resolvedVia: "skill-session" },
+          };
+          break;
+        }
         // Resolve the handler and its reviewed side-effect metadata before the
         // sandbox boundary. Policy is based on metadata, never on the tool name.
-        const tenantTool = tenantRegistry?.tools?.[toolName];
+        const tenantTool = toolName === SKILL_SCRIPT_TOOL_NAME && input.skillSession
+          ? buildSessionSkillScriptTool(input.skillSession)
+          : tenantRegistry?.tools?.[toolName];
         const globalTool = !tenantTool
           ? globalToolRegistry.get(toolName)
           : undefined;
@@ -3534,6 +3570,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
           const productionTool = async (
             name: string,
             args?: unknown,
+            execution?: { skillSession?: SkillSession },
           ): Promise<unknown> =>
             dispatchGeneratedCodeTool({
               name,
@@ -3541,6 +3578,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
               ctx,
               agent,
               declaredCodeToolSet,
+              skillSession: execution?.skillSession ?? input.skillSession,
               tenantRegistry,
               scope: {
                 event: ctx.event,
@@ -3556,7 +3594,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
           // never call it, while pure/sandbox_local tools may execute locally.
           const hostRuntime: GeneratedCodeHostRuntime = {
             ...configuredHost,
-            tool: configuredHost?.tool ?? productionTool,
+            tool: (name, args, execution) => name === SKILL_SCRIPT_TOOL_NAME ? productionTool(name, args, execution) : configuredHost?.tool ? configuredHost.tool(name, args, execution) : productionTool(name, args, execution),
           };
 
           const exec = await runGeneratedCodeIsolated(
@@ -3571,6 +3609,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
               correlationId: ctx.correlationId,
               subject: ctx.subject,
               memory: input.memory,
+              skillSession: input.skillSession,
               runId: input.runId,
               timeoutMs: input.resolvedTimeoutMs,
               production: {
@@ -3625,6 +3664,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
                 codeAttestation: exec.attestation,
                 codeDurationMs: exec.durationMs,
                 productionAttested: exec.productionAttested,
+                skillAccesses: exec.skillAccesses ?? [],
                 ...(exec.containerEvidence
                   ? { containerEvidence: exec.containerEvidence }
                   : {}),
@@ -3678,6 +3718,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
                 codeAttestation: exec.attestation,
                 codeDurationMs: exec.durationMs,
                 productionAttested: exec.productionAttested,
+                skillAccesses: exec.skillAccesses ?? [],
                 ...(exec.containerEvidence
                   ? { containerEvidence: exec.containerEvidence }
                   : {}),
@@ -3794,6 +3835,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
                   conversationHistory: input.conversationHistory,
                   runInputMessage: renderRunInputMessage(input.runInput, input.runInputHistory),
                   usageAttribution: input.usageAttribution,
+                  skillSession: input.skillSession,
                 },
               );
             } catch (error) {
@@ -4233,7 +4275,11 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
               };
               let bodyResult: StepOutput;
               try {
-                const operation = () => runAction(childInput);
+                let executedHere = false;
+                const operation = () => {
+                  executedHere = true;
+                  return runAction(childInput);
+                };
                 // A foreach container owns no external side effect itself; its
                 // descendants receive their own ids. Every other body action is
                 // one durable item-local boundary (invoke uses host.invoke).
@@ -4247,13 +4293,19 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
                           { actionName: child.name },
                         )
                       : await operation();
+                if (!executedHere && input.skillSession) {
+                  await advanceSkillCheckpoint(
+                    input.skillSession,
+                    bodyResult.meta?.skillCheckpoint as SkillExecutionCheckpoint,
+                  );
+                }
               } catch (failure) {
                 // #RUN-EVIDENCE — a failed evidence write is a runtime
                 // failure, never a business failure a manifest `on_error`
                 // policy may soften. Same carve-out register.ts applies.
                 // Recognizer, not instanceof: an SDK StepError round-trip
                 // keeps only the error's name, not its class identity.
-                if (isRequiredStepEvidenceFailure(failure)) throw failure;
+                if (isRequiredStepEvidenceFailure(failure) || failure instanceof SkillCheckpointError) throw failure;
                 const resolution = classifyNestedActionFailure(child, failure);
                 if (resolution.disposition === "retry") {
                   throw failureForDisposition(resolution, failure) ?? failure;
@@ -4505,6 +4557,13 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
       });
     }
     throw error;
+  }
+
+  if (input.skillSession) {
+    result.meta = {
+      ...result.meta,
+      skillCheckpoint: await captureSkillCheckpoint(input.skillSession),
+    };
   }
 
   if (actionRuleGateRecord) {

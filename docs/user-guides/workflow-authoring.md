@@ -195,3 +195,11 @@ GET    /v1/workflows/dag?workflow=:slug
 
 All tenant identity comes from the authenticated session or bearer token. A
 request cannot select another tenant by putting a tenant ID in its body.
+
+## Reusable Skills
+
+The **Workflow Skills** controls set the published catalog inherited by its
+Agents. Each Agent may narrow that scope. Save the complete Workflow definition
+to retain its assignments, version pins and other manifest metadata. See the
+[Skills guide](skills.md#assign-skills-to-workflows-and-agents) for assignment
+modes, Test Lab behavior, publication and immutable run snapshots.

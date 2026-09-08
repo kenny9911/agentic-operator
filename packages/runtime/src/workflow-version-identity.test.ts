@@ -49,4 +49,13 @@ describe("workflow version content identity", () => {
       ),
     ).toBe(false);
   });
+  it("changes identity when workflow Skill authority changes while retaining metadata-only envelope compatibility", () => {
+    const envelope = { $schemaVersion: 2, agents: manifest, extensions: { label: "Metadata" } };
+    expect(canonicalWorkflowVersionId(envelope, actions)).toBe(canonicalWorkflowVersionId(manifest, actions));
+    const disabled = { ...envelope, skills: { mode: "disabled" } };
+    const selected = { ...envelope, skills: { mode: "selected", skills: [{ id: "policy", versionId: "policy-v1" }] } };
+    expect(canonicalWorkflowVersionId(disabled, actions)).not.toBe(canonicalWorkflowVersionId(envelope, actions));
+    expect(canonicalWorkflowVersionId(selected, actions)).not.toBe(canonicalWorkflowVersionId(disabled, actions));
+    expect(workflowVersionContentMatches({ manifestJson: selected, actionsJson: actions }, disabled, actions)).toBe(false);
+  });
 });

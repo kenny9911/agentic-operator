@@ -3,7 +3,7 @@ import * as http from "node:http";
 import { createRequire } from "node:module";
 import { PassThrough, type Readable, type Writable } from "node:stream";
 
-import { codeActExecutionGate, type CodeActRpcMethod } from "./codeact-worker";
+import { CODEACT_RPC_METHODS, codeActExecutionGate, type CodeActRpcMethod } from "./codeact-worker";
 import { GENERATED_CODE_ALLOWLIST } from "./module-runner";
 
 const DEFAULT_SOCKET_PATH = "/var/run/docker.sock";
@@ -853,10 +853,7 @@ export async function executeCodeActContainer(
           if (message.kind !== "rpc") continue;
           const id = message.id;
           const method = message.method;
-          if (!Number.isSafeInteger(id) || typeof method !== "string" || ![
-            "reason", "tool", "memory.get", "memory.put", "memory.delete",
-            "memory.search", "invoke", "spawn",
-          ].includes(method)) {
+          if (!Number.isSafeInteger(id) || typeof method !== "string" || !(CODEACT_RPC_METHODS as readonly string[]).includes(method)) {
             rpcFailure = "candidate sent a malformed RPC request";
             void transport.kill(containerId!);
             continue;

@@ -1,3 +1,10 @@
 # Deterministic, hash-checked generated receipts. Reformatting makes --check fail.
 artifacts/ontology/**/shadow_candidate_*.json
 artifacts/ontology/**/runtime_plan_candidate_*.json
+# Commit-pinned third-party bytes and hash-bound catalog metadata.
+skills-library/upstream/**
+skills-library/adapted/**
+skills-library/local/**
+skills-library/sources.json
+skills-library/sources.lock.json
+skills-library/catalog.json

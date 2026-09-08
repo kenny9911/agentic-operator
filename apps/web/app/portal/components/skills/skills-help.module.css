@@ -1,0 +1,28 @@
+.page { padding: 26px; width: 100%; min-width: 0; max-width: 1280px; margin: 0 auto; }
+.back { display: inline-block; margin-bottom: 24px; color: var(--text-2); font-size: 12px; text-decoration: none; }
+.header { padding-bottom: 28px; border-bottom: 1px solid var(--border-2); }
+.header h1 { margin: 0 0 14px; font-size: 25px; font-weight: 500; letter-spacing: -.5px; }
+.header p { max-width: 790px; margin: 0; color: var(--text-2); line-height: 1.8; font-size: 14px; }
+.layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 44px; padding-top: 28px; align-items: start; }
+.contents { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 24px; }
+.contents p { margin: 0 0 2px; color: var(--text-3); font-size: 11px; }
+.contents a { color: var(--text-2); font-size: 12px; text-decoration: none; line-height: 1.6; }
+.contents a:hover, .back:hover { color: var(--text); text-decoration: underline; text-underline-offset: 4px; }
+.page a:focus-visible { outline: 2px solid var(--signal); outline-offset: 4px; }
+.article { min-width: 0; }
+.article section { scroll-margin-top: 24px; padding-bottom: 32px; margin-bottom: 32px; border-bottom: 1px solid var(--border); }
+.article h2 { margin: 0 0 18px; color: var(--text); font-size: 18px; font-weight: 500; }
+.article p, .article li, .article td, .article th { font-size: 13px; line-height: 1.85; }
+.article p, .article li, .article td { color: var(--text-2); }
+.article p { margin: 0 0 14px; }
+.article ol { padding-left: 24px; margin: 18px 0; }
+.article li { padding-left: 5px; margin-bottom: 10px; }
+.article pre { padding: 18px; margin: 20px 0 0; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.article code { font: 12px/1.8 var(--mono); color: var(--text-2); }
+.tableWrap { overflow-x: auto; margin: 20px 0 0; }
+.article table { width: 100%; border-collapse: collapse; text-align: left; }
+.article th, .article td { border-bottom: 1px solid var(--border); padding: 12px; vertical-align: top; }
+.article thead th { background: var(--panel); color: var(--text-2); font-size: 11px; font-weight: 500; }
+.article tbody th { color: var(--text); font-weight: 500; width: 30%; min-width: 130px; }
+@media (max-width: 850px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 30px; } .contents { position: static; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; } .contents p { grid-column: 1 / -1; } }
+@media (max-width: 520px) { .page { padding: 20px 16px; } .header h1 { font-size: 22px; } .article th, .article td { padding: 10px 8px; } .article tbody th { min-width: 100px; } }

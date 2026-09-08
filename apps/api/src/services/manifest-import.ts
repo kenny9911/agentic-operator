@@ -2465,21 +2465,13 @@ function bootstrapIdentityManifestJson(persistedManifest: unknown): unknown {
  */
 function storedWorkflowVersionMatchesMigrated(
   row: { manifestJson: unknown; actionsJson: unknown },
-  migratedManifest: WorkflowManifest,
+  migratedManifest: unknown,
   actions: unknown,
 ): boolean {
-  const stored = row.manifestJson;
-  const normalizedManifest =
-    stored &&
-    typeof stored === "object" &&
-    !Array.isArray(stored) &&
-    Array.isArray((stored as { agents?: unknown }).agents)
-      ? (stored as { agents: unknown }).agents
-      : stored;
   // Compatible, not identical: a row that recorded no actions (a workflow-only
   // publish) is not a content conflict with the actions the runtime pairs.
   return workflowVersionContentCompatible(
-    { manifestJson: normalizedManifest, actionsJson: row.actionsJson },
+    row,
     migratedManifest,
     actions,
   );
@@ -2629,7 +2621,7 @@ export async function commit(
   const identityActions =
     result.actions ?? (await actionsPairedOnDisk(ctx.tenantSlug));
   const desiredVersion = canonicalWorkflowVersionId(
-    migratedForIdentity,
+    identityManifestJson,
     identityActions,
   );
   const legacyDesiredVersion = legacyWorkflowVersionId(migratedForIdentity);
@@ -2811,7 +2803,7 @@ export async function commit(
             fullExisting &&
             !storedWorkflowVersionMatchesMigrated(
               fullExisting,
-              migratedForIdentity,
+              identityManifestJson,
               identityActions,
             )
           ) {
@@ -2834,7 +2826,7 @@ export async function commit(
             (legacyExisting &&
             storedWorkflowVersionMatchesMigrated(
               legacyExisting,
-              migratedForIdentity,
+              identityManifestJson,
               identityActions,
             )
               ? legacyExisting
@@ -2852,7 +2844,7 @@ export async function commit(
               !pendingVersion ||
               !storedWorkflowVersionMatchesMigrated(
                 pendingVersion,
-                migratedForIdentity,
+                identityManifestJson,
                 identityActions,
               )
             ) {
@@ -2892,7 +2884,7 @@ export async function commit(
               !pendingVersion ||
               !storedWorkflowVersionMatchesMigrated(
                 pendingVersion,
-                migratedForIdentity,
+                identityManifestJson,
                 identityActions,
               )
             ) {
@@ -2938,7 +2930,7 @@ export async function commit(
             fullExisting &&
             !storedWorkflowVersionMatchesMigrated(
               fullExisting,
-              migratedForIdentity,
+              identityManifestJson,
               identityActions,
             )
           ) {
@@ -2961,7 +2953,7 @@ export async function commit(
             (legacyExisting &&
             storedWorkflowVersionMatchesMigrated(
               legacyExisting,
-              migratedForIdentity,
+              identityManifestJson,
               identityActions,
             )
               ? legacyExisting
