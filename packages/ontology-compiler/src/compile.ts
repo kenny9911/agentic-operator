@@ -382,17 +382,39 @@ export interface MetaerpOperationParams {
   fields: string[];
 }
 
-/** 「入参: a、b、c」——超过这个数就截断，工具描述不是 swagger 副本。 */
-const MAX_LISTED_FIELDS = 18;
+/** 每个操作最多列几个入参。预算不够时会从这里逐级往下压。 */
+const FIELD_BUDGET_STEPS = [8, 6, 4, 3, 2] as const;
+
+/**
+ * 工具描述的硬上限。
+ *
+ * 清单 schema（`normalizeWorkflowManifest`）把 tool_use[].description 限死在 2000
+ * 字符。合并查询工具要把每个操作的名称、说明和入参串起来——场景一的取数 agent 有 13 个
+ * 查询操作，加上入参轻松越界，后果很隐蔽：**运行照常、工作流页面打不开**
+ * （internal_error: stored workflow manifest is invalid），因为运行时的 AgentSchema
+ * 不查这条长度，页面用的校验器查。
+ *
+ * 越界时优先**逐级减少每个操作列出的字段数**，而不是直接截断字符串：截断会把靠后的
+ * 操作的入参整段切掉，模型对那几个操作又退回到猜——而猜字段名正是这套入参清单要解决的
+ * 问题。字段数压到最低仍不够时才截断兜底。
+ */
+const MAX_TOOL_DESCRIPTION = 2_000;
+
+function clampToolDescription(text: string): string {
+  return text.length <= MAX_TOOL_DESCRIPTION
+    ? text
+    : `${text.slice(0, MAX_TOOL_DESCRIPTION - 1)}…`;
+}
 
 function paramHint(
   params: Record<string, MetaerpOperationParams> | undefined,
   operationId: string,
+  maxFields: number,
 ): string {
   const entry = params?.[operationId];
-  if (!entry?.fields.length) return "";
-  const shown = entry.fields.slice(0, MAX_LISTED_FIELDS).join("、");
-  const more = entry.fields.length > MAX_LISTED_FIELDS ? " 等" : "";
+  if (!entry?.fields.length || maxFields <= 0) return "";
+  const shown = entry.fields.slice(0, maxFields).join("、");
+  const more = entry.fields.length > maxFields ? " 等" : "";
   const array = entry.bodyIsArray ? "，请求体是数组" : "";
   return `｜入参(${entry.schema}${array}): ${shown}${more}`;
 }
@@ -405,8 +427,10 @@ function toolUseEntry(
   description?: string,
   params?: Record<string, MetaerpOperationParams>,
 ): CompiledToolUseEntry {
-  const hint = paramHint(params, operationId);
-  const described = description ? `${description}${hint}` : hint.replace(/^｜/, "");
+  const hint = paramHint(params, operationId, FIELD_BUDGET_STEPS[0]!);
+  const described = clampToolDescription(
+    description ? `${description}${hint}` : hint.replace(/^｜/, ""),
+  );
   return {
     name: TOOL_NAME,
     ...(described ? { description: described } : {}),
@@ -429,17 +453,27 @@ function mergedQueryToolUseEntry(
   baseUrlEnv: string,
   params?: Record<string, MetaerpOperationParams>,
 ): CompiledToolUseEntry {
-  const lines = operations
-    .map((op) => {
-      const head = op.description ? `${op.id}（${op.description}）` : op.id;
-      return `${head}${paramHint(params, op.id)}`;
-    })
-    .join("\n- ");
+  const compose = (maxFields: number): string => {
+    const lines = operations
+      .map((op) => {
+        const head = op.description ? `${op.id}（${op.description}）` : op.id;
+        return `${head}${paramHint(params, op.id, maxFields)}`;
+      })
+      .join("\n- ");
+    return (
+      `实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单` +
+      `（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- ${lines}`
+    );
+  };
+  // 先按最宽的预算写，超了就逐级压字段数——保证每个操作都还留着入参。
+  let text = compose(FIELD_BUDGET_STEPS[0]!);
+  for (const budget of FIELD_BUDGET_STEPS.slice(1)) {
+    if (text.length <= MAX_TOOL_DESCRIPTION) break;
+    text = compose(budget);
+  }
   return {
     name: TOOL_NAME,
-    description:
-      `实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单` +
-      `（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- ${lines}`,
+    description: clampToolDescription(text),
     side_effect: "read",
     execution_policy: METAERP_REVIEWED_POLICY,
     input_schema: {

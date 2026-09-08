@@ -563,6 +563,20 @@ describe("compiled input ports", () => {
     });
   });
 
+  // 清单 schema 把 tool_use[].description 限死在 2000 字符。越界的后果很隐蔽：
+  // 运行照常（运行时不查这条长度），但工作流页面打不开——
+  // internal_error: stored workflow manifest is invalid。
+  it("keeps every tool description within the manifest's 2000-char cap", () => {
+    for (const agent of agents) {
+      for (const tool of agent.tool_use ?? []) {
+        expect(
+          (tool.description ?? "").length,
+          `${agent.name} / ${tool.name}`,
+        ).toBeLessThanOrEqual(2000);
+      }
+    }
+  });
+
   /** Compile one probe field and hand back the port it produced. */
   function probePort(field: StudioEventDataField) {
     const probed = {

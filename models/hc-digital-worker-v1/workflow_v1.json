@@ -741,7 +741,7 @@
           "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
           "catalog_path": "models/hc-digital-worker-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryOnhandQuantity（按物料+库存组织查合格现有量（本体 tool_use 名 multiOnhandQuantityQuery）。）｜入参(MultiOnhandAvailablePagingQueryDTO): unitCode、organizationCode、itemCodeList、itemVersionList、lotNumberList、storehouseCodeList、locatorCodeList、propertyTypeList、propertyCodeList、propertyTxnCodeList、inventoryStatusCodeList、showLocatorControl、showPropertyControl、showCalculateControl、minPrimaryTransactionQuantity、maxPrimaryTransactionQuantity\n- queryReservation（查已预留量，用于扣减出可用量。）｜入参(ReservationQueryDTO): unitCode、organizationCode、requirementDateFrom、requirementDateTo、itemCode、itemCodeList、storehouseCode、locatorCode、itemVersion、lotNumber、demandSourceObjectType、demandSourceObjectNumber、demandSourceObjectLineId、demandSourceLineDetailId、sourceSystemCode、reservationIds、propertyType、propertyCode 等\n- queryItemMinMaxLevel（查最大库存与安全库存两条水位线。）｜入参(PlanItemLevelQueryDTO): storehouseCode、organizationCode、locatorCode、enableFlag、itemCode",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryOnhandQuantity（按物料+库存组织查合格现有量（本体 tool_use 名 multiOnhandQuantityQuery）。）｜入参(MultiOnhandAvailablePagingQueryDTO): unitCode、organizationCode、itemCodeList、itemVersionList、lotNumberList、storehouseCodeList、locatorCodeList、propertyTypeList 等\n- queryReservation（查已预留量，用于扣减出可用量。）｜入参(ReservationQueryDTO): unitCode、organizationCode、requirementDateFrom、requirementDateTo、itemCode、itemCodeList、storehouseCode、locatorCode 等\n- queryItemMinMaxLevel（查最大库存与安全库存两条水位线。）｜入参(PlanItemLevelQueryDTO): storehouseCode、organizationCode、locatorCode、enableFlag、itemCode",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -918,7 +918,7 @@
           "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
           "operation": "createTransactionOrder"
         },
-        "description": "生成调拨申请单(createTransactionOrder)。入参：物料编码、调拨数量、调出库存组织与库点、调入库存组织与库点、需求日期、来源库存校验结论编号、经办人；出参：调拨单号、单据状态、预计到货日期。｜入参(OrderCreatePubDTO): lineList、unitCode、organizationCode、txnOrderTypeCode、transactionTypeCode、uniqueSequenceNumber、sourceSystemCode、sourceCode、submittedBy、requiredDate、autoSubmit",
+        "description": "生成调拨申请单(createTransactionOrder)。入参：物料编码、调拨数量、调出库存组织与库点、调入库存组织与库点、需求日期、来源库存校验结论编号、经办人；出参：调拨单号、单据状态、预计到货日期。｜入参(OrderCreatePubDTO): lineList、unitCode、organizationCode、txnOrderTypeCode、transactionTypeCode、uniqueSequenceNumber、sourceSystemCode、sourceCode 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -1259,7 +1259,7 @@
           "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
           "operation": "createPbp"
         },
-        "description": "创建执行计划头行并写来源映射(createPbp)。入参：计划头（业务类型、计划类型、管理单元、计划期）、计划行数组（物料编码、数量、单位、加权单价、需求日期、库存组织、品类、寻源方式）、来源行映射数组（来源计划头ID、来源计划行ID、来源单据号、来源行号）；出参：PBP_HEADER_ID、PBP_NUMBER、计划行ID数组、PBP_REL_ID 数组。｜入参(PbpCreateHeaderDTO，请求体是数组): unitCode、pbpHeaderId、pbpHeaderSequence、pbpName、documentType、documentSubType、periodType、startDate、endDate、remark、operationType、submitFlag、preparerId、pbpCreateLineDTOList、approverList、businessType",
+        "description": "创建执行计划头行并写来源映射(createPbp)。入参：计划头（业务类型、计划类型、管理单元、计划期）、计划行数组（物料编码、数量、单位、加权单价、需求日期、库存组织、品类、寻源方式）、来源行映射数组（来源计划头ID、来源计划行ID、来源单据号、来源行号）；出参：PBP_HEADER_ID、PBP_NUMBER、计划行ID数组、PBP_REL_ID 数组。｜入参(PbpCreateHeaderDTO，请求体是数组): unitCode、pbpHeaderId、pbpHeaderSequence、pbpName、documentType、documentSubType、periodType、startDate 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -1505,7 +1505,7 @@
           "base_url_env": "METAERP_DIGITAL_WORKER_BASE_URL",
           "catalog_path": "models/hc-digital-worker-v1/erp-operations.json"
         },
-        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryCentralCatalogConfig（取集采目录，判定是否必须走集中采购（本体 tool_use 名 getCentralCatalogConfig）。）\n- queryAuditThresholdConfig（取校验阈值：价格偏离、金额上限、必填项（本体 tool_use 名 getAuditThresholdConfig）。）\n- queryPoLine（取历史订单行，作为价格曲线的样本。）\n- queryContract（取合同价，作为价格偏离的对照基准（本体 tool_use 名 getContractByQuery）。）｜入参(ContractQueryOpenReqDTO): mainContractId、contractName、contractCode、contractTypes、businessTypes、contractStatuses、companyCode、companyCodes、supplierCode、supplierCodes、territoryCode、groupNumber、effectiveStartDate、effectiveEndDate、expirationStartDate、expirationEndDate、contractType、businessType 等",
+        "description": "实时查询 Meta ERP。payload 是该操作的请求体，字段名照抄下面的入参清单（metaERP 用小驼峰），不要自造字段名，也不要用下划线写法。可用操作：\n- queryCentralCatalogConfig（取集采目录，判定是否必须走集中采购（本体 tool_use 名 getCentralCatalogConfig）。）\n- queryAuditThresholdConfig（取校验阈值：价格偏离、金额上限、必填项（本体 tool_use 名 getAuditThresholdConfig）。）\n- queryPoLine（取历史订单行，作为价格曲线的样本。）\n- queryContract（取合同价，作为价格偏离的对照基准（本体 tool_use 名 getContractByQuery）。）｜入参(ContractQueryOpenReqDTO): mainContractId、contractName、contractCode、contractTypes、businessTypes、contractStatuses、companyCode、companyCodes 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
@@ -2114,7 +2114,7 @@
           "catalog_path": "models/hc-digital-worker-v1/erp-operations.json",
           "operation": "createProcPackageLines"
         },
-        "description": "查询供应商价格协议做框架识别与有效性判断(querySPAList)。入参：物料编码列表、管理单元编码、协议类型、失效日期>当前日期、关闭状态=未关闭、分页；出参：SPA_HEADER_ID、SPA_NUMBER、SUPPLIER_CODE、AGREEMENT_TYPE、EFFECTIVE_DATE、DISABLE_DATE、CLOSED_STATUS、AMOUNT、行数组（SPA_LINE_ID、ITEM_CODE、PRICE、QUANTITY、CATEGORY_ID）。｜入参(ProcPackageLineOpenDTO，请求体是数组): unitCode、unitName、itemCode、itemDesc、itemVersion、categoryId、categoryConcatSections、uomCode、uomName、quantity、currencyCode、unitPrice、amount、serviceStartDate、serviceEndDate、needByDate、projectNumber、remark 等",
+        "description": "查询供应商价格协议做框架识别与有效性判断(querySPAList)。入参：物料编码列表、管理单元编码、协议类型、失效日期>当前日期、关闭状态=未关闭、分页；出参：SPA_HEADER_ID、SPA_NUMBER、SUPPLIER_CODE、AGREEMENT_TYPE、EFFECTIVE_DATE、DISABLE_DATE、CLOSED_STATUS、AMOUNT、行数组（SPA_LINE_ID、ITEM_CODE、PRICE、QUANTITY、CATEGORY_ID）。｜入参(ProcPackageLineOpenDTO，请求体是数组): unitCode、unitName、itemCode、itemDesc、itemVersion、categoryId、categoryConcatSections、uomCode 等",
         "execution_policy": {
           "effect_scope": "external",
           "operation": "read_write",
