@@ -358,7 +358,6 @@ describe("workflowLiveReducer", () => {
       {
         type: "task.created", tenantId: "tn-1", at: T0 + 10, taskId: "tsk-old",
         runId: "run-old", taskType: "approval", title: "旧任务",
-        awaitingRole: "计划员", priority: "medium",
       },
       {
         type: "run.started", tenantId: "tn-1", at: T0 + 100, runId: "run-new",
