@@ -983,6 +983,53 @@ describe("createPbp：请求体是数组，回执也是数组", () => {
   });
 });
 
+describe("调拨单：发出存储库与发出货位是一对", () => {
+  beforeEach(() => {
+    seedDeployment();
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_TRANSFER_FROM_STOREHOUSE_CODE = "300000";
+    process.env.METAERP_TRANSFER_FROM_LOCATOR_CODE = "LC001";
+    _clearMetaerpRoutesCacheForTests();
+  });
+  afterEach(() => {
+    delete process.env.METAERP_TRANSFER_FROM_STOREHOUSE_CODE;
+    delete process.env.METAERP_TRANSFER_FROM_LOCATOR_CODE;
+    _clearMetaerpRoutesCacheForTests();
+  });
+
+  // 2026-09-09 实测：模型把 storehouseCode 选成 100000，而路由填的 LC001 是
+  // 300000（成品库）里的货位，四行全部 FAILED「locator code is invalid」。
+  // 此前两次成功只是模型碰巧选中了 300000——钉了一半的配对迟早会炸。
+  it("overrides the model's source storehouse so the pinned locator stays valid", () => {
+    const route = resolveRoute("createTransactionOrder", "write", "hc-procurement");
+    const scoped = _applyLineScopeForTests(
+      "createTransactionOrder",
+      route,
+      { lineList: [{ itemCode: "10000008", storehouseCode: "100000", transactionQuantity: "10" }] },
+      null,
+    );
+    const line = (scoped.lineList as Record<string, unknown>[])[0]!;
+    expect(line.storehouseCode).toBe("300000");
+    expect(line.locatorCode).toBe("LC001");
+  });
+
+  it("drops the whole pair when both are unset — back to the model choosing", () => {
+    delete process.env.METAERP_TRANSFER_FROM_STOREHOUSE_CODE;
+    delete process.env.METAERP_TRANSFER_FROM_LOCATOR_CODE;
+    _clearMetaerpRoutesCacheForTests();
+    const route = resolveRoute("createTransactionOrder", "write", "hc-procurement");
+    const scoped = _applyLineScopeForTests(
+      "createTransactionOrder",
+      route,
+      { lineList: [{ itemCode: "10000008", storehouseCode: "100000" }] },
+      null,
+    );
+    const line = (scoped.lineList as Record<string, unknown>[])[0]!;
+    expect(line.storehouseCode).toBe("100000");
+    expect("locatorCode" in line).toBe(false);
+  });
+});
+
 describe("$env 展开会下钻到数组和嵌套对象里", () => {
   beforeEach(() => {
     seedDeployment();

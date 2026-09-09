@@ -367,7 +367,7 @@
           "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
         }
       },
-      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。payload 必须是带 lineList 的完整单据头，不是单独一行；部署级编码与时间戳由 overrides / line_overrides 打进去，模型只负责物料、数量、发出存储库、来源单据这些业务值。演示期把每行数量钉死在 METAERP_TRANSFER_FIXED_QUANTITY（当前 5）：可调库存够、可以反复重跑，模型把数量算错也不会让整单被 ERP 退回。该变量留空即整字段不注入，恢复由模型按「min(需求量, 可调量)」给数的真实逻辑。",
+      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。payload 必须是带 lineList 的完整单据头，不是单独一行；部署级编码与时间戳由 overrides / line_overrides 打进去，模型只负责物料、数量、发出存储库、来源单据这些业务值。演示期把每行数量钉死在 METAERP_TRANSFER_FIXED_QUANTITY（当前 5）：可调库存够、可以反复重跑，模型把数量算错也不会让整单被 ERP 退回。该变量留空即整字段不注入，恢复由模型按「min(需求量, 可调量)」给数的真实逻辑。 发出存储库与发出货位是**一对**，必须一起钉：2026-09-09 实测模型把 storehouseCode 选成 100000，而路由填的 locatorCode=LC001 属于 300000（成品库），四行全部 FAILED「locator code is invalid」；此前两次成功只是模型碰巧选中了 300000。两者一并移到 line_overrides，由 METAERP_TRANSFER_FROM_STOREHOUSE_CODE / METAERP_TRANSFER_FROM_LOCATOR_CODE 提供；两个都留空即整对省略，回到「模型按可调库存自己选发出库位」的真实逻辑——但要么都留空，要么都填，不要只填一个。",
       "overrides": {
         "sourceSystemCode": {
           "$env": "METAERP_SOURCE_SYSTEM_CODE"
@@ -401,9 +401,6 @@
         "operationType": "ADD",
         "itemVersion": "",
         "lotNumber": "",
-        "locatorCode": {
-          "$env": "METAERP_TRANSFER_FROM_LOCATOR_CODE"
-        },
         "transferStorehouseCode": {
           "$env": "METAERP_TRANSFER_TO_STOREHOUSE_CODE"
         },
@@ -421,6 +418,12 @@
         },
         "organizationCode": {
           "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "storehouseCode": {
+          "$env": "METAERP_TRANSFER_FROM_STOREHOUSE_CODE"
+        },
+        "locatorCode": {
+          "$env": "METAERP_TRANSFER_FROM_LOCATOR_CODE"
         },
         "transferOrganizationCode": {
           "$env": "METAERP_TRANSFER_TO_ORGANIZATION_CODE"
