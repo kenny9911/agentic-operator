@@ -445,11 +445,17 @@ export function decisionOptions(
     for (const fact of group.facts) {
       if (wanted.has(fact.key)) values[fact.key] = fact.value;
     }
+    // A value that is the same on every option identifies nothing. The last
+    // resort used to be "the first readable fact", varying or not — on a live
+    // rectification gate that picked `actual`, whose value happened to be the
+    // string 「未标识」 on both findings, so the planner saw two identical cards
+    // that read like a UI placeholder. Better an ugly identifier that tells
+    // them apart than a pretty word that does not.
     const label =
       group.facts.find((fact) => named(fact) && varies(fact)) ??
       group.facts.find(named) ??
       group.facts.find((fact) => nameable(fact) && varies(fact)) ??
-      group.facts.find(nameable);
+      group.facts.find(varies);
     // Facts shared by every option belong in the summary, not repeated on each
     // card — they cannot help anyone choose. Unless nothing varies at all, in
     // which case showing them beats showing nothing.

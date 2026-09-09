@@ -442,3 +442,54 @@ describe("智能体脚手架不占「采购概况」的位置", () => {
     ).toEqual([]);
   });
 });
+
+describe("选项标题必须能把选项区分开", () => {
+  /** 实跑：退回整改的两条违规明细，只有 plan_line_id 不同。 */
+  const findings = {
+    audit_finding: [
+      {
+        audit_finding_id: "AF-20270105-001",
+        audit_opinion_id: "AO-20270105-001",
+        plan_line_id: "PBPL-2027-0101-01",
+        finding_type: "集采未标注",
+        expected: "集采层级应为一级或二级集采",
+        actual: "未标识",
+      },
+      {
+        audit_finding_id: "AF-20270105-003",
+        audit_opinion_id: "AO-20270105-001",
+        plan_line_id: "PBPL-2027-0102-01",
+        finding_type: "集采未标注",
+        expected: "集采层级应为一级或二级集采",
+        actual: "未标识",
+      },
+    ],
+  };
+  const FIELDS = ["decision", "audit_opinion_id", "rectification_note"];
+
+  it("never titles two options with the same word", () => {
+    // 兜底原本取「第一个可读字段」，取到了两条都相同的 actual —— 它的值恰好是
+    // 「未标识」，计划员看到两张一模一样、像占位符的卡片。
+    const options = decisionOptions(findings, FIELDS);
+    expect(options).toHaveLength(2);
+    expect(options[0]!.title).not.toBe(options[1]!.title);
+    // 取到的是第一个能区分它们的字段——是 audit_finding_id 还是 plan_line_id
+    // 不重要，重要的是两张卡片不再长得一模一样。
+    expect(options.map((option) => option.title)).toEqual(["AF-20270105-001", "AF-20270105-003"]);
+  });
+
+  it("prefers the agent's own short label when it carries one", () => {
+    const labelled = {
+      audit_finding: findings.audit_finding.map((finding, index) => ({
+        ...finding,
+        finding_label: `0${index + 1} 行集采未标注`,
+        audit_opinion_id: `AO-2027010${index + 1}`,
+      })),
+    };
+    // 智能体自己起的短名优先于任何标识符——前提是它真的短（≤20 字）且各条不同。
+    expect(decisionOptions(labelled, FIELDS).map((option) => option.title)).toEqual([
+      "01 行集采未标注",
+      "02 行集采未标注",
+    ]);
+  });
+});
