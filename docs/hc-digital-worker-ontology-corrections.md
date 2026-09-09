@@ -349,3 +349,28 @@ source_mapping_written(BR2-MERGE-04)」。
   例如「0101-01 行集采未标注」。含标识符时只取尾段——整串计划行号加问题描述会超过
   20 字，被判为描述而不被采纳（这一条我第一次写例子时就踩了）。
   与 D-07 的 `split_option_label` 同一处理。
+
+## D-19 两处自动回环停不下来：审核⇄退回整改、组包⇄合规预警
+
+**实跑**：`auditAnnualPlanCompliance ⇄ returnPlanForRectification` 来回六轮；
+`recommendPackagingScheme ⇄ raisePackagingComplianceAlert` 五轮以上——后者更糟，
+回环里没有人工闸口，纯机器空转，每轮都在烧 LLM 调用。
+
+**现状**：两条回环的回程事件都用 `payload_from: event.data`，把上一轮的原始载荷
+（含同一批 `audit_finding` / `packaging_finding`）原样送回。ERP 数据没变、入参没变，
+模型自然得出一模一样的结论。组包那条尤其清楚：同一个断路器合并包金额 5,756,000 元、
+上限 5,000,000 元，模型自己在 finding 的 `split_advice` 里写着「拆分为两个子包」，
+却每轮都重新产出同一个超限的包。
+
+**平台侧现状**：
+- 两个回程分支的发射条件加上确定性判据 —— `input.<finding 字段> == null`，
+  即**只在第一次**发拦截/预警。`input` 是入口事件载荷的别名，第一轮不带 finding、
+  回程一定带，判据与模型判断无关。
+- 二次仍不合规时两条分支都不发：链路停在那里，而不是空转，也不是带着坏方案往下走。
+- 合约同步写明：入参已带 finding 即为二次编排，必须按 finding 的整改建议真的改
+  （超限就拆包、混装就按品类分开）；确实拆不动就把原因写进 explanation 并保持 false。
+- `package_scheme` 的合约补上「顶层键只能是这七个」——实跑中输出漂成了另一套结构
+  （approve_flow_code / central_pattern / delivery_overlap_rate / split_advice…），
+  下游按契约取字段全是 undefined。
+
+端到端新增两条用例：模型持续不合规时，拦截与预警各只发一次，链路停下。

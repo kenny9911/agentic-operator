@@ -71,7 +71,7 @@
       {
         "event": "PLAN_AUDIT_INTERCEPTED",
         "payload_from": "results.auditAnnualPlanCompliance",
-        "when": "lastResult.audit_passed == false"
+        "when": "lastResult.audit_passed == false && input.audit_finding == null"
       }
     ],
     "returnPlanForRectification": [
@@ -95,7 +95,7 @@
       {
         "event": "PACKAGING_COMPLIANCE_VIOLATED",
         "payload_from": "results.recommendPackagingScheme",
-        "when": "lastResult.packaging_compliant == false"
+        "when": "lastResult.packaging_compliant == false && input.packaging_finding == null"
       }
     ],
     "annotateFrameAndCentralPurchase": [
@@ -382,9 +382,9 @@
     },
     "recommendPackagingScheme": {
       "fields": {
-        "package_scheme": "组包方案：[{package_scheme_id, package_name, category_code, member_plan_line_ids:[string], total_amount:number, category_count:integer, required_arrival_window:string}]。",
+        "package_scheme": "组包方案：[{package_scheme_id, package_name, category_code, member_plan_line_ids:[string], total_amount:number, category_count:integer, required_arrival_window:string}]。\n**顶层键只能是这七个**，不要自创 approve_flow_code / central_pattern / delivery_overlap_rate / split_advice 之类的字段——实跑中输出漂成了另一套结构，下游按契约取字段就全是 undefined。\n拆包时给子包各自独立的 package_scheme_id（例如原 PS-XXX-01 拆成 PS-XXX-01A / PS-XXX-01B），member_plan_line_ids 各自只列自己的成员。",
         "packaging_finding": "组包合规结论：[{pkg_finding_id, package_scheme_id, finding_type:'单包金额超限'|'品类混装超限', threshold_value:number, actual_value:number, explanation:string}]。全部合规时为空数组。",
-        "packaging_compliant": "**必填布尔值**。所有候选包都合规才填 true；任意一个不合规填 false。工作流据此决定继续标注还是先发合规预警。",
+        "packaging_compliant": "**必填布尔值**。所有候选包都合规才填 true；任意一个不合规填 false。工作流据此决定继续标注还是先发合规预警。\n【硬性·预警后必须真的改方案】入参里**已经带有非空 `packaging_finding[]`** 时，说明上一轮已经就这些问题发过合规预警：\n你必须**按 finding 里的整改建议重新编排**（金额超限就拆包、品类混装就按品类分开），产出合规的方案，`packaging_compliant` 填 true。\n**不得原样重出同一个违规方案**——实跑中同一个断路器合并包（金额 5,756,000 > 上限 5,000,000）被反复重出，组包与预警之间空转了五轮以上，而模型自己在 finding 的 split_advice 里就写着「拆分为两个子包」。\n确实拆不动时（例如单条计划行本身就超限），把原因写进 packaging_finding[].explanation 并保持 false——此时工作流会停在这一步而不是再发一次预警，停下来比空转好。",
         "thresholds_used": "本次采用的阈值：{package_max_amount:number, package_category_mixed:number, threshold_ids:[string]}。",
         "scan_date": "原样透传上游 scan_date。"
       }

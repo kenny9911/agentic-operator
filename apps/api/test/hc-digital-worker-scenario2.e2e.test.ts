@@ -612,6 +612,47 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
     expect((await journalOps()).map((e) => e.op)).toContain("createTransactionOrder");
   });
 
+  it("intercepts once, then stops — the audit/rectification loop cannot spin", async () => {
+    // 实测退回整改与审核来回跑了六轮：退回事件把拦截时的原始载荷原样送回，审核对着
+    // 逐字节相同的输入得出逐字节相同的结论。拦截的发射条件现在要求「入参里还没有
+    // 这批 finding」——只在第一次拦截。
+    resetScript();
+    auditPasses = [false, false, false, false];
+
+    const delivered = await dispatchCascade("DAILY_DEMAND_PLAN_SCAN_SCHEDULED", {
+      subject: "dw-noloop-audit",
+      scan_date: "2027-01-05",
+      scan_batch_id: "DW-20270105-002",
+    });
+    const count = (name: string) => delivered.filter((entry) => entry === name).length;
+
+    expect(count("PLAN_AUDIT_INTERCEPTED")).toBe(1);
+    expect(count("PLAN_RECTIFICATION_SUBMITTED")).toBe(1);
+    // 复审仍不通过 → 两条分支都不发，链路停在审核，而不是再退回一次。
+    expect(count("ANNUAL_PLAN_AUDITED")).toBe(0);
+    expect(delivered).not.toContain("PACKAGING_SCHEME_RECOMMENDED");
+  });
+
+  it("alerts once, then stops — the packaging loop cannot spin", async () => {
+    // 这条回环里没有人工闸口，纯机器空转：同一个超限的断路器合并包被反复重出，
+    // 组包与预警之间跑了五轮以上。
+    resetScript();
+    packagingCompliant = [false, false, false, false];
+
+    const delivered = await dispatchCascade("DAILY_DEMAND_PLAN_SCAN_SCHEDULED", {
+      subject: "dw-noloop-packaging",
+      scan_date: "2027-01-05",
+      scan_batch_id: "DW-20270105-003",
+    });
+    const count = (name: string) => delivered.filter((entry) => entry === name).length;
+
+    expect(count("PACKAGING_COMPLIANCE_VIOLATED")).toBe(1);
+    expect(count("PACKAGING_ALERT_RAISED")).toBe(1);
+    // 二次编排仍不合规 → 不再发预警，也不放行下游：停下来比带着超限的包往下走好。
+    expect(count("PACKAGING_SCHEME_RECOMMENDED")).toBe(0);
+    expect(delivered).not.toContain("PLAN_AND_PACKAGE_CONFIRMED");
+  });
+
   it("stops the gate on a planner rejection: run fails, no ERP write, no downstream event", async () => {
     resetScript();
     formOverrides = {
