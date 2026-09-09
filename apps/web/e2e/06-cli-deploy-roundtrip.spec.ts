@@ -228,6 +228,34 @@ test.describe("P4-TEST-06: CLI init + deploy round-trip E2E", () => {
     );
     expect(run.agentName).toBe("intakeEvent");
     expect(run.status).toBe("ok");
+
+    // …and the SECOND scaffolded agent, which `intakeEvent` triggers via
+    // INTAKE_DONE. Polling only the first one is how the starter template
+    // shipped a prompt that crashed every freshly initialised tenant
+    // (`examplePrompt: prompt.template is not a function`) without CI noticing.
+    // This is the agent that exercises the scaffolded PROMPT — the tool ran above.
+    const summarizeRun = await waitFor(
+      async () => {
+        const runs = await apiFetch<Array<{
+          id: string;
+          agentName: string;
+          subject: string | null;
+          status: string;
+        }>>("/v1/runs?agent=summarize&limit=20", { tenantSlug: slug });
+        if (!runs.body.ok) return null;
+        return (
+          runs.body.data.find(
+            (candidate) =>
+              candidate.subject === subject &&
+              (candidate.status === "ok" || candidate.status === "failed"),
+          ) ?? null
+        );
+      },
+      // A failing logic step burns the agent's Inngest retry ladder before the
+      // run turns terminal, so allow more room here than for the tool agent.
+      { timeoutMs: 90_000, intervalMs: 500, label: "scaffolded summarize run" },
+    );
+    expect(summarizeRun.status, "the scaffolded prompt must survive a real LLM step").toBe("ok");
   });
 
   test("agentic --version reports a semver string", async () => {

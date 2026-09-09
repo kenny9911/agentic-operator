@@ -281,17 +281,31 @@ function tenantExamplePrompt(): string {
  *
  * A manifest action with \`{ "type": "logic", "name": "examplePrompt" }\`
  * resolves here first, falling back to the auto-built system+user prompt.
+ *
+ * \`template\` renders THIS step's user turn and must RETURN A STRING; the
+ * runtime calls it with the live context and sends it to the model alongside
+ * \`system\`. Add \`output: z.object({ ... })\` to make the runtime ask for JSON
+ * and validate the reply against your schema instead of returning raw text.
  */
 export const examplePrompt = definePrompt({
   name: "examplePrompt",
   description: "Pass-through prompt created by 'agentic init'.",
-  async build() {
-    return {
-      system:
-        "You are a helpful assistant. Echo the user's input as JSON of shape { echoed: string }.",
-      user: "Hello from the example prompt.",
-    };
-  },
+  system:
+    "You are a helpful assistant. Summarise the payload you are given in one short sentence.",
+  template: (ctx) =>
+    [
+      // \`ctx.lastResult\` carries the previous step's output WITHIN one agent
+      // run. This agent's first step has no predecessor, so across the
+      // intakeEvent -> INTAKE_DONE hop the upstream payload arrives in
+      // \`ctx.event.data\` instead (look for \`last_result\` there).
+      "Previous step result:",
+      JSON.stringify(ctx.lastResult ?? null, null, 2),
+      "",
+      "Triggering event data:",
+      JSON.stringify(ctx.event?.data ?? {}, null, 2),
+      "",
+      "Reply with one short sentence describing what happened.",
+    ].join("\\n"),
 });
 `;
 }

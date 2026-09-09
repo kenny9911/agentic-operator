@@ -1,4 +1,10 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vitest/config";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const sdkRoot = path.resolve(here, "..", "..", "packages", "agent-sdk");
 
 /**
  * Vitest config for the CLI workspace.
@@ -9,6 +15,17 @@ import { defineConfig } from "vitest/config";
  * without spawning a subprocess.
  */
 export default defineConfig({
+  // `agentic init` scaffolds a tenant package OUTSIDE this workspace, whose
+  // files import "@agentic/agent-sdk" and "zod". scaffold-runtime-contract
+  // imports those generated files to check them against the REAL SDK — from a
+  // tmp dir, where neither specifier resolves. Point both at the workspace
+  // copies so the test executes the scaffold instead of asserting on its text.
+  resolve: {
+    alias: {
+      "@agentic/agent-sdk": path.join(sdkRoot, "src", "index.ts"),
+      zod: path.join(sdkRoot, "node_modules", "zod"),
+    },
+  },
   test: {
     include: ["test/**/*.test.ts"],
     globals: true,
