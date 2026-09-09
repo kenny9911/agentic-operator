@@ -43,6 +43,7 @@ import { Badge, Empty } from "@/app/portal/components";
 import { fmtAgo } from "@/app/portal/lib/format";
 import type { Language } from "@/lib/i18n/types";
 import { Icon } from "@/app/portal/components/Icon";
+import { agentNodeTooltip } from "@/lib/agent-title";
 import {
   agentSubtitle,
   appendFeed,
@@ -802,11 +803,15 @@ export function LiveNode({
     <button
       type="button"
       onClick={onSelect}
-      title={
-        visual.actionable
+      // The card clips both the name and the gloss to one line each; the
+      // tooltip is where the full text lives.
+      title={agentNodeTooltip({
+        identity: [agent.title, agent.name],
+        description: agent.definition?.description,
+        hint: visual.actionable
           ? copy("点开处理人工任务", "Open the human task")
-          : copy("只看这个智能体的动作", "Show only this agent's activity")
-      }
+          : copy("只看这个智能体的动作", "Show only this agent's activity"),
+      })}
       style={{
         position: "absolute",
         left: position.x,
