@@ -12,7 +12,7 @@
 # there is exactly one implementation of "how the stack starts".
 #
 # Why --check exists: the stack has two independent port contracts — the one
-# hard-coded in scripts/stop-dev.sh + package.json's `dev`, and the one your
+# hard-coded in scripts/stop-dev.sh + scripts/dev-stack.mjs, and the one your
 # local .env files actually configure. When they disagree, `stop` silently fails
 # to free the api's real port and the api talks to an Inngest that isn't there.
 # --check surfaces that before you spend an afternoon on it.
@@ -102,14 +102,16 @@ do_check() {
 
   # Port contract: what the scripts free vs what your env actually configures.
   printf '\n%s-- port contract --%s\n' "$BOLD" "$RESET"
-  local declared api_port web_port inngest_port api_url inngest_base
+  local declared api_port inngest_port api_url inngest_base
   declared="$(sed -n 's/^PORTS="\([^"]*\)".*/\1/p' scripts/stop-dev.sh 2>/dev/null | head -1)"
   api_port="$(env_value apps/api/.env.local PORT)"
   inngest_base="$(env_value apps/api/.env.local INNGEST_BASE_URL)"
   [ -n "$inngest_base" ] || inngest_base="$(env_value .env INNGEST_BASE_URL)"
   api_url="$(env_value apps/web/.env.local AGENTIC_API_URL)"
-  web_port="$(node -p "((require('./package.json').scripts.dev||'').match(/--port (\d+)/)||[])[1]||''" 2>/dev/null || true)"
-  inngest_port="$(node -p "((require('./package.json').scripts.dev||'').match(/-p (\d+)/)||[])[1]||''" 2>/dev/null || true)"
+  inngest_port="$(node --input-type=module -e 'import { DEV_STACK_CONFIG } from "./scripts/dev-stack.mjs"; console.log(DEV_STACK_CONFIG.inngestPort)' 2>/dev/null || true)"
+  if [ -z "$inngest_port" ]; then
+    fail "could not read the Inngest port from scripts/dev-stack.mjs"
+  fi
 
   note "stop-dev.sh frees: ${declared:-<unknown>}"
   note "api PORT (apps/api/.env.local): ${api_port:-<unset>}"

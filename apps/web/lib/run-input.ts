@@ -71,7 +71,7 @@ export async function parseRunInputFile(
   options: RunInputParseOptions = {},
 ): Promise<RunInputAttachment> {
   if (file.size === 0 || file.size > RUN_INPUT_MAX_FILE_BYTES) {
-    throw new Error("File must contain between 1 byte and 8 MiB.");
+    throw new Error(`File must contain between 1 byte and ${RUN_INPUT_MAX_FILE_BYTES / (1024 * 1024)} MiB.`);
   }
   const mimeType = runInputFileType(file);
   if (!mimeType) throw new Error("This file type is not supported.");

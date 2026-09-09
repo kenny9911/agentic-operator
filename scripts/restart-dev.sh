@@ -9,7 +9,7 @@
 # the current tree. Also selects the exact Node pin in .nvmrc and re-runs the
 # native-module guard via `pnpm dev`'s predev hook.
 #
-# Standard ports (must match package.json predev + next.config.mjs):
+# Standard ports (must match scripts/dev-stack.mjs + next.config.mjs):
 #   web :3599 · api :3540 · inngest :8488  (+ 8489 / 50152 / 50153 helpers)
 #
 # Usage:  pnpm restart            # or: pnpm dev:restart · ./scripts/restart-dev.sh
@@ -20,7 +20,7 @@ ROOT="$(pwd -P)"
 
 WEB_PORT=3599
 API_PORT=3540
-# inngest dev + its connect helpers — MUST match package.json's `dev` (-p 8488
+# inngest dev + its connect helpers — MUST match scripts/dev-stack.mjs (-p 8488
 # --connect-gateway-port 8489 --connect-gateway-grpc-port 50152 --connect-executor-grpc-port 50153).
 PORTS="${WEB_PORT},${API_PORT},8488,8489,50152,50153"
 

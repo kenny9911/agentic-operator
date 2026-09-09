@@ -1,9 +1,11 @@
 import { z } from "zod";
 
-export const RUN_INPUT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+export const RUN_INPUT_MAX_FILE_BYTES = 32 * 1024 * 1024;
 export const RUN_INPUT_MAX_ATTACHMENTS = 5;
 export const RUN_INPUT_MAX_TEXT_CHARS = 32_000;
-export const RUN_INPUT_MAX_TOTAL_CHARS = 100_000;
+// Files need a larger budget than the short prompt and context fields.
+export const RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS = 256_000;
+export const RUN_INPUT_MAX_TOTAL_CHARS = 1_000_000;
 
 /** Parsed text is editable user input. It never grants access to stored files. */
 export const RunInputAttachmentSchema = z.object({
@@ -11,7 +13,7 @@ export const RunInputAttachmentSchema = z.object({
   name: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(120),
   size: z.number().int().min(0).max(RUN_INPUT_MAX_FILE_BYTES),
-  text: z.string().max(RUN_INPUT_MAX_TEXT_CHARS),
+  text: z.string().max(RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS),
 });
 export type RunInputAttachment = z.infer<typeof RunInputAttachmentSchema>;
 

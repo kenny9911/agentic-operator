@@ -38,7 +38,7 @@ collect_matching_pids() {
 
   # The downloaded Inngest executable has no workspace path in argv. Scope it
   # by cwd so other projects using the same conventional callback URL survive.
-  for pid in $(pgrep -f "inngest-cli.*dev -u http://localhost:3540/inngest" 2>/dev/null || true); do
+  for pid in $(pgrep -f "inngest-cli.*dev -u http://(localhost|127\\.0\\.0\\.1):3540/inngest" 2>/dev/null || true); do
     if [ "$pid" != "$$" ] && project_cwd "$pid"; then
       echo "$pid"
     fi
@@ -50,6 +50,7 @@ collect_matching_pids() {
   # failed/restarted stack cannot leave detached watchers behind.
   for pattern in \
     "pnpm.*(--filter .* )?(run )?dev" \
+    "node.*scripts/dev-stack\.mjs" \
     "tsx.*src/server\.ts" \
     "next.*(bin/next|next) dev" \
     "concurrently.*pnpm.*dev"

@@ -7,12 +7,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { monitorHttp, waitForHttp } from "./wait-for-http.mjs";
 
 const ROOT_DIR = fileURLToPath(new URL("../", import.meta.url));
-const API_HEALTH_URL = "http://127.0.0.1:3501/health";
+export const DEV_STACK_CONFIG = Object.freeze({
+  apiOrigin: "http://127.0.0.1:3540",
+  webPort: 3599,
+  inngestPort: 8488,
+  inngestGatewayPort: 8489,
+  inngestGatewayGrpcPort: 50152,
+  inngestExecutorGrpcPort: 50153,
+});
 const DEFAULT_READY_TIMEOUT_MS = 90_000;
 const DEFAULT_READY_INTERVAL_MS = 200;
 const DEFAULT_OUTAGE_TIMEOUT_MS = 15_000;
 const DEFAULT_WATCH_INTERVAL_MS = 2_000;
 const DEFAULT_API_SHUTDOWN_TIMEOUT_MS = 10_000;
+const DEFAULT_WRITER_CHILD_TERMINATION_MS = 15_000;
 const SHUTDOWN_BUFFER_MS = 2_000;
 const FORCE_SIGNAL_DELAY_MS = 500;
 const FORCE_WAIT_MS = 1_000;
@@ -32,6 +40,26 @@ function positiveInteger(value, fallback, name) {
     throw new Error(`${name} must be a positive integer`);
   }
   return parsed;
+}
+
+export function shutdownGraceMs(env = process.env) {
+  const apiTimeoutMs = positiveInteger(
+    env.AGENTIC_SHUTDOWN_TIMEOUT_MS,
+    DEFAULT_API_SHUTDOWN_TIMEOUT_MS,
+    "AGENTIC_SHUTDOWN_TIMEOUT_MS",
+  );
+  const writerTimeoutMs = positiveInteger(
+    env.AGENTIC_SQLITE_WRITER_CHILD_TERMINATION_MS,
+    DEFAULT_WRITER_CHILD_TERMINATION_MS,
+    "AGENTIC_SQLITE_WRITER_CHILD_TERMINATION_MS",
+  );
+  // Let the SQLite writer supervisor terminate its child and release the
+  // database lease before forcing the entire API process group to stop.
+  return positiveInteger(
+    env.AGENTIC_DEV_SHUTDOWN_TIMEOUT_MS,
+    Math.max(apiTimeoutMs, writerTimeoutMs) + SHUTDOWN_BUFFER_MS,
+    "AGENTIC_DEV_SHUTDOWN_TIMEOUT_MS",
+  );
 }
 
 function errorMessage(error) {
@@ -166,8 +194,8 @@ export function installSupervisorSignalHandlers({
   };
 }
 
-function startManagedProcess(name, args, onUnexpectedExit) {
-  const child = spawn(PNPM, args, {
+function startManagedProcess(name, args, onUnexpectedExit, pnpm) {
+  const child = spawn(pnpm, args, {
     cwd: ROOT_DIR,
     detached: process.platform !== "win32",
     env: process.env,
@@ -190,7 +218,12 @@ function startManagedProcess(name, args, onUnexpectedExit) {
   return record;
 }
 
-export async function main() {
+export async function main({
+  apiScript = "dev",
+  config = DEV_STACK_CONFIG,
+  pnpm = PNPM,
+} = {}) {
+  const apiHealthUrl = `${config.apiOrigin}/health`;
   const readyTimeoutMs = positiveInteger(
     process.env.AGENTIC_DEV_READY_TIMEOUT_MS,
     DEFAULT_READY_TIMEOUT_MS,
@@ -211,16 +244,7 @@ export async function main() {
     DEFAULT_WATCH_INTERVAL_MS,
     "AGENTIC_DEV_WATCH_INTERVAL_MS",
   );
-  const apiShutdownTimeoutMs = positiveInteger(
-    process.env.AGENTIC_SHUTDOWN_TIMEOUT_MS,
-    DEFAULT_API_SHUTDOWN_TIMEOUT_MS,
-    "AGENTIC_SHUTDOWN_TIMEOUT_MS",
-  );
-  const shutdownGraceMs = positiveInteger(
-    process.env.AGENTIC_DEV_SHUTDOWN_TIMEOUT_MS,
-    apiShutdownTimeoutMs + SHUTDOWN_BUFFER_MS,
-    "AGENTIC_DEV_SHUTDOWN_TIMEOUT_MS",
-  );
+  const graceMs = shutdownGraceMs();
 
   const processes = [];
   let shuttingDown = false;
@@ -235,7 +259,7 @@ export async function main() {
     }
     shutdownPromise = (async () => {
       const lingering = await terminateProcessGroups(processes, {
-        graceMs: shutdownGraceMs,
+        graceMs,
       });
       if (lingering.length > 0) {
         process.stderr.write(
@@ -273,14 +297,15 @@ export async function main() {
   processes.push(
     startManagedProcess(
       "api",
-      ["--filter", "@agentic/api", "run", "dev"],
+      ["--filter", "@agentic/api", "run", apiScript],
       onUnexpectedExit,
+      pnpm,
     ),
   );
 
-  process.stdout.write(`[startup] waiting for API at ${API_HEALTH_URL}\n`);
+  process.stdout.write(`[startup] waiting for API at ${apiHealthUrl}\n`);
   try {
-    const ready = await waitForHttp(API_HEALTH_URL, {
+    const ready = await waitForHttp(apiHealthUrl, {
       timeoutMs: readyTimeoutMs,
       intervalMs: readyIntervalMs,
     });
@@ -298,13 +323,29 @@ export async function main() {
       "web",
       ["--filter", "@agentic/web", "run", "dev"],
       onUnexpectedExit,
+      pnpm,
     ),
   );
   processes.push(
     startManagedProcess(
       "inngest",
-      ["exec", "inngest", "dev", "-u", "http://127.0.0.1:3501/inngest"],
+      [
+        "exec",
+        "inngest-cli",
+        "dev",
+        "-u",
+        `${config.apiOrigin}/inngest`,
+        "-p",
+        String(config.inngestPort),
+        "--connect-gateway-port",
+        String(config.inngestGatewayPort),
+        "--connect-gateway-grpc-port",
+        String(config.inngestGatewayGrpcPort),
+        "--connect-executor-grpc-port",
+        String(config.inngestExecutorGrpcPort),
+      ],
       onUnexpectedExit,
+      pnpm,
     ),
   );
 
@@ -312,7 +353,7 @@ export async function main() {
     `[startup] monitoring API; allowing outages up to ${outageTimeoutMs} ms\n`,
   );
   try {
-    await monitorHttp(API_HEALTH_URL, {
+    await monitorHttp(apiHealthUrl, {
       outageTimeoutMs,
       intervalMs: watchIntervalMs,
       onStateChange(state) {
@@ -338,5 +379,13 @@ const entrypoint = process.argv[1]
   ? pathToFileURL(process.argv[1]).href
   : undefined;
 if (entrypoint === import.meta.url) {
-  await main();
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== "--no-watch")) {
+    process.stderr.write("Usage: node scripts/dev-stack.mjs [--no-watch]\n");
+    process.exitCode = 2;
+  } else {
+    await main({
+      apiScript: args[0] === "--no-watch" ? "dev:no-watch" : "dev",
+    });
+  }
 }

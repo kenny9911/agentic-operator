@@ -25,7 +25,8 @@ describe("RunInputPanel", () => {
     expect(html).toContain('type="file"');
     expect(html).toContain("multiple");
     expect(html).toContain('accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.md,.csv,.tsv,.json,.xml,.html,.htm,.log"');
-    expect(html).toContain("AI reads each file");
+    expect(html).toContain("Text files are read directly");
+    expect(html).toContain("AI extracts text from PDFs and images");
     expect(html).toContain("Memory session name");
     expect(html).toContain("Draft and live memory are separate");
     expect(html).toContain("Review the contract");

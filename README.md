@@ -66,7 +66,10 @@ pnpm dev
 ```
 
 `pnpm dev` starts one supervised stack and terminates stale processes from this
-workspace before binding ports:
+workspace before binding ports. The API must accept HTTP before the web and
+Inngest processes start, so portal session checks cannot race API startup. The
+supervisor tolerates brief API reloads and stops the stack after a sustained
+outage. `pnpm dev:e2e` uses the same ordering with API watching disabled:
 
 - portal: <http://localhost:3599>
 - API/health: <http://localhost:3540/health>
