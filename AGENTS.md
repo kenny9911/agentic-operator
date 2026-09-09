@@ -13,7 +13,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Common commands
 
 ```bash
-pnpm dev                  # api :3501 first; web :3599 + pinned inngest :8288 follow; watchdog tears down the stack after a sustained api outage
+pnpm dev                  # api :3540 first; web :3599 + pinned inngest :8488 follow; watchdog tears down the stack after a sustained api outage
 ./scripts/restart.sh      # gracefully stop the current local stack, then run pnpm dev under the pinned Node version
 ./scripts/restart.sh --check # validate the restart harness without changing running processes
 pnpm build                # turbo run build across all workspaces
@@ -39,7 +39,7 @@ A single workspace's dev server: `pnpm --filter @agentic/api run dev` (or `@agen
 
 ## Architecture
 
-**Two-process split with a shared Zod contract package.** `apps/web` (Next.js 16, React 19) is UI-only — it has zero database access. Every read goes through `/v1/*` to `apps/api` (Fastify 5). `next.config.mjs` rewrites `/v1/*` and `/health` to `http://localhost:3501`. `@agentic/contracts` Zod schemas are the single source of truth: api validates requests with them; web parses responses with them via `apps/web/lib/api-client.ts`.
+**Two-process split with a shared Zod contract package.** `apps/web` (Next.js 16, React 19) is UI-only — it has zero database access. Every read goes through `/v1/*` to `apps/api` (Fastify 5). `next.config.mjs` rewrites `/v1/*` and `/health` to `http://localhost:3540`. `@agentic/contracts` Zod schemas are the single source of truth: api validates requests with them; web parses responses with them via `apps/web/lib/api-client.ts`.
 
 **Two parallel agent execution paths share the same `runs`/`steps` schema and SSE log tail.**
 
@@ -106,7 +106,7 @@ Routing:
 - `/` → App Router redirect (`apps/web/app/page.tsx`) → `/portal`.
 - `/portal` → `apps/web/app/portal/page.tsx` redirects to `/portal/<tenant>/dashboard`.
 - `/portal/<tenant>/*` → real production UI.
-- `/v1/*`, `/health` → proxied to apps/api on :3501.
+- `/v1/*`, `/health` → proxied to apps/api on :3540.
 
 **CSS tokens.** `apps/web` uses inline CSS-in-JS with CSS custom properties from `apps/web/styles/tokens.css` (+ `apps/web/app/global.css` for pseudo-selectors / media queries / `@keyframes`). The real token names are `--bg`, `--panel`, `--panel-2`, `--panel-3`, `--border`, `--border-2`, `--text`, `--text-2`, `--text-3`, `--signal`, `--red`, etc. There is **no** `--surface-1`/`--border-1`/`--text-1`/`--danger` — referencing an undefined `var()` makes the browser fall back to `transparent`/inherited, which surfaces as a "see-through modal" bug. Match an existing component's tokens when styling new UI.
 
