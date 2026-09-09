@@ -612,10 +612,11 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
     expect((await journalOps()).map((e) => e.op)).toContain("createTransactionOrder");
   });
 
-  it("intercepts once, then stops — the audit/rectification loop cannot spin", async () => {
-    // 实测退回整改与审核来回跑了六轮：退回事件把拦截时的原始载荷原样送回，审核对着
-    // 逐字节相同的输入得出逐字节相同的结论。拦截的发射条件现在要求「入参里还没有
-    // 这批 finding」——只在第一次拦截。
+  it("proceeds after the planner confirmed the rectification, however the re-audit votes", async () => {
+    // 实测：审核与退回整改来回跑了六轮。退回事件把拦截时的原始载荷原样送回，ERP 数据
+    // 没变，复审必然得出一样的结论；加了「只在第一次拦截」的护栏后它不再空转，但链路
+    // 停在了复审——模型把 AF-20270105-01 改名成 AF-20270105-01-NEW 又提了一遍。
+    // 人工闸口是「这批已整改」的权威判据，所以复审无条件放行。
     resetScript();
     auditPasses = [false, false, false, false];
 
@@ -626,11 +627,12 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
     });
     const count = (name: string) => delivered.filter((entry) => entry === name).length;
 
+    // 拦截与退回各一次，不再来回。
     expect(count("PLAN_AUDIT_INTERCEPTED")).toBe(1);
     expect(count("PLAN_RECTIFICATION_SUBMITTED")).toBe(1);
-    // 复审仍不通过 → 两条分支都不发，链路停在审核，而不是再退回一次。
-    expect(count("ANNUAL_PLAN_AUDITED")).toBe(0);
-    expect(delivered).not.toContain("PACKAGING_SCHEME_RECOMMENDED");
+    // 复审仍投 false，但计划员已经确认整改，链路继续往下走。
+    expect(count("ANNUAL_PLAN_AUDITED")).toBe(1);
+    expect(delivered).toContain("PACKAGING_SCHEME_RECOMMENDED");
   });
 
   it("alerts once, then stops — the packaging loop cannot spin", async () => {
