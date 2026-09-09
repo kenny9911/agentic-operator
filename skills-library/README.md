@@ -1,8 +1,11 @@
 # Agentic Operator Skill Collection
 
-Official upstream Skill bundles retained locally for the platform's agents and
-workflows. Start with [the inventory](catalog.json), [reviewed sources](sources.json),
-and [the source research](../docs/research/2026-09-09-official-skills-library.md).
+This collection contains 17 skills for business work, business artifacts and
+agentic execution or skill authoring. Start with [the inventory](catalog.json),
+[the retained/removed decisions](curation.json), and [reviewed sources](sources.json).
+The 36 former development, GitHub, deployment, DevOps, framework and unrelated
+design bundles have been removed from the catalog and downloaded trees. Their
+source identities and reasons remain in the curation manifest and Git history.
 
 This folder is the platform collection. The repository's `.agents/skills/` folder
 continues to serve development assistants working on this repository.
@@ -22,17 +25,17 @@ skill in the same owner directory. Runtime copies remain outside Git.
 | --- | --- |
 | `upstream/anthropic/` | Unmodified, licensed bundles from `anthropics/skills`. |
 | `upstream/openai/` | Unmodified, licensed bundles from the deprecated `openai/skills` catalog. |
-| `upstream/openai-plugins/` | Selected current examples from `openai/plugins`. |
-| `adapted/` | Explicit compatibility adaptations, with original instructions retained. |
+| `adapted/` | Reserved for explicitly reviewed compatibility adaptations. Currently empty. |
 | `local/skill-creator/` | Snapshot of the platform's maintained creator policy, available as a shared Skill. |
 | `sources.json` | Reviewed GitHub repositories, exact commit pins, selected paths, license hashes, and exclusions. |
+| `curation.json` | Explicit retained and removed IDs, names, source identities and scope rationales. |
 | `sources.lock.json` | File hashes and catalog integrity record. |
 | `catalog.json` | Import coordinates and stable names; source folders stay unchanged. |
 
 Only Skills whose copying terms were verified as Apache-2.0 or MIT are fetched by
 the upstream downloader. Individual license files and repository notices travel
-with their sources. OpenAI's older catalog remains useful as a pinned archive;
-new research should start with its current successor, `openai/plugins`.
+with retained sources. New research can inspect OpenAI's successor repository,
+`openai/plugins`, but a discovery result cannot add a skill to this collection.
 
 Anthropic's `docx`, `pdf`, `pptx`, and `xlsx` bundles have restrictive terms and
 are recorded as exclusions. `doc-coauthoring` and the template have no explicit
@@ -49,6 +52,7 @@ uses the running API, preserving its database writer lease and normal RBAC.
 pnpm skills:check             # Verify local files and catalog without network access
 pnpm skills:discover          # Read current source inventories; changes no files or pins
 pnpm skills:sync              # Fetch exactly the reviewed pins; run no downloaded scripts
+pnpm skills:sync --offline    # Reuse verified unchanged pins for a reviewed scope change
 pnpm skills:import            # Preview shared imports; no database changes
 pnpm skills:import --apply    # Import and publish compatible bundles
 pnpm skills:reconcile         # Rebuild shared/tenant directories from the running API
@@ -61,18 +65,33 @@ must be a platform superadmin to publish shared Skills. Local development uses
 the configured development identity.
 
 The importer adds vendor namespaces, preserving original names in metadata:
-`anthropic-mcp-builder`, `openai-pdf`, and `openai-build-chatgpt-app`. Upstream
+`anthropic-internal-comms`, `openai-pdf`, and `openai-transcribe`. Upstream
 instructions, reference files, scripts, and binary assets remain together.
 Import provenance records the source URL, commit, original name, license, and
 bundle digest. Repeating an identical import creates no new publication. Updates
 retain immutable old versions and stop on edited drafts, archived entries, or
 unrelated records with conflicting names. A blocked entry is reported explicitly.
 
-The Claude API bundle has an explicitly reviewed description override because
-its upstream discovery description exceeds the portable 1,024-character limit.
-The complete original `SKILL.md` remains available in the adapted bundle and in
-the untouched upstream snapshot. Cloudflare's full 312-file bundle is retained;
-the platform admits at most 512 files while retaining its existing byte limits.
+The retained collection covers internal communication, work and knowledge
+management, meeting preparation, PDFs, browser/desktop capture, speech,
+transcription, image generation, goals and reusable skill authoring. The
+Playwright CLI remains a browser automation tool; interactive UI debugging,
+MCP/API implementation, framework guidance, GitHub workflows, deployment,
+DevOps and repository security-development skills are excluded. Existing authored
+business and ontology skills outside these managed downloaded trees are preserved.
+
+Sync requires source selections and catalog identities to match `curation.json`,
+and locks that manifest's hash. A removed skill cannot return through an old
+selection or normal refresh. Offline sync refuses new revisions or sources and
+uses only previously verified file bytes. Both paths verify the old managed tree
+before replacing it and refuse to erase local modifications or unknown files.
+
+Removing a downloaded source does not itself remove existing database records.
+Use the curation manifest to reconcile only previously managed imports by their
+`agentic-catalog-id` and source provenance; preserve authored or modified records
+for explicit reconciliation. Archive eligible managed records through the normal
+API lifecycle and refresh their projected directories. Historical immutable
+versions and captured runs remain intact. See [the curation design](../docs/design/skill-library-curation.md).
 
 ## Use in agents and workflows
 
@@ -114,7 +133,8 @@ See [the creator/runtime guide](../docs/user-guides/skills.md).
 2. Read the complete bundle, its per-skill and inherited license files, and any
    notices. Record capabilities, runtime assumptions, and likely usage examples
    in a cited note under `docs/research/`.
-3. Add only reviewed repository/path pairs to `sources.json`, with a full commit
+3. Record the scope decision in `curation.json`, then add only retained reviewed
+   repository/path pairs to `sources.json`, with a full commit
    revision and SHA-256 of the reviewed license. Preserve third-party authorship
    even when the skill is hosted in an official vendor's repository.
 4. Sync, inspect the source diff, run `skills:check`, preview imports, then publish.
@@ -123,4 +143,6 @@ See [the creator/runtime guide](../docs/user-guides/skills.md).
    cases. Record observed evidence separately from proposed tests.
 
 Discovery is manual and read-only. It neither automatically trusts new sources
-nor silently publishes changed upstream instructions.
+nor silently publishes changed upstream instructions. Excluded source paths are
+reported separately from new unselected candidates. Source/license review and
+business/runtime scope review are both required before extending the allow-list.

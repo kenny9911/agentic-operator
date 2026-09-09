@@ -1,11 +1,22 @@
 import { afterEach, expect, it, vi } from "vitest";
 const route = vi.hoisted(() => ({ pathname: "/portal/alpha/skills" }));
+const mutationState = vi.hoisted(() => ({ cache: undefined as unknown }));
 vi.mock("next/navigation", () => ({ usePathname: () => route.pathname }));
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: unknown) => options,
   useInfiniteQuery: (options: unknown) => options,
+  useMutation: (options: unknown) => options,
+  useQueryClient: () => mutationState.cache,
 }));
-import { useSkill, useSkills, useSkillVersion, skillApi } from "./useSkills";
+import {
+  useSkill,
+  useSkills,
+  useSkillVersion,
+  useSetSkillEnabled,
+  skillApi,
+  skillKeys,
+} from "./useSkills";
+import type { ManagedSkillSummary, SkillDetail } from "@agentic/contracts";
 
 type Options = {
   queryKey: unknown[];
@@ -164,13 +175,11 @@ it("fetches the exact older pin in the binding tenant and keeps version cache ke
       files: [{ path: "SKILL.md", content: "instructions", encoding: "utf8" }],
     },
   };
-  const fetch = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, data: version }), {
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ ok: true, data: version }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
   vi.stubGlobal("fetch", fetch);
   const signal = new AbortController().signal;
   expect(await query.queryFn({ signal })).toEqual(version);
@@ -213,4 +222,86 @@ it("keeps generation, revision, and import preview request attribution explicit"
       signal,
       headers: { "x-agentic-tenant": "alpha" },
     });
+});
+
+it("updates availability with tenant-bound CAS and refreshes shared caches without leaking edit rights", async () => {
+  const { QueryClient } = await vi.importActual<
+    typeof import("@tanstack/react-query")
+  >("@tanstack/react-query");
+  const cache = new QueryClient();
+  mutationState.cache = cache;
+  const skill: ManagedSkillSummary = {
+    id: "shared-skill",
+    tenantId: "system",
+    name: "shared-check",
+    description: "Check",
+    visibility: "shared",
+    enabled: true,
+    latestVersionId: "version-2",
+    latestVersionNo: 2,
+    draftRevision: 3,
+    canEdit: true,
+    archivedAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const updated: SkillDetail = {
+    skill: { ...skill, enabled: false, updatedAt: 2 },
+    draft: null,
+    latestVersion: null,
+    versions: [],
+  };
+  const page = (summary: ManagedSkillSummary) => ({
+    pages: [{ skills: [summary], nextOffset: null }],
+    pageParams: [0],
+  });
+  const alphaList = skillKeys.list("alpha", "available", false);
+  const betaList = skillKeys.list("beta", "available", false);
+  cache.setQueryData(alphaList, page(skill));
+  cache.setQueryData(
+    betaList,
+    page({ ...skill, canEdit: false, draftRevision: null }),
+  );
+  const mutation = useSetSkillEnabled("alpha") as unknown as {
+    mutationFn: (input: {
+      skill: ManagedSkillSummary;
+      enabled: boolean;
+    }) => Promise<SkillDetail>;
+    onSuccess: (
+      detail: SkillDetail,
+      input: { skill: ManagedSkillSummary; enabled: boolean },
+    ) => Promise<void>;
+  };
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ ok: true, data: updated }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("window", { location: { pathname: "/portal/beta/skills" } });
+  const variables = { skill, enabled: false };
+  const result = await mutation.mutationFn(variables);
+  await mutation.onSuccess(result, variables);
+  expect(fetch.mock.calls[0]![0]).toBe("/v1/skills/shared-skill/enabled");
+  expect(fetch.mock.calls[0]![1]).toMatchObject({
+    method: "PATCH",
+    headers: { "x-agentic-tenant": "alpha" },
+  });
+  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({
+    enabled: false,
+    expectedEnabled: true,
+    expectedRevision: 3,
+    expectedLatestVersionId: "version-2",
+  });
+  expect(cache.getQueryData(alphaList)).toMatchObject({
+    pages: [{ skills: [{ enabled: false }] }],
+  });
+  expect(cache.getQueryData(skillKeys.detail("alpha", skill.id))).toEqual(
+    updated,
+  );
+  expect(cache.getQueryData(betaList)).toMatchObject({
+    pages: [{ skills: [{ canEdit: false, draftRevision: null }] }],
+  });
+  expect(cache.getQueryState(betaList)?.isInvalidated).toBe(true);
+  cache.clear();
 });

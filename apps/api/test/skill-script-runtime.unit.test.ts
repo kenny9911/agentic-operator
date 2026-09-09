@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { closeDb, getDb, getRawSqlite, artifacts, skillScriptReservations } from "@agentic/db";
+import { closeDb, getDb, getRawSqlite, artifacts, managedSkills, skillVersions, skillScriptReservations } from "@agentic/db";
+import { eq } from "drizzle-orm";
 import { SkillSession, skillBundleDigest } from "@agentic/skills";
 import type { SkillBundle, SkillScriptInput } from "@agentic/contracts";
 import type { SkillScriptDockerTransport } from "@agentic/skill-runner";
@@ -34,7 +35,7 @@ beforeEach(() => {
   for (const key of ["AGENTIC_SQLITE_WRITER_LEASE_TOKEN", "AGENTIC_SQLITE_WRITER_LEASE_PATH", "AGENTIC_SQLITE_WRITER_SUPERVISOR_PID"]) vi.stubEnv(key, "");
   getDb();
   getRawSqlite().exec("CREATE TABLE tenants(id TEXT PRIMARY KEY,slug TEXT); INSERT INTO tenants VALUES('a','alpha'),('b','beta'),('sys','__system'); CREATE TABLE runs(id TEXT PRIMARY KEY,tenant_id TEXT,agent_id TEXT,parent_run_id TEXT,status TEXT); CREATE TABLE steps(id TEXT PRIMARY KEY,run_id TEXT); CREATE TABLE event_store(id TEXT PRIMARY KEY,tenant_id TEXT,name TEXT,source_run_id TEXT); CREATE TABLE artifacts(id TEXT PRIMARY KEY,tenant_id TEXT,run_id TEXT,step_id TEXT,kind TEXT,role TEXT,logical_name TEXT,content_type TEXT,path TEXT,size INTEGER,sha256 TEXT,metadata_json TEXT,schema_id TEXT,redacted INTEGER DEFAULT 0,retention_until INTEGER,created_at INTEGER DEFAULT 0);");
-  for (const name of ["0080_managed_skills", "0081_run_skill_snapshots", "0082_skill_script_reservations"]) getRawSqlite().exec(readFileSync(new URL(`../../../packages/db/drizzle/${name}.sql`, import.meta.url), "utf8"));
+  for (const name of ["0080_managed_skills", "0081_run_skill_snapshots", "0082_skill_script_reservations", "0083_managed_skill_enabled"]) getRawSqlite().exec(readFileSync(new URL(`../../../packages/db/drizzle/${name}.sql`, import.meta.url), "utf8"));
   runtime = new ManagedSkillRuntime({ db: getDb() });
   temp = mkdtempSync(join(tmpdir(), "skill-script-host-")); vi.stubEnv("AGENTIC_ARTIFACTS_DIR", temp);
   run("r1");
@@ -42,6 +43,21 @@ beforeEach(() => {
 afterEach(() => { closeDb(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); });
 
 describe("Skill script production host policy and durable reservations", () => {
+  it("does not execute a previously activated managed skill after it is disabled", async () => {
+    const db = getDb();
+    db.insert(managedSkills).values({ id: entry.id, tenantId: "a", name: entry.name, description: entry.description }).run();
+    db.insert(skillVersions).values({ id: entry.versionId, skillId: entry.id, tenantId: "a", versionNo: 1, draftRevision: 1, name: entry.name, description: entry.description, contentDigest: entry.contentDigest, bundleJson: bundle }).run();
+    db.update(managedSkills).set({ latestVersionId: entry.versionId }).where(eq(managedSkills.id, entry.id)).run();
+    const transport = absentTransport();
+    runtime = new ManagedSkillRuntime({ db, scriptExecution: createSkillScriptExecutionFactory({ db, policy, transport }) });
+    const next = run("with-skill");
+    const session = await runtime.restore(runtime.capture(next), next);
+    await session.activate(entry.name, { origin: "model" });
+    db.update(managedSkills).set({ enabled: false }).where(eq(managedSkills.id, entry.id)).run();
+    await expect(session.runScript(input)).rejects.toThrow(/access|authorized/i);
+    expect(transport.inspectImage).not.toHaveBeenCalled();
+    expect(db.select().from(skillScriptReservations).all()).toEqual([]);
+  });
   it("defaults disabled and admits only configured tenants, images, interpreters, current sources and durable runs", async () => {
     expect(skillScriptPolicyFromEnvironment({})).toBeUndefined();
     expect(createSkillScriptExecutionFactory()(scope, () => true)).toBeUndefined();

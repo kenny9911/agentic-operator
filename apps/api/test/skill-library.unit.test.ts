@@ -151,6 +151,15 @@ beforeEach(async () => {
       "utf8",
     ),
   );
+  getRawSqlite().exec(
+    await readFile(
+      new URL(
+        "../../../packages/db/drizzle/0083_managed_skill_enabled.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   store = new SkillLibraryStore(getDb(), null);
 });
 afterEach(() => {
@@ -159,6 +168,235 @@ afterEach(() => {
 });
 
 describe("managed Skill library storage and API", () => {
+  it("persists enabled state independently of drafts, publications and management visibility", () => {
+    const created = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    expect(created.skill.enabled).toBe(true);
+    const published = store.publish(alice, created.skill.id, 1);
+    const input = {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: 1,
+      expectedLatestVersionId: published.latestVersion!.id,
+    };
+    const disabled = store.setEnabled(alice, created.skill.id, input);
+    expect(disabled.skill).toMatchObject({
+      enabled: false,
+      archivedAt: null,
+      canEdit: true,
+    });
+    expect(disabled.draft).toEqual(published.draft);
+    expect(disabled.latestVersion).toEqual(published.latestVersion);
+    expect(disabled.versions).toEqual(published.versions);
+    expect(store.list(alice, listQuery).skills[0]?.enabled).toBe(false);
+    expect(
+      new SkillLibraryStore(getDb(), null).detail(alice, created.skill.id).skill
+        .enabled,
+    ).toBe(false);
+    const enabled = store.setEnabled(alice, created.skill.id, {
+      ...input,
+      enabled: true,
+      expectedEnabled: false,
+    });
+    expect(enabled.skill.enabled).toBe(true);
+    expect(enabled.latestVersion?.id).toBe(published.latestVersion?.id);
+    const events = getDb()
+      .select()
+      .from(auditLog)
+      .all()
+      .filter((row) => ["skill.enable", "skill.disable"].includes(row.action));
+    expect(events.map((row) => row.action)).toEqual([
+      "skill.disable",
+      "skill.enable",
+    ]);
+    expect(events[0]?.metaJson).toMatchObject({
+      previousEnabled: true,
+      enabled: false,
+      revision: 1,
+      latestVersionId: published.latestVersion!.id,
+    });
+  });
+
+  it("restricts toggles to the owning tenant's editors and shared-library superadmins", () => {
+    const owned = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    const input = {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: 1,
+      expectedLatestVersionId: null,
+    };
+    expect(() => store.setEnabled(bob, owned.skill.id, input)).toThrow(
+      /not found/,
+    );
+    for (const role of ["viewer", "operator"] as const)
+      expect(() =>
+        store.setEnabled({ ...alice, role }, owned.skill.id, input),
+      ).toThrow(/not permitted/);
+    const shared = store.create(superadmin, {
+      bundle: bundle("shared-review"),
+      visibility: "shared",
+    });
+    const publication = store.publish(superadmin, shared.skill.id, 1);
+    const sharedInput = {
+      ...input,
+      expectedLatestVersionId: publication.latestVersion!.id,
+    };
+    expect(() => store.setEnabled(alice, shared.skill.id, sharedInput)).toThrow(
+      /not permitted/,
+    );
+    expect(
+      store.setEnabled(superadmin, shared.skill.id, sharedInput).skill.enabled,
+    ).toBe(false);
+    expect(store.detail(alice, shared.skill.id).skill).toMatchObject({
+      enabled: false,
+      canEdit: false,
+    });
+    expect(
+      getDb()
+        .select()
+        .from(auditLog)
+        .all()
+        .find((row) => row.action === "skill.disable")?.tenantId,
+    ).toBe("tnt-system");
+  });
+
+  it("rejects stale state, draft and publication toggles without duplicate audit events", () => {
+    const created = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    const input = {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: 1,
+      expectedLatestVersionId: null,
+    };
+    store.setEnabled(alice, created.skill.id, input);
+    expect(() => store.setEnabled(alice, created.skill.id, input)).toThrow(
+      /availability or publication changed/,
+    );
+    store.setEnabled(alice, created.skill.id, {
+      ...input,
+      expectedEnabled: false,
+    });
+    expect(
+      getDb()
+        .select()
+        .from(auditLog)
+        .all()
+        .filter((row) => row.action === "skill.disable"),
+    ).toHaveLength(1);
+    store.save(alice, created.skill.id, 1, bundle("revised-review"));
+    expect(() =>
+      store.setEnabled(alice, created.skill.id, {
+        ...input,
+        enabled: true,
+        expectedEnabled: false,
+      }),
+    ).toThrow(/draft changed/);
+    store.publish(alice, created.skill.id, 2);
+    expect(() =>
+      store.setEnabled(alice, created.skill.id, {
+        ...input,
+        enabled: true,
+        expectedEnabled: false,
+        expectedRevision: 2,
+      }),
+    ).toThrow(/publication changed/);
+    expect(store.detail(alice, created.skill.id).skill.enabled).toBe(false);
+  });
+
+  it("rolls back the enabled switch if its audit event cannot be persisted", () => {
+    const created = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    getRawSqlite().exec(
+      "CREATE TRIGGER reject_disable_audit BEFORE INSERT ON audit_log WHEN NEW.action='skill.disable' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END;",
+    );
+    expect(() =>
+      store.setEnabled(alice, created.skill.id, {
+        enabled: false,
+        expectedEnabled: true,
+        expectedRevision: 1,
+        expectedLatestVersionId: null,
+      }),
+    ).toThrow(/audit unavailable/);
+    expect(store.detail(alice, created.skill.id)).toEqual(created);
+  });
+
+  it("serves a strict authenticated toggle contract with state conflict details", async () => {
+    const created = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    const app = Fastify();
+    await registerEnvelope(app);
+    app.addHook("preHandler", async (req) => {
+      req.auth =
+        req.headers["x-fixture-role"] === "viewer"
+          ? { ...alice, role: "viewer" }
+          : req.headers["x-fixture-tenant"] === "beta"
+            ? bob
+            : alice;
+    });
+    await app.register(skillLibraryRoutes, { prefix: "/v1", store });
+    const request = {
+      method: "PATCH" as const,
+      url: `/v1/skills/${created.skill.id}/enabled`,
+      payload: {
+        enabled: false,
+        expectedEnabled: true,
+        expectedRevision: 1,
+        expectedLatestVersionId: null,
+      },
+    };
+    try {
+      expect(
+        (
+          await app.inject({
+            ...request,
+            headers: { "x-fixture-role": "viewer" },
+          })
+        ).statusCode,
+      ).toBe(403);
+      expect(
+        (
+          await app.inject({
+            ...request,
+            headers: { "x-fixture-tenant": "beta" },
+          })
+        ).statusCode,
+      ).toBe(404);
+      expect(
+        (
+          await app.inject({
+            ...request,
+            payload: { ...request.payload, tenantId: "tnt-b" },
+          })
+        ).statusCode,
+      ).toBe(400);
+      const success = await app.inject(request);
+      expect(success.statusCode).toBe(200);
+      expect(SkillDetailSchema.parse(success.json().data).skill.enabled).toBe(
+        false,
+      );
+      const stale = await app.inject(request);
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json().error).toMatchObject({
+        code: "revision_conflict",
+        details: { enabled: false, currentRevision: 1, latestVersionId: null },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("paginates publication history beyond the detail preview without loading version bundles", () => {
     const created = store.create(alice, {
       bundle: bundle(),
@@ -644,6 +882,137 @@ describe("managed Skill library storage and API", () => {
   });
 });
 
+describe("managed Creator policy availability", () => {
+  function creatorBundle(
+    name = "agentic-skill-creator",
+    imported = true,
+  ): SkillBundle {
+    const value = bundle(name);
+    if (imported)
+      value.files[0]!.content = value.files[0]!.content.replace(
+        "---\nReview citations and identify unsupported claims.",
+        "metadata:\n  agentic-import-format: catalog-v1\n  agentic-catalog-id: agentic/skill-creator\n  agentic-source-id: agentic\n  agentic-upstream-path: packages/skills/builtin/skill-creator\n  agentic-upstream-name: skill-creator\n---\nReview citations and identify unsupported claims.",
+      );
+    return value;
+  }
+  function createCreator(name = "agentic-skill-creator", imported = true) {
+    const created = store.create(superadmin, {
+      bundle: creatorBundle(name, imported),
+      visibility: "shared",
+    });
+    return store.publish(superadmin, created.skill.id, 1);
+  }
+  function disable(detail: ReturnType<SkillLibraryStore["detail"]>) {
+    return store.setEnabled(superadmin, detail.skill.id, {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: detail.draft!.revision,
+      expectedLatestVersionId: detail.skill.latestVersionId,
+    });
+  }
+
+  it("blocks authoring from a disabled canonical Creator even after its display name changes", async () => {
+    disable(createCreator("renamed-first-party-creator"));
+    const port = host();
+    await expect(
+      createGeneratedSkill(
+        store,
+        alice,
+        { purpose: "Create a citation skill", visibility: "tenant" },
+        port,
+      ),
+    ).rejects.toMatchObject({ code: "skill_disabled" });
+    expect(port.gateway.chat).not.toHaveBeenCalled();
+    expect(store.list(alice, { ...listQuery, scope: "owned" }).skills).toEqual(
+      [],
+    );
+  });
+
+  it("allows AI revision of a disabled target when the authoring policy is enabled", async () => {
+    createCreator();
+    const target = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    store.setEnabled(alice, target.skill.id, {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: 1,
+      expectedLatestVersionId: null,
+    });
+    const port = host();
+    const revised = await reviseGeneratedSkill(
+      store,
+      alice,
+      target.skill.id,
+      { expectedRevision: 1, purpose: "Improve this disabled draft" },
+      port,
+    );
+    expect(port.gateway.chat).toHaveBeenCalledTimes(1);
+    expect(revised.detail.skill).toMatchObject({
+      enabled: false,
+      draftRevision: 2,
+    });
+  });
+
+  it("does not let an unrelated same-name custom record control the intrinsic Creator", async () => {
+    disable(createCreator("agentic-skill-creator", false));
+    const port = host();
+    await expect(
+      createGeneratedSkill(
+        store,
+        alice,
+        { purpose: "Create a citation skill", visibility: "tenant" },
+        port,
+      ),
+    ).resolves.toMatchObject({ detail: { skill: { enabled: true } } });
+    expect(port.gateway.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a tenant's copied Creator metadata control shared authoring", async () => {
+    const copied = store.create(alice, {
+      bundle: creatorBundle(),
+      visibility: "tenant",
+    });
+    store.setEnabled(alice, copied.skill.id, {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: 1,
+      expectedLatestVersionId: null,
+    });
+    const port = host();
+    await createGeneratedSkill(
+      store,
+      alice,
+      { purpose: "Create a citation skill", visibility: "tenant" },
+      port,
+    );
+    expect(port.gateway.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops schema repair if the canonical Creator is disabled after the first model call", async () => {
+    const creator = createCreator();
+    const port = host(
+      vi.fn(async () => {
+        disable(creator);
+        return { ...generatedResponse(), text: "invalid JSON" };
+      }),
+    );
+    await expect(
+      createGeneratedSkill(
+        store,
+        alice,
+        { purpose: "Create a citation skill", visibility: "tenant" },
+        port,
+      ),
+    ).rejects.toMatchObject({ code: "skill_disabled" });
+    expect(port.gateway.chat).toHaveBeenCalledTimes(1);
+    expect(store.list(alice, { ...listQuery, scope: "owned" }).skills).toEqual(
+      [],
+    );
+  });
+});
+
 describe("observed Skill comparisons and human grades", () => {
   const prompt = "Review the claims in the supplied document.";
   const expectations = ["Flags unsupported claims."];
@@ -664,6 +1033,76 @@ describe("observed Skill comparisons and human grades", () => {
     });
     return { gateway: { chat } };
   }
+  it("blocks both draft and published comparisons while disabled without making a model call", async () => {
+    const created = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    const published = store.publish(alice, created.skill.id, 1);
+    store.setEnabled(alice, created.skill.id, {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: 1,
+      expectedLatestVersionId: published.latestVersion!.id,
+    });
+    const service = new SkillEvaluationService(getDb(), store);
+    const port = evaluationHost();
+    for (const source of [
+      { expectedRevision: 1 },
+      { versionId: published.latestVersion!.id },
+    ])
+      await expect(
+        service.evaluate(
+          alice,
+          created.skill.id,
+          { prompt, expectations, ...source },
+          port,
+        ),
+      ).rejects.toMatchObject({ code: "skill_disabled" });
+    expect(port.gateway.chat).not.toHaveBeenCalled();
+    expect(
+      getRawSqlite()
+        .prepare("SELECT count(*) AS n FROM skill_evaluations")
+        .get(),
+    ).toEqual({ n: 0 });
+    expect(store.publishedVersion(alice, created.skill.id).bundle).toEqual(
+      bundle(),
+    );
+  });
+
+  it("rechecks live enabled state between baseline and guided comparison calls", async () => {
+    const created = store.create(alice, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    const service = new SkillEvaluationService(getDb(), store);
+    const port = evaluationHost(() => {
+      store.setEnabled(alice, created.skill.id, {
+        enabled: false,
+        expectedEnabled: true,
+        expectedRevision: 1,
+        expectedLatestVersionId: null,
+      });
+      return { text: "Baseline completed before the switch changed." };
+    });
+    await expect(
+      service.evaluate(
+        alice,
+        created.skill.id,
+        { prompt, expectations, expectedRevision: 1 },
+        port,
+      ),
+    ).rejects.toMatchObject({ code: "skill_disabled" });
+    expect(port.gateway.chat).toHaveBeenCalledTimes(1);
+    const row = getRawSqlite()
+      .prepare("SELECT result_json FROM skill_evaluations")
+      .get() as { result_json: string };
+    expect(JSON.parse(row.result_json)).toMatchObject({
+      status: "failed",
+      baseline: { text: "Baseline completed before the switch changed." },
+      withSkill: { status: "failed", error: { code: "skill_disabled" } },
+    });
+  });
   it("records two real attributed observations with an immutable source and no automatic grade", async () => {
     const created = store.create(alice, {
       bundle: bundle(),

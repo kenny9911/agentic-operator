@@ -11,6 +11,7 @@ import {
   RestoreSkillDraftBodySchema,
   ReviseGeneratedSkillBodySchema,
   SaveSkillDraftBodySchema,
+  SetSkillEnabledBodySchema,
   SkillDetailSchema,
   SkillDraftSchema,
   SkillExportQuerySchema,
@@ -303,6 +304,17 @@ export async function skillLibraryRoutes(
           requirePermission(req, "skills.write"),
           params.parse(req.params).id,
           ArchiveSkillBodySchema.parse(req.body),
+        ),
+      ),
+    ),
+  );
+  app.patch("/skills/:id/enabled", async (req, reply) =>
+    reply.ok(
+      SkillDetailSchema.parse(
+        store().setEnabled(
+          requirePermission(req, "skills.write"),
+          params.parse(req.params).id,
+          SetSkillEnabledBodySchema.parse(req.body),
         ),
       ),
     ),

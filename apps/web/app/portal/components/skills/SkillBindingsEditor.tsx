@@ -150,7 +150,10 @@ function SkillSelection({
     catalog.data?.pages.flatMap((page) => page.skills) ?? []
   ).filter(
     (skill) =>
-      skill.latestVersionId && !skill.archivedAt && !existing.has(skill.id),
+      skill.enabled &&
+      skill.latestVersionId &&
+      !skill.archivedAt &&
+      !existing.has(skill.id),
   );
   const allowed = published.filter(
     (skill) =>
@@ -336,13 +339,15 @@ function SkillBindingRow({
         ? copy.missing
         : skill?.archivedAt
           ? copy.archived
-          : skill && !skill.latestVersionId
-            ? copy.unpublished
-            : badPin
-              ? copy.invalidVersion
-              : pinFailed
-                ? copy.error
-                : null;
+          : skill && !skill.enabled
+            ? copy.skillDisabled
+            : skill && !skill.latestVersionId
+              ? copy.unpublished
+              : badPin
+                ? copy.invalidVersion
+                : pinFailed
+                  ? copy.error
+                  : null;
   return (
     <article
       style={{

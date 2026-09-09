@@ -29,7 +29,7 @@ beforeEach(() => {
   for (const key of ["AGENTIC_SQLITE_WRITER_LEASE_TOKEN", "AGENTIC_SQLITE_WRITER_LEASE_PATH", "AGENTIC_SQLITE_WRITER_SUPERVISOR_PID"]) vi.stubEnv(key, "");
   getDb();
   getRawSqlite().exec(`CREATE TABLE tenants (id TEXT PRIMARY KEY,slug TEXT NOT NULL); INSERT INTO tenants VALUES ('a','alpha'),('b','beta'),('sys','__system'); CREATE TABLE runs (id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,parent_run_id TEXT); CREATE TABLE steps(id TEXT PRIMARY KEY,run_id TEXT NOT NULL); CREATE TABLE event_store(id TEXT PRIMARY KEY,tenant_id TEXT,name TEXT,source_run_id TEXT);`);
-  for (const migration of ["0080_managed_skills", "0081_run_skill_snapshots"]) getRawSqlite().exec(readFileSync(new URL(`../../../packages/db/drizzle/${migration}.sql`, import.meta.url), "utf8"));
+  for (const migration of ["0080_managed_skills", "0081_run_skill_snapshots", "0083_managed_skill_enabled"]) getRawSqlite().exec(readFileSync(new URL(`../../../packages/db/drizzle/${migration}.sql`, import.meta.url), "utf8"));
   legacy = []; temp = mkdtempSync(join(tmpdir(), "skill-runtime-"));
   host = new ManagedSkillRuntime({ db: getDb(), legacySkills: () => legacy });
   run("r1");
@@ -37,6 +37,39 @@ beforeEach(() => {
 afterEach(() => { closeDb(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); });
 
 describe("durable tenant Skill runtime", () => {
+  it("excludes disabled tenant and shared skills from new catalogs and rejects explicit pins", async () => {
+    publish("enabled"); publish("disabled"); publish("shared", "sys", "shared", undefined, undefined, true);
+    for (const id of ["disabled", "shared"]) getDb().update(managedSkills).set({ enabled: false }).where(eq(managedSkills.id, id)).run();
+    expect(await names()).toEqual(["enabled"]);
+    run("pinned");
+    expect(() => host.capture({ ...input, executionId: "pinned", agentSkills: { mode: "selected", skills: [{ id: "disabled", versionId: "disabled-v1", activate: true }] } })).toThrow(/ceiling/);
+    const session = await host.restore(host.capture(input), input);
+    expect((await session.list({ origin: "explicit" })).skills.map((s) => s.id)).toEqual(["enabled"]);
+    await expect(session.activate("disabled", { origin: "explicit" })).rejects.toThrow();
+  });
+  it("revokes existing sessions, cached resources, explicit restore and native export on disable", async () => {
+    publish("shared", "sys", "shared", undefined, undefined, true);
+    const ref = host.capture({ ...input, agentSkills: { mode: "selected", skills: [{ id: "shared", activate: true }] } });
+    const session = await host.restore(ref, input);
+    await session.readResource("shared", "assets/data.bin");
+    expect((await host.materializationSources(ref, input)).sources).toHaveLength(1);
+    getDb().update(managedSkills).set({ enabled: false }).where(eq(managedSkills.id, "shared")).run();
+    expect((await session.list()).skills).toEqual([]);
+    expect((await session.list({ origin: "explicit" })).skills).toEqual([]);
+    await expect(session.activate("shared", { origin: "model" })).rejects.toThrow(/access|authorized/i);
+    await expect(session.activate("shared", { origin: "explicit" })).rejects.toThrow(/access|authorized/i);
+    await expect(session.listResources("shared")).rejects.toThrow(/access|authorized/i);
+    await expect(session.readResource("shared", "assets/data.bin")).rejects.toThrow(/access|authorized/i);
+    await expect(session.renderActiveInstructions()).rejects.toThrow(/access|authorized/i);
+    await expect(host.restore(ref, input)).rejects.toThrow(/access|authorized/i);
+    await expect(host.materializationSources(ref, input)).rejects.toThrow(/authorized/);
+    run("child", "a", "agt-a", "r1");
+    expect(() => host.capture({ ...input, executionId: "child" })).toThrow(/authorized/);
+    getDb().update(managedSkills).set({ enabled: true }).where(eq(managedSkills.id, "shared")).run();
+    expect((await session.list()).skills.map((s) => s.id)).toEqual(["shared"]);
+    expect((await session.readResource("shared", "assets/data.bin")).content).toBe("/wAB");
+    expect((await host.materializationSources(ref, input)).sources[0]?.entry.versionId).toBe("shared-v1");
+  });
   it("unpublished drafts do not exhaust the published runtime catalog limit", async () => {
     const sqlite = getRawSqlite();
     const insert = sqlite.prepare("INSERT INTO managed_skills(id,tenant_id,name,description,visibility) VALUES (?, 'a', ?, 'Incomplete draft', 'tenant')");

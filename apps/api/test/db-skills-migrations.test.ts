@@ -67,14 +67,14 @@ async function productionMigrate(file: string) {
   );
   expect(result.stdout).toContain("[db:migrate] done");
 }
-async function through79(root: string) {
-  const folder = path.join(root, "through-79"),
+async function through(root: string, last: number) {
+  const folder = path.join(root, `through-${last}`),
     meta = path.join(folder, "meta");
   await mkdir(meta, { recursive: true });
   const journal = JSON.parse(
     await readFile(path.join(migrations, "meta/_journal.json"), "utf8"),
   ) as { entries: Array<{ idx: number; tag: string }> };
-  const entries = journal.entries.filter((entry) => entry.idx <= 79);
+  const entries = journal.entries.filter((entry) => entry.idx <= last);
   await writeFile(
     path.join(meta, "_journal.json"),
     JSON.stringify({ ...journal, entries }),
@@ -228,11 +228,11 @@ it("runs all migrations through the production supervisor on an empty database, 
   }
 });
 
-it("upgrades a pre-Skills production schema through 0080–0082 while preserving existing business rows", async () => {
+it("upgrades a pre-Skills production schema through 0080–0083 while preserving existing business rows", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "skills-upgrade-production-"));
   roots.push(root);
   const file = path.join(root, "upgrade.db"),
-    legacy = await through79(root);
+    legacy = await through(root, 79);
   let raw = open(file);
   try {
     migrate(drizzle(raw), { migrationsFolder: legacy });
@@ -244,6 +244,64 @@ it("upgrades a pre-Skills production schema through 0080–0082 while preserving
   raw = open(file);
   try {
     await exerciseSkills(raw);
+  } finally {
+    raw.close();
+  }
+});
+
+it("upgrades existing managed Skills as enabled and preserves a disabled state across migration reruns", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "skills-enabled-upgrade-"));
+  roots.push(root);
+  const file = path.join(root, "enabled-upgrade.db");
+  const legacy = await through(root, 82);
+  let raw = open(file);
+  try {
+    migrate(drizzle(raw), { migrationsFolder: legacy });
+    seedBusinessRows(raw);
+    raw.exec(
+      "INSERT INTO managed_skills(id,tenant_id,name,description) VALUES('skl-legacy','ten-migration','legacy-skill','Retain existing managed skill');",
+    );
+  } finally {
+    raw.close();
+  }
+  await productionMigrate(file);
+  raw = open(file);
+  try {
+    expect(
+      raw
+        .prepare(
+          "SELECT enabled,name FROM managed_skills WHERE id='skl-legacy'",
+        )
+        .get(),
+    ).toEqual({ enabled: 1, name: "legacy-skill" });
+    expect(() =>
+      raw
+        .prepare("UPDATE managed_skills SET enabled=2 WHERE id='skl-legacy'")
+        .run(),
+    ).toThrow(/CHECK/);
+    expect(() =>
+      raw
+        .prepare("UPDATE managed_skills SET enabled=NULL WHERE id='skl-legacy'")
+        .run(),
+    ).toThrow(/NOT NULL/);
+    raw
+      .prepare("UPDATE managed_skills SET enabled=0 WHERE id='skl-legacy'")
+      .run();
+  } finally {
+    raw.close();
+  }
+  await productionMigrate(file);
+  raw = open(file);
+  try {
+    expect(
+      raw
+        .prepare("SELECT enabled FROM managed_skills WHERE id='skl-legacy'")
+        .get(),
+    ).toEqual({ enabled: 0 });
+    expect(
+      raw.prepare("SELECT subject FROM runs WHERE id='run-migration'").get(),
+    ).toEqual({ subject: "preserve-this-business-subject" });
+    expect(raw.pragma("foreign_key_check")).toEqual([]);
   } finally {
     raw.close();
   }

@@ -21,6 +21,7 @@ import { SkillFileEditor } from "./SkillFileEditor";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import { SkillHistory } from "./SkillHistory";
 import { SkillEvaluationPanel } from "./SkillEvaluationPanel";
+import { SkillAvailabilityControl } from "./SkillAvailabilityControl";
 import styles from "./skills.module.css";
 
 // Keep up to four unsaved editors in memory for browser back/forward within
@@ -311,6 +312,13 @@ function SkillEditor({ initial }: { initial: SkillDetail }) {
           )}
         </div>
       </div>
+      <SkillAvailabilityControl
+        skill={initial.skill}
+        disabled={actionsLocked}
+        onChange={(next) =>
+          setDetail((current) => ({ ...current, skill: next.skill }))
+        }
+      />
       {!editable && <p className={styles.notice}>{t("skills.readonly")}</p>}
       {error && (
         <div className={styles.error} role="alert">
@@ -399,7 +407,10 @@ function SkillEditor({ initial }: { initial: SkillDetail }) {
         diagnostics={validation?.diagnostics}
         validationCurrent={currentValidation}
       />
-      <SkillEvaluationPanel detail={detail} disabled={dirty || actionsLocked} />
+      <SkillEvaluationPanel
+        detail={{ ...detail, skill: initial.skill }}
+        disabled={dirty || actionsLocked}
+      />
       {notes && (
         <details className={styles.notes} open>
           <summary>

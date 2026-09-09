@@ -13,52 +13,6 @@
       ],
       "skills": [
         {
-          "id": "anthropic/academy-guide",
-          "path": "skills/academy-guide",
-          "name": "anthropic-academy-guide",
-          "upstreamName": "academy-guide",
-          "license": "Apache-2.0",
-          "licensePath": "skills/academy-guide/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/algorithmic-art",
-          "path": "skills/algorithmic-art",
-          "name": "anthropic-algorithmic-art",
-          "upstreamName": "algorithmic-art",
-          "license": "Apache-2.0",
-          "licensePath": "skills/algorithmic-art/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/brand-guidelines",
-          "path": "skills/brand-guidelines",
-          "name": "anthropic-brand-guidelines",
-          "upstreamName": "brand-guidelines",
-          "license": "Apache-2.0",
-          "licensePath": "skills/brand-guidelines/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/canvas-design",
-          "path": "skills/canvas-design",
-          "name": "anthropic-canvas-design",
-          "upstreamName": "canvas-design",
-          "license": "Apache-2.0",
-          "licensePath": "skills/canvas-design/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/claude-api",
-          "path": "skills/claude-api",
-          "name": "anthropic-claude-api",
-          "upstreamName": "claude-api",
-          "license": "Apache-2.0",
-          "licensePath": "skills/claude-api/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362",
-          "descriptionOverride": "Build and debug applications using the Claude API, Anthropic SDK, Claude Agent SDK, streaming, tool use, MCP, prompt caching, and model migration. Use for Claude or Anthropic implementation questions and model-specific API guidance. Do not select for work on other model providers."
-        },
-        {
           "id": "anthropic/discernment-nudge",
           "path": "skills/discernment-nudge",
           "name": "anthropic-discernment-nudge",
@@ -66,15 +20,6 @@
           "license": "Apache-2.0",
           "licensePath": "skills/discernment-nudge/LICENSE.txt",
           "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/frontend-design",
-          "path": "skills/frontend-design",
-          "name": "anthropic-frontend-design",
-          "upstreamName": "frontend-design",
-          "license": "Apache-2.0",
-          "licensePath": "skills/frontend-design/LICENSE.txt",
-          "licenseSha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
         },
         {
           "id": "anthropic/internal-comms",
@@ -86,57 +31,12 @@
           "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
         },
         {
-          "id": "anthropic/mcp-builder",
-          "path": "skills/mcp-builder",
-          "name": "anthropic-mcp-builder",
-          "upstreamName": "mcp-builder",
-          "license": "Apache-2.0",
-          "licensePath": "skills/mcp-builder/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
           "id": "anthropic/skill-creator",
           "path": "skills/skill-creator",
           "name": "anthropic-skill-creator",
           "upstreamName": "skill-creator",
           "license": "Apache-2.0",
           "licensePath": "skills/skill-creator/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/slack-gif-creator",
-          "path": "skills/slack-gif-creator",
-          "name": "anthropic-slack-gif-creator",
-          "upstreamName": "slack-gif-creator",
-          "license": "Apache-2.0",
-          "licensePath": "skills/slack-gif-creator/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/theme-factory",
-          "path": "skills/theme-factory",
-          "name": "anthropic-theme-factory",
-          "upstreamName": "theme-factory",
-          "license": "Apache-2.0",
-          "licensePath": "skills/theme-factory/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/web-artifacts-builder",
-          "path": "skills/web-artifacts-builder",
-          "name": "anthropic-web-artifacts-builder",
-          "upstreamName": "web-artifacts-builder",
-          "license": "Apache-2.0",
-          "licensePath": "skills/web-artifacts-builder/LICENSE.txt",
-          "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
-        },
-        {
-          "id": "anthropic/webapp-testing",
-          "path": "skills/webapp-testing",
-          "name": "anthropic-webapp-testing",
-          "upstreamName": "webapp-testing",
-          "license": "Apache-2.0",
-          "licensePath": "skills/webapp-testing/LICENSE.txt",
           "licenseSha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
         }
       ]
@@ -151,84 +51,12 @@
       ],
       "skills": [
         {
-          "id": "openai/curated/aspnet-core",
-          "path": "skills/.curated/aspnet-core",
-          "name": "openai-aspnet-core",
-          "upstreamName": "aspnet-core",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/aspnet-core/LICENSE.txt",
-          "licenseSha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
-        },
-        {
-          "id": "openai/curated/chatgpt-apps",
-          "path": "skills/.curated/chatgpt-apps",
-          "name": "openai-chatgpt-apps",
-          "upstreamName": "chatgpt-apps",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/chatgpt-apps/LICENSE.txt",
-          "licenseSha256": "a7f55b2cb68997f729e6199720d4d3cae47633aba0254a84b2d36ab284be9d45"
-        },
-        {
-          "id": "openai/curated/cli-creator",
-          "path": "skills/.curated/cli-creator",
-          "name": "openai-cli-creator",
-          "upstreamName": "cli-creator",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/cli-creator/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/cloudflare-deploy",
-          "path": "skills/.curated/cloudflare-deploy",
-          "name": "openai-cloudflare-deploy",
-          "upstreamName": "cloudflare-deploy",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/cloudflare-deploy/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
           "id": "openai/curated/define-goal",
           "path": "skills/.curated/define-goal",
           "name": "openai-define-goal",
           "upstreamName": "define-goal",
           "license": "Apache-2.0",
           "licensePath": "skills/.curated/define-goal/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/gh-address-comments",
-          "path": "skills/.curated/gh-address-comments",
-          "name": "openai-gh-address-comments",
-          "upstreamName": "gh-address-comments",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/gh-address-comments/LICENSE.txt",
-          "licenseSha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
-        },
-        {
-          "id": "openai/curated/gh-fix-ci",
-          "path": "skills/.curated/gh-fix-ci",
-          "name": "openai-gh-fix-ci",
-          "upstreamName": "gh-fix-ci",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/gh-fix-ci/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/hatch-pet",
-          "path": "skills/.curated/hatch-pet",
-          "name": "openai-hatch-pet",
-          "upstreamName": "hatch-pet",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/hatch-pet/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/jupyter-notebook",
-          "path": "skills/.curated/jupyter-notebook",
-          "name": "openai-jupyter-notebook",
-          "upstreamName": "jupyter-notebook",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/jupyter-notebook/LICENSE.txt",
           "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
         },
         {
@@ -239,24 +67,6 @@
           "license": "Apache-2.0",
           "licensePath": "skills/.curated/linear/LICENSE.txt",
           "licenseSha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
-        },
-        {
-          "id": "openai/curated/migrate-to-codex",
-          "path": "skills/.curated/migrate-to-codex",
-          "name": "openai-migrate-to-codex",
-          "upstreamName": "migrate-to-codex",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/migrate-to-codex/LICENSE.txt",
-          "licenseSha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
-        },
-        {
-          "id": "openai/curated/netlify-deploy",
-          "path": "skills/.curated/netlify-deploy",
-          "name": "openai-netlify-deploy",
-          "upstreamName": "netlify-deploy",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/netlify-deploy/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
         },
         {
           "id": "openai/curated/notion-knowledge-capture",
@@ -286,24 +96,6 @@
           "licenseSha256": "0f377d9b2a1db642e4b0531ffa126e96d9bc6c085f8d9441f220fb25f723c6f8"
         },
         {
-          "id": "openai/curated/notion-spec-to-implementation",
-          "path": "skills/.curated/notion-spec-to-implementation",
-          "name": "openai-notion-spec-to-implementation",
-          "upstreamName": "notion-spec-to-implementation",
-          "license": "MIT",
-          "licensePath": "skills/.curated/notion-spec-to-implementation/LICENSE.txt",
-          "licenseSha256": "0f377d9b2a1db642e4b0531ffa126e96d9bc6c085f8d9441f220fb25f723c6f8"
-        },
-        {
-          "id": "openai/curated/openai-docs",
-          "path": "skills/.curated/openai-docs",
-          "name": "openai-openai-docs",
-          "upstreamName": "openai-docs",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/openai-docs/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
           "id": "openai/curated/pdf",
           "path": "skills/.curated/pdf",
           "name": "openai-pdf",
@@ -311,15 +103,6 @@
           "license": "Apache-2.0",
           "licensePath": "skills/.curated/pdf/LICENSE.txt",
           "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/playwright-interactive",
-          "path": "skills/.curated/playwright-interactive",
-          "name": "openai-playwright-interactive",
-          "upstreamName": "playwright-interactive",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/playwright-interactive/LICENSE.txt",
-          "licenseSha256": "9a7110fc2d2f964038e5dc49128f908f29f47a574c961cba16085914e879cbda"
         },
         {
           "id": "openai/curated/playwright",
@@ -331,57 +114,12 @@
           "licenseSha256": "9a7110fc2d2f964038e5dc49128f908f29f47a574c961cba16085914e879cbda"
         },
         {
-          "id": "openai/curated/render-deploy",
-          "path": "skills/.curated/render-deploy",
-          "name": "openai-render-deploy",
-          "upstreamName": "render-deploy",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/render-deploy/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
           "id": "openai/curated/screenshot",
           "path": "skills/.curated/screenshot",
           "name": "openai-screenshot",
           "upstreamName": "screenshot",
           "license": "Apache-2.0",
           "licensePath": "skills/.curated/screenshot/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/security-best-practices",
-          "path": "skills/.curated/security-best-practices",
-          "name": "openai-security-best-practices",
-          "upstreamName": "security-best-practices",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/security-best-practices/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/security-ownership-map",
-          "path": "skills/.curated/security-ownership-map",
-          "name": "openai-security-ownership-map",
-          "upstreamName": "security-ownership-map",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/security-ownership-map/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/security-threat-model",
-          "path": "skills/.curated/security-threat-model",
-          "name": "openai-security-threat-model",
-          "upstreamName": "security-threat-model",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/security-threat-model/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/curated/sentry",
-          "path": "skills/.curated/sentry",
-          "name": "openai-sentry",
-          "upstreamName": "sentry",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/sentry/LICENSE.txt",
           "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
         },
         {
@@ -403,33 +141,6 @@
           "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
         },
         {
-          "id": "openai/curated/vercel-deploy",
-          "path": "skills/.curated/vercel-deploy",
-          "name": "openai-vercel-deploy",
-          "upstreamName": "vercel-deploy",
-          "license": "MIT",
-          "licensePath": "skills/.curated/vercel-deploy/LICENSE.txt",
-          "licenseSha256": "e0fad1e120e56b02bb8e65745ff5be6d3234368f2df9d0dd183183879e595fc1"
-        },
-        {
-          "id": "openai/curated/winui-app",
-          "path": "skills/.curated/winui-app",
-          "name": "openai-winui-app",
-          "upstreamName": "winui-app",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/winui-app/LICENSE.txt",
-          "licenseSha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
-        },
-        {
-          "id": "openai/curated/yeet",
-          "path": "skills/.curated/yeet",
-          "name": "openai-yeet",
-          "upstreamName": "yeet",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.curated/yeet/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
           "id": "openai/system/imagegen",
           "path": "skills/.system/imagegen",
           "name": "openai-imagegen",
@@ -437,24 +148,6 @@
           "license": "Apache-2.0",
           "licensePath": "skills/.system/imagegen/LICENSE.txt",
           "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/system/openai-docs",
-          "path": "skills/.system/openai-docs",
-          "name": "openai-system-openai-docs",
-          "upstreamName": "openai-docs",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.system/openai-docs/LICENSE.txt",
-          "licenseSha256": "4dd13869245e356246a5b770723247bbb80a8f07a181d1d3d873a1734297cdb9"
-        },
-        {
-          "id": "openai/system/plugin-creator",
-          "path": "skills/.system/plugin-creator",
-          "name": "openai-plugin-creator",
-          "upstreamName": "plugin-creator",
-          "license": "Apache-2.0",
-          "licensePath": "skills/.system/plugin-creator/LICENSE.txt",
-          "licenseSha256": "b87a529a13d5294f97bb847936a82f39e4f8adae2425a3a5fb5f1a7b75d43e6a"
         },
         {
           "id": "openai/system/skill-creator",
@@ -473,35 +166,6 @@
           "license": "Apache-2.0",
           "licensePath": "skills/.system/skill-installer/LICENSE.txt",
           "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
-        }
-      ]
-    },
-    {
-      "id": "openai-plugins",
-      "repository": "openai/plugins",
-      "revision": "d416fd5a43426019986b1e489506db3db66dee3d",
-      "status": "active",
-      "noticePaths": [
-        "README.md"
-      ],
-      "skills": [
-        {
-          "id": "openai-plugins/openai-developers/build-chatgpt-app",
-          "path": "plugins/openai-developers/skills/build-chatgpt-app",
-          "name": "openai-build-chatgpt-app",
-          "upstreamName": "build-chatgpt-app",
-          "license": "Apache-2.0",
-          "licensePath": "plugins/openai-developers/skills/build-chatgpt-app/LICENSE.txt",
-          "licenseSha256": "a7f55b2cb68997f729e6199720d4d3cae47633aba0254a84b2d36ab284be9d45"
-        },
-        {
-          "id": "openai-plugins/openai-developers/chatgpt-app-submission",
-          "path": "plugins/openai-developers/skills/chatgpt-app-submission",
-          "name": "openai-chatgpt-app-submission",
-          "upstreamName": "chatgpt-app-submission",
-          "license": "Apache-2.0",
-          "licensePath": "plugins/openai-developers/skills/chatgpt-app-submission/LICENSE.txt",
-          "licenseSha256": "a7f55b2cb68997f729e6199720d4d3cae47633aba0254a84b2d36ab284be9d45"
         }
       ]
     }
@@ -589,6 +253,222 @@
       "sourceId": "anthropic",
       "path": "template",
       "reason": "No explicit license file covering this bundle"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/academy-guide",
+      "reason": "Provider product education is outside business, ontology and agentic-tool execution scope.",
+      "curationId": "anthropic/academy-guide"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/algorithmic-art",
+      "reason": "Creative coding and algorithmic artwork are outside the selected business/runtime scope.",
+      "curationId": "anthropic/algorithmic-art"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/brand-guidelines",
+      "reason": "Applies the vendor brand identity rather than an authored business brand policy.",
+      "curationId": "anthropic/brand-guidelines"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/canvas-design",
+      "reason": "Standalone graphic-design methodology is outside the selected runtime tool collection.",
+      "curationId": "anthropic/canvas-design"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/claude-api",
+      "reason": "Application/API implementation guidance is development-time.",
+      "curationId": "anthropic/claude-api"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/frontend-design",
+      "reason": "Frontend UI implementation and aesthetic direction are development-time.",
+      "curationId": "anthropic/frontend-design"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/mcp-builder",
+      "reason": "Building MCP servers and integrations is development-time.",
+      "curationId": "anthropic/mcp-builder"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/slack-gif-creator",
+      "reason": "Decorative GIF production is outside the selected business/runtime collection.",
+      "curationId": "anthropic/slack-gif-creator"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/theme-factory",
+      "reason": "General visual theme styling is outside the selected business/runtime collection.",
+      "curationId": "anthropic/theme-factory"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/web-artifacts-builder",
+      "reason": "Building frontend web artifacts is development-time.",
+      "curationId": "anthropic/web-artifacts-builder"
+    },
+    {
+      "sourceId": "anthropic",
+      "path": "skills/webapp-testing",
+      "reason": "Application UI testing is development-time.",
+      "curationId": "anthropic/webapp-testing"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/aspnet-core",
+      "reason": "ASP.NET application/framework implementation is development-time.",
+      "curationId": "openai/curated/aspnet-core"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/chatgpt-apps",
+      "reason": "ChatGPT application SDK development is development-time.",
+      "curationId": "openai/curated/chatgpt-apps"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/cli-creator",
+      "reason": "Command-line application implementation is development-time.",
+      "curationId": "openai/curated/cli-creator"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/cloudflare-deploy",
+      "reason": "Cloudflare deployment and infrastructure operations are DevOps.",
+      "curationId": "openai/curated/cloudflare-deploy"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/gh-address-comments",
+      "reason": "GitHub pull-request review workflow is development-time.",
+      "curationId": "openai/curated/gh-address-comments"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/gh-fix-ci",
+      "reason": "GitHub CI repair is development-time DevOps.",
+      "curationId": "openai/curated/gh-fix-ci"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/hatch-pet",
+      "reason": "Codex decorative pet customization is outside business/runtime tasks.",
+      "curationId": "openai/curated/hatch-pet"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/jupyter-notebook",
+      "reason": "Notebook scaffolding and development environment setup are outside the selected runtime collection.",
+      "curationId": "openai/curated/jupyter-notebook"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/migrate-to-codex",
+      "reason": "Developer tool and agent-harness migration is development-time.",
+      "curationId": "openai/curated/migrate-to-codex"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/netlify-deploy",
+      "reason": "Netlify deployment and hosting operations are DevOps.",
+      "curationId": "openai/curated/netlify-deploy"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/notion-spec-to-implementation",
+      "reason": "Software specification-to-implementation planning is development-time.",
+      "curationId": "openai/curated/notion-spec-to-implementation"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/openai-docs",
+      "reason": "Provider API and Codex development/configuration guidance is development-time.",
+      "curationId": "openai/curated/openai-docs"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/playwright-interactive",
+      "reason": "Persistent interactive UI debugging and app verification are development-time; Playwright CLI is retained for business browser automation.",
+      "curationId": "openai/curated/playwright-interactive"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/render-deploy",
+      "reason": "Render deployment and infrastructure provisioning are DevOps.",
+      "curationId": "openai/curated/render-deploy"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/security-best-practices",
+      "reason": "Secure coding and repository security implementation review are development-time.",
+      "curationId": "openai/curated/security-best-practices"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/security-ownership-map",
+      "reason": "Git-history security ownership analysis is development-time.",
+      "curationId": "openai/curated/security-ownership-map"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/security-threat-model",
+      "reason": "Source-repository threat modeling is development-time.",
+      "curationId": "openai/curated/security-threat-model"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/sentry",
+      "reason": "Production software error monitoring and diagnostics are DevOps.",
+      "curationId": "openai/curated/sentry"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/vercel-deploy",
+      "reason": "Vercel deployment and hosting operations are DevOps.",
+      "curationId": "openai/curated/vercel-deploy"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/winui-app",
+      "reason": "Windows application setup, implementation and testing are development-time.",
+      "curationId": "openai/curated/winui-app"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.curated/yeet",
+      "reason": "Git staging, commits, pushes and pull requests are development-time.",
+      "curationId": "openai/curated/yeet"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.system/openai-docs",
+      "reason": "Provider API and Codex development/configuration guidance is development-time.",
+      "curationId": "openai/system/openai-docs"
+    },
+    {
+      "sourceId": "openai",
+      "path": "skills/.system/plugin-creator",
+      "reason": "Codex plugin scaffolding and marketplace metadata creation are development-time.",
+      "curationId": "openai/system/plugin-creator"
+    },
+    {
+      "sourceId": "openai-plugins",
+      "path": "plugins/openai-developers/skills/build-chatgpt-app",
+      "reason": "Building ChatGPT SDK applications is development-time.",
+      "curationId": "openai-plugins/openai-developers/build-chatgpt-app"
+    },
+    {
+      "sourceId": "openai-plugins",
+      "path": "plugins/openai-developers/skills/chatgpt-app-submission",
+      "reason": "Publishing developer applications is development-time.",
+      "curationId": "openai-plugins/openai-developers/chatgpt-app-submission"
     }
   ]
 }
