@@ -152,6 +152,125 @@ async function releaseRead(page: Page) {
   });
 }
 
+test("a long skill catalog scrolls to later pages without mixing tenant and shared libraries", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 800 });
+  await prepare(page);
+  const sharedSkills: SkillDetail["skill"][] = Array.from(
+    { length: 53 },
+    (_, index) => {
+      const number = String(index + 1).padStart(3, "0");
+      return {
+        ...initialDetail.skill,
+        id: `skl-long-catalog-${number}`,
+        tenantId: "tnt-system",
+        name: `catalog-skill-${number}`,
+        description: `Published shared guidance ${number} for agents and workflows.`,
+        visibility: "shared",
+        latestVersionId: `skv-long-catalog-${number}`,
+        latestVersionNo: 1,
+        canEdit: false,
+        draftRevision: null,
+      };
+    },
+  );
+  const tenantSkill: SkillDetail["skill"] = {
+    ...initialDetail.skill,
+    id: "skl-tenant-only",
+    name: "tenant-only-review",
+    description: "Private RAAS guidance retained alongside the shared catalog.",
+  };
+  const requests: Array<{
+    scope: string;
+    offset: number;
+    tenant: string | undefined;
+  }> = [];
+  await page.route("**/v1/skills?*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const scope = url.searchParams.get("scope") ?? "available";
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    requests.push({
+      scope,
+      offset,
+      tenant: request.headers()["x-agentic-tenant"],
+    });
+    const skills =
+      scope === "owned"
+        ? [tenantSkill]
+        : scope === "shared"
+          ? sharedSkills
+          : [...sharedSkills, tenantSkill];
+    await route.fulfill({
+      json: {
+        ok: true,
+        data: {
+          skills: skills.slice(offset, offset + limit),
+          nextOffset: offset + limit < skills.length ? offset + limit : null,
+        },
+      },
+    });
+  });
+  await page.goto("/portal/raas/skills");
+  const sharedRows = page.locator(
+    'a[href^="/portal/raas/skills/skl-long-catalog-"]',
+  );
+  const tenantRow = page.locator(
+    'a[href="/portal/raas/skills/skl-tenant-only"]',
+  );
+  const loadMore = page.getByRole("button", { name: "Load more", exact: true });
+  await expect(sharedRows).toHaveCount(50);
+  await expect(sharedRows.first()).toBeInViewport();
+  await expect(sharedRows.last()).not.toBeInViewport();
+  await expect(loadMore).not.toBeInViewport();
+
+  // Exercise the user's wheel gesture. Clicking or scrollIntoViewIfNeeded
+  // would force programmatic scrolling and could conceal a clipped viewport.
+  await sharedRows.first().hover();
+  await page.mouse.wheel(0, 12_000);
+  await expect(loadMore).toBeInViewport({ ratio: 0.9 });
+  await loadMore.click();
+  await expect(sharedRows).toHaveCount(53);
+  await expect(tenantRow).toHaveCount(1);
+  await expect(loadMore).toHaveCount(0);
+  await page.mouse.wheel(0, 12_000);
+  await expect(tenantRow).toBeInViewport({ ratio: 0.9 });
+  await expect(sharedRows.last()).toContainText("catalog-skill-053");
+  expect(requests).toContainEqual({ scope: "available", offset: 50, tenant: "raas" });
+
+  await page.getByRole("button", { name: "This tenant", exact: true }).click();
+  await expect(sharedRows).toHaveCount(0);
+  await expect(tenantRow).toHaveCount(1);
+  await expect(tenantRow).toBeInViewport();
+  await expect(loadMore).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Shared library", exact: true }).click();
+  await expect(sharedRows).toHaveCount(50);
+  await expect(tenantRow).toHaveCount(0);
+  await sharedRows.first().hover();
+  await page.mouse.wheel(0, 12_000);
+  await expect(loadMore).toBeInViewport({ ratio: 0.9 });
+  await loadMore.click();
+  await expect(sharedRows).toHaveCount(53);
+  await expect(tenantRow).toHaveCount(0);
+  await expect(loadMore).toHaveCount(0);
+  const loadedPageRequests = () =>
+    requests.filter((request) => request.scope === "shared" && request.offset === 50).length;
+  const beforeRefresh = loadedPageRequests();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(loadedPageRequests).toBeGreaterThan(beforeRefresh);
+  await expect(sharedRows).toHaveCount(53);
+  await expect(tenantRow).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Shared library", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(requests).toContainEqual({ scope: "owned", offset: 0, tenant: "raas" });
+  expect(requests).toContainEqual({ scope: "shared", offset: 50, tenant: "raas" });
+  expect(requests.every((request) => request.tenant === "raas")).toBe(true);
+});
+
 test("Escape and Tab stay inside the inner file dialog without discarding an import", async ({
   page,
 }) => {

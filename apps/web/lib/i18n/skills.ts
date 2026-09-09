@@ -1,6 +1,13 @@
 export const skillsEn = {
   title: "Skills",
   subtitle: "Reusable instructions for your agents and workflows.",
+  workspaceScope:
+    "Current workspace: {tenant}. Published shared skills are available to every tenant.",
+  refresh: "Refresh",
+  refreshing: "Refreshing…",
+  loadedCount: "Skills loaded: {count}",
+  filteredCount: "Showing {shown} matches among {loaded} loaded skills",
+  moreAvailable: "Load more skills below",
   describe: "Describe a skill",
   blank: "Create blank",
   import: "Import skill",
@@ -155,6 +162,12 @@ export const skillsEn = {
 export const skillsZh = {
   title: "技能",
   subtitle: "为智能体和工作流提供可复用的操作指引。",
+  workspaceScope: "当前工作区：{tenant}。已发布的共享技能可供所有租户使用。",
+  refresh: "刷新",
+  refreshing: "刷新中…",
+  loadedCount: "已加载技能：{count}",
+  filteredCount: "已加载 {loaded} 个技能，其中 {shown} 个匹配",
+  moreAvailable: "可在下方加载更多技能",
   describe: "描述技能",
   blank: "新建空白技能",
   import: "导入技能",

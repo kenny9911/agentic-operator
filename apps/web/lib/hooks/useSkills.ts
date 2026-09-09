@@ -265,6 +265,9 @@ export function useSkills(
     getNextPageParam: (page) => page.nextOffset ?? undefined,
     enabled: Boolean(tenant),
     staleTime: 10_000,
+    // Imports in another browser or the CLI do not invalidate this cache.
+    // Refresh this read-only catalog when the user returns to the portal.
+    refetchOnWindowFocus: true,
   });
 }
 

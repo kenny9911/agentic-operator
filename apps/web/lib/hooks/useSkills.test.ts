@@ -47,6 +47,79 @@ it("binds deferred list and detail reads to their cache tenant after navigation"
   }
 });
 
+it("refreshes an externally changed catalog on focus despite the portal's disabled focus default", async () => {
+  const { QueryClient, InfiniteQueryObserver, focusManager } =
+    await vi.importActual<typeof import("@tanstack/react-query")>(
+      "@tanstack/react-query",
+    );
+  route.pathname = "/portal/alpha/skills";
+  const options = useSkills() as unknown as ConstructorParameters<
+    typeof InfiniteQueryObserver
+  >[1];
+  const summary = (index: number) => ({
+    id: `skl-${index}`,
+    tenantId: "tnt-system",
+    name: `shared-skill-${index}`,
+    description: "Shared instructions",
+    visibility: "shared",
+    latestVersionId: `skv-${index}`,
+    latestVersionNo: 1,
+    archivedAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+    canEdit: false,
+    draftRevision: null,
+  });
+  const initial = {
+    pages: [
+      {
+        skills: Array.from({ length: 6 }, (_, index) => summary(index)),
+        nextOffset: null,
+      },
+    ],
+    pageParams: [0],
+  };
+  const refreshed = {
+    skills: Array.from({ length: 7 }, (_, index) => summary(index)),
+    nextOffset: null,
+  };
+  const fetch = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ ok: true, data: refreshed }), {
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  vi.useFakeTimers();
+  const client = new QueryClient({
+    defaultOptions: { queries: { refetchOnWindowFocus: false, retry: false } },
+  });
+  client.mount();
+  focusManager.setFocused(false);
+  client.setQueryData(options.queryKey!, initial);
+  const observer = new InfiniteQueryObserver(client, options);
+  const unsubscribe = observer.subscribe(() => {});
+  try {
+    await vi.advanceTimersByTimeAsync(10_001);
+    expect(fetch).not.toHaveBeenCalled();
+    focusManager.setFocused(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(observer.getCurrentResult().data).toMatchObject({
+      pages: [{ skills: refreshed.skills }],
+    });
+    expect(fetch.mock.calls[0]![1]).toMatchObject({
+      headers: { "x-agentic-tenant": "alpha" },
+    });
+  } finally {
+    unsubscribe();
+    client.unmount();
+    client.clear();
+    focusManager.setFocused(undefined);
+    vi.useRealTimers();
+  }
+});
+
 it("fetches the exact older pin in the binding tenant and keeps version cache keys distinct", async () => {
   route.pathname = "/portal/beta/workflows";
   const query = useSkillVersion(

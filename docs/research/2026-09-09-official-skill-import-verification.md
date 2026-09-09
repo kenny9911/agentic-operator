@@ -87,3 +87,23 @@ resource use, and Pro-backed authoring in this environment. They do not establis
 that every upstream skill's external tools are installed, that every skill has
 been executed end to end, or that this creator is universally superior. Skill
 guidance continues to operate within the selected agent's existing capabilities.
+
+## Skills page follow-up
+
+The live RAAS page initially displayed only about six rows because the portal
+shell clips its viewport and the Skills view did not own a scroll container.
+The API and browser had the catalog; the rows and pagination below the fold
+were inaccessible with normal scrolling. The Skills view now has a bounded
+height and vertical scrolling. Native Chrome verification reproduced the
+failure, then reached the previously hidden rows and used Load more to load all
+54 available skills (53 shared and one RAAS-owned skill).
+
+The page now shows the loaded count, indicates when another page is available,
+explains shared availability in the current tenant context, and offers Refresh.
+The list refreshes on focus when stale so imports outside this browser can be
+discovered. `/portal/raas/skills` identifies the active workspace; shared skills
+remain owned by the system library and usable across tenants.
+
+A wheel-scroll/pagination/scope/refresh regression was added to the existing
+Playwright suite. This follow-up used native Chrome for live browser verification;
+the new Playwright case was not executed during this session.

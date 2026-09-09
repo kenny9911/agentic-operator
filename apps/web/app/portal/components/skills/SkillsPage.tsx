@@ -37,8 +37,17 @@ export function SkillsPage() {
         <div>
           <h1>{t("skills.title")}</h1>
           <p className={styles.subheading}>{t("skills.subtitle")}</p>
+          <p className={styles.hint}>
+            {t("skills.workspaceScope", { tenant })}
+          </p>
         </div>
         <div className={styles.actions}>
+          <Button
+            disabled={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            {t(query.isFetching ? "skills.refreshing" : "skills.refresh")}
+          </Button>
           <Link
             className={styles.helpLink}
             href={`/portal/${tenant}/skills/help` as never}
@@ -93,6 +102,17 @@ export function SkillsPage() {
           onChange={(event) => setSearch(event.target.value)}
         />
       </div>
+      {query.data && (
+        <p role="status" className={styles.hint}>
+          {normalized
+            ? t("skills.filteredCount", {
+                shown: filtered.length,
+                loaded: rows.length,
+              })
+            : t("skills.loadedCount", { count: rows.length })}
+          {query.hasNextPage && ` · ${t("skills.moreAvailable")}`}
+        </p>
+      )}
       {query.isLoading ? (
         <p role="status" className={styles.empty}>
           {t("skills.loading")}
