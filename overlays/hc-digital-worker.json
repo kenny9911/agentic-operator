@@ -143,7 +143,7 @@
     },
     "BR2-MERGE-04": {
       "strategy": "receipt",
-      "note": "本体把该规则绑成 generateExecutionPlanDraft 的 precondition，而 source_mapping_written / relation_record_id 恰恰是这个动作自己 side_effects 里「回写来源行映射落库结果」写出来的——动作被自己的结果卡住。实跑中 LLM 裁决每次判 violation（理由：负载里不存在 source_mapping_written），ERP 回写与事件发射一并跳过，链路静默停在这一步。改由 createPbp 的 write_receipt 强制：回执缺 relation_record_id 即整步失败。"
+      "note": "本体把该规则绑成 generateExecutionPlanDraft 的 precondition，而来源行映射的落库结果恰恰是这个动作自己 side_effects 里写出来的——动作被自己的结果卡住。实跑中 LLM 裁决每次判 violation（理由：负载里不存在 source_mapping_written），ERP 回写与事件发射一并跳过，链路静默停在这一步。改由 createPbp 的 write_receipt 强制：模型把来源计划头/行号填进行的 sourceObjectId / sourceObjectLineId，2026-09-09 实测 v15 原样收下并在回执里回带（PBP202609090002），路由的 line_require_fields 要求每行回执都带 sourceObjectLineId，缺了整步失败。"
     }
   },
   "tool_arguments": {
@@ -159,7 +159,7 @@
     },
     "generateExecutionPlanDraft": {
       "payload": {
-        "from": "event.data"
+        "from": "event.data.pbp_draft"
       }
     },
     "returnPlanForRectification": {
@@ -367,7 +367,8 @@
         "backward_schedule_stage": "各节点计划完成时间：[{schedule_stage_id, schedule_plan_id, stage_node, stage_sequence:1-8, standard_cycle_days:number, planned_finish_date:'YYYY-MM-DD'}]。\n【硬性·唯一来源】**逐字照抄 planning.backwardSchedule 工具返回的 planned_dates**，一个日期都不许自己心算。每条计划行调一次：\n  planning.backwardSchedule({ required_arrival_date: <该计划行的 required_arrival_date>, business_type: <该计划行所属计划头的 business_type>, reference_date: <scan_date>, stages: <queryStageCycleConfig 返回的原始行，整段原样传，不要改字段名、不要自己筛> })\n工具做的事：最后一个节点落在需求到货日当天，其余节点减去其后所有节点周期之和；按 business_type 筛配置，筛不到直接报错并列出配置里实际存在的业务类型。\n【为什么必须走工具】场景一同一步的模型把提示词里举例的七个日期整段抄进了输出，只替换了最后一个，排出「订单晚于到货」的表还声称校验通过。日期算术一律交给工具。",
         "schedule_derived": "**必填布尔值**。每条计划行都拿到了 planning.backwardSchedule 的成功返回才填 true；任一条工具报错（缺周期配置、业务类型查不到）填 false，并把工具报错原文写进 backward_schedule_plan 对应条目的 note。",
         "time_conflict": "**必填布尔值**。**逐字照抄**工具返回的 time_conflict（给了 reference_date=scan_date 工具就会算 slack_days = 最早开工日 − scan_date，为负即冲突）。多条计划行时任一条为 true 即 true。不要自己比日期。",
-        "scan_date": "原样透传上游 scan_date。"
+        "scan_date": "原样透传上游 scan_date。",
+        "pbp_draft": "**必填对象**。直接发给 metaERP createPbp 的采购业务计划草稿，下游 generateExecutionPlanDraft 原样提交，不再加工。只填业务值，**部署级编码一个都不要填**（unitCode / organizationCode / documentType / itemCode / categoryId / 计量单位 / 申请人 / 审批节点等由平台路由注入，你写了也会被覆盖）。\n形状：{ pbpName, remark, totalPrice, pbpCreateLineDTOList: [ { pbpLineNumber, pbpLineSequence, quantity, primaryQuantity, unitPrice, budgetAmount, beforeChangeAmount, needByDate, sourceObjectId, sourceObjectLineId, remark } ] }。\n填法：\n- pbpName：`数字员工执行计划-<scan_date>-<来源计划头号>`，取上游 demand_plan 的 plan_no。\n- pbpCreateLineDTOList：**每条进入采购的需求计划行一条**，即 stock_check_result 里 stock_check_flag 为「需采购」或「触及安全库存」的那些行；判为「可调度」的不进采购计划。一条都没有就填空数组，平台会当场报错而不是建一张空单。\n- pbpLineNumber / pbpLineSequence：从 10 起、每行加 10（10、20、30…），两个字段取同一个值。\n- quantity / primaryQuantity：该计划行的 quantity，字符串形式，两个字段同值。\n- unitPrice：该计划行的 estimated_unit_price，字符串形式。\n- budgetAmount / beforeChangeAmount：quantity × unitPrice，两个字段同值，字符串形式，保留两位以内。\n- needByDate：该计划行的 required_arrival_date，'YYYY-MM-DD'。\n- sourceObjectId / sourceObjectLineId：该行的来源计划头号 plan_id 与来源计划行号 plan_line_id。**这两个字段是 BR2-MERGE-04（合并计划必须有来源行映射）的落库证据**，ERP 会原样收下并在回执里回带；缺了整步判失败。\n- 行 remark：写「来源需求行 <plan_line_id>；物料 <material_code> <material_name>」，给人看的。\n- totalPrice：所有行 budgetAmount 之和，字符串形式。"
       }
     },
     "auditAnnualPlanCompliance": {

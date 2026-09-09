@@ -125,12 +125,200 @@
     "createPbp": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/createPbp",
-      "note": "执行计划头 + 来源需求行映射。write_receipt 要求回执带 relation_record_id：BR2-MERGE-04（一单一档、来源可溯）的证据由这次写入本身产生，所以规则在覆盖层声明为 receipt 策略、由这条判据强制，而不是当前置闸口——本体把它绑成了同一个动作的 precondition，动作被自己写入的结果卡住，永远执行不了。",
+      "body_envelope": "array",
+      "note": "采购业务计划（执行计划）。2026-09-09 在 v15 实跑建出 PBP202609090001 并用 queryPbpHeader 回查确认（status=APPROVED，creationDate 2026-09-09 15:31:29），请求体形状取自页面手工建单的抓包 + PbpCreateOpenAPI_7c311b.yaml。三件事和别的写操作不一样：①**请求体是数组**（swagger 的 requestBody 是 array of PbpCreateHeaderDTO），由 body_envelope 包；②**回执也是数组**，每张单一条，整单结论在 headerProcessedStatus 而不是 affectedRows——实测成功时 affectedRows 就是 0，拿它当判据会把每一次成功都判成失败；③没有 uniqueSequenceNumber 之类的幂等字段，重复调用会建出第二张单。Inngest 的 step.run 记忆化挡住了重放，但不要在同一个 step 里循环调用它。模型只负责业务值：pbpName、备注、以及行上的 quantity / needByDate / unitPrice / budgetAmount；部署级编码与演示锚点由下面的 overrides / line_overrides 打进去。 BR2-MERGE-04（合并计划必须有来源行映射）由这条 write_receipt 兜底——本体把它绑成了本动作自己的 precondition，动作被自己写入的结果卡住，所以覆盖层把它声明为 receipt 策略。真实 v15 的回执里没有 relation_record_id 这种东西（那是 mock 的字段），落库证据是 pbpNumber + headerProcessedStatus=SUCCESS + 每一行 lineProcessedStatus=SUCCESS。来源映射是真的：2026-09-09 第二次实跑（PBP202609090002）验证 v15 原样收下行上的 sourceObjectId / sourceObjectLineId 并在回执里回带，所以 line_require_fields 直接要求每行回执带 sourceObjectLineId——缺了即判整步失败，而那时 headerProcessedStatus 照样是 SUCCESS。sourceObjectType 钉成 MANUAL：演示里的来源行号是 mock 造的，v15 侧没有对应单据，这个字段说的是「谁建的」而不是「关联到哪张单」。 行上还有 16 个页面报文逐字带着的字段（allowItemDescUpdateFlag / auto_createPrCxCx / versionList / suggestedBuyer* / manufacturer* / disabledCategory 等），少了就报 PBP-ServiceLogic-401048「字段:不能为空」而且**不说是哪个字段**——2026-09-09 首次实跑就栽在这里。整组照抄抓包放进 line_defaults / line_overrides，不要按「看起来没用」删。",
+      "defaults": {
+        "pbpName": {
+          "$env": "METAERP_PBP_DEFAULT_NAME"
+        },
+        "remark": ""
+      },
+      "overrides": {
+        "unitCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE"
+        },
+        "organizationCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "departmentCode": {
+          "$env": "METAERP_PBP_DEPARTMENT_CODE"
+        },
+        "documentType": {
+          "$env": "METAERP_PBP_DOCUMENT_TYPE"
+        },
+        "documentSubType": {
+          "$env": "METAERP_PBP_DOCUMENT_SUB_TYPE"
+        },
+        "businessType": {
+          "$env": "METAERP_PBP_BUSINESS_TYPE"
+        },
+        "currencyCode": "CNY",
+        "operationType": "created",
+        "submitFlag": {
+          "$env": "METAERP_PBP_SUBMIT_FLAG"
+        },
+        "preparerId": {
+          "$env": "METAERP_PBP_REQUESTOR_ID"
+        },
+        "requestorId": {
+          "$env": "METAERP_PBP_REQUESTOR_ID"
+        },
+        "pbpHeaderSequence": {
+          "$env": "METAERP_PBP_HEADER_SEQUENCE"
+        },
+        "pbpHeaderId": "",
+        "pbpNumber": "",
+        "status": "",
+        "periodType": "",
+        "startDate": "",
+        "endDate": "",
+        "projectNumber": "",
+        "attList": [],
+        "approverList": [
+          {
+            "approveNode": {
+              "$env": "METAERP_PBP_APPROVE_NODE"
+            },
+            "handlerList": [
+              {
+                "$env": "METAERP_PBP_APPROVER"
+              }
+            ]
+          }
+        ]
+      },
+      "line_field": "pbpCreateLineDTOList",
+      "line_defaults": {
+        "pbpLineNumber": 10,
+        "pbpLineSequence": 10,
+        "remark": null,
+        "allowItemDescUpdateFlag": "Y",
+        "auto_createPrCxCx": "是",
+        "disabledAllocationTypeCode": false,
+        "disabledCategory": true,
+        "manufacturerName": "",
+        "manufacturerPartNumber": "",
+        "suggestedBuyerEmployeeNumber": "",
+        "suggestedBuyerId": "",
+        "suggestedBuyerName": "",
+        "pfsStructNumber": null,
+        "serviceDate": null,
+        "versionList": [
+          {
+            "label": "0",
+            "value": "0"
+          }
+        ]
+      },
+      "line_overrides": {
+        "unitCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE"
+        },
+        "companyCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE"
+        },
+        "organizationCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "departmentCode": {
+          "$env": "METAERP_PBP_DEPARTMENT_CODE"
+        },
+        "operationType": "created",
+        "currencyCode": "CNY",
+        "inclusiveTaxFlag": "Y",
+        "matchingBasis": "QUANTITY",
+        "purchasingBasis": {
+          "$env": "METAERP_PBP_BUSINESS_TYPE"
+        },
+        "pbpLineTypeCode": {
+          "$env": "METAERP_PBP_LINE_TYPE_CODE"
+        },
+        "itemCode": {
+          "$env": "METAERP_PBP_ITEM_CODE"
+        },
+        "itemDesc": {
+          "$env": "METAERP_PBP_ITEM_DESC"
+        },
+        "itemVersion": "",
+        "categoryId": {
+          "$env": "METAERP_PBP_CATEGORY_ID"
+        },
+        "categoryConcatSections": {
+          "$env": "METAERP_PBP_CATEGORY_SECTIONS"
+        },
+        "requestorId": {
+          "$env": "METAERP_PBP_REQUESTOR_ID"
+        },
+        "requestorEmployeeNumber": {
+          "$env": "METAERP_PBP_REQUESTOR_NUMBER"
+        },
+        "requestorName": {
+          "$env": "METAERP_PBP_REQUESTOR_NAME"
+        },
+        "primaryUomCode": {
+          "$env": "METAERP_PBP_UOM_CODE"
+        },
+        "uomCode": {
+          "$env": "METAERP_PBP_UOM_CODE"
+        },
+        "primaryUomName": {
+          "$env": "METAERP_PBP_UOM_NAME"
+        },
+        "uomName": {
+          "$env": "METAERP_PBP_UOM_NAME"
+        },
+        "uomConversionRate": "1",
+        "projectNumber": "",
+        "sourceObjectType": {
+          "$env": "METAERP_PBP_SOURCE_OBJECT_TYPE"
+        },
+        "organizationName": {
+          "$env": "METAERP_PBP_ORGANIZATION_NAME"
+        },
+        "categoryDescription": {
+          "$env": "METAERP_PBP_CATEGORY_DESCRIPTION"
+        },
+        "configItemValue": {
+          "$env": "METAERP_PBP_CATEGORY_CONFIG_ITEM"
+        },
+        "currencyName": {
+          "$env": "METAERP_PBP_CURRENCY_NAME"
+        }
+      },
       "write_receipt": {
         "require_fields": [
-          "plan_id",
-          "relation_record_id"
+          "pbpNumber",
+          "pbpHeaderId"
+        ],
+        "require_values": {
+          "headerProcessedStatus": [
+            "SUCCESS"
+          ]
+        },
+        "error_list_fields": [
+          "headerMessageList"
+        ],
+        "line_field": "pbpResponseLineList",
+        "line_status_field": "lineProcessedStatus",
+        "line_failed_values": [
+          "ERROR",
+          "FAIL",
+          "FAILED"
+        ],
+        "line_error_fields": [
+          "lineMessageList"
+        ],
+        "line_require_fields": [
+          "sourceObjectLineId"
         ]
+      },
+      "tenant_overrides": {
+        "hc-digital-worker": {
+          "transport": "openapi",
+          "path": "/hsrm/srm/openapi/v1/createPbp",
+          "allow_real_write": true,
+          "note": "场景二唯一切到真实 v15 的写操作（用户 2026-09-09 明确授权「只放开 createPbp」）。顶层 tenants.hc-digital-worker 把整个租户钉在 mock 上；操作级 tenant_overrides 优先级更高，在这里单独开一个口子。别删掉那段租户钉子来代替这里——场景二的阶段周期、集采目录、审核阈值、采购包四张配置表在 v15 没有对应端点，整租户切真实后这些查询会返回空、链路直接断。"
+        }
       }
     },
     "createProcPackageLines": {

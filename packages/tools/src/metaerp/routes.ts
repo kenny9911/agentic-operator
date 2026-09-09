@@ -96,13 +96,43 @@ export interface MetaerpRoute {
   write_receipt?: {
     /** 这些字段必须存在且非空，否则判失败。 */
     require_fields?: string[];
-    /** 行状态字段名（行数组取 line_field）。 */
+    /**
+     * 这些字段必须取到列出的值之一，否则判失败。
+     *
+     * createPbp 的回执把整单结论放在 headerProcessedStatus 里，值不是
+     * SUCCESS 就是没落库——而字段本身照样存在且非空，`require_fields` 看不出来。
+     */
+    require_values?: Record<string, string[]>;
+    /** 这些字段是错误清单：数组非空即判失败，内容原样带进报错。 */
+    error_list_fields?: string[];
+    /**
+     * 回执里行数组的字段名。缺省沿用 `line_field`（请求侧的名字）——但两侧未必
+     * 同名：createPbp 请求发 pbpCreateLineDTOList，回执回 pbpResponseLineList。
+     */
+    line_field?: string;
+    /** 行状态字段名（行数组取 write_receipt.line_field ?? line_field）。 */
     line_status_field?: string;
     /** 行状态取到这些值即判失败。 */
     line_failed_values?: string[];
-    /** 这些行字段非空即判失败，其内容原样带进报错。 */
+    /**
+     * 每一行都必须带上这些字段且非空，否则判失败。
+     *
+     * 「来源可溯」这类规则的证据就在行回执里：createPbp 把 sourceObjectLineId 原样
+     * 回带，缺了就说明来源映射没写进去——而整单 headerProcessedStatus 照样是 SUCCESS。
+     */
+    line_require_fields?: string[];
+    /** 这些行字段非空（字符串非空 / 数组非空）即判失败，其内容原样带进报错。 */
     line_error_fields?: string[];
   };
+  /**
+   * 请求体的外层形状。
+   *
+   * 绝大多数 metaERP 接口收一个对象，但 createPbp 的 requestBody 是
+   * `array of PbpCreateHeaderDTO`——直接发对象会被网关按类型不匹配退回。
+   * 声明 `"array"` 后，合并好的单据头在发出前包成单元素数组；defaults /
+   * overrides / line_* 全部照常作用在**头对象**上，不受影响。
+   */
+  body_envelope?: "array";
   allow_real_write?: boolean;
   /**
    * 让运行时把稳定的幂等键写进这个字段。
@@ -259,6 +289,21 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
       `metaerp routes: entry '${operation}' declares line_defaults/line_overrides without line_field`,
     );
   }
+  const bodyEnvelopeRaw = (raw as { body_envelope?: unknown }).body_envelope;
+  if (bodyEnvelopeRaw !== undefined && bodyEnvelopeRaw !== "array") {
+    throw new Error(
+      `metaerp routes: entry '${operation}' body_envelope must be "array" when present`,
+    );
+  }
+  if (bodyEnvelopeRaw === "array" && transport !== "openapi") {
+    // Only the openapi transport builds its body by merging; wrapping anywhere
+    // else would produce a body the other transport never unwraps.
+    throw new Error(
+      `metaerp routes: entry '${operation}' body_envelope is only supported on the openapi transport (got '${transport}')`,
+    );
+  }
+  const bodyEnvelope = bodyEnvelopeRaw as "array" | undefined;
+
   return {
     transport,
     ...(routePath ? { path: routePath } : {}),
@@ -290,6 +335,7 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
     ...((raw as { write_receipt?: unknown }).write_receipt
       ? { write_receipt: (raw as { write_receipt: MetaerpRoute["write_receipt"] }).write_receipt }
       : {}),
+    ...(bodyEnvelope ? { body_envelope: bodyEnvelope } : {}),
     ...((raw as { allow_real_write?: unknown }).allow_real_write === true
       ? { allow_real_write: true }
       : {}),
@@ -394,25 +440,46 @@ function erpTimestamp(spec: unknown): string {
   );
 }
 
+/**
+ * One `{"$env"}` / `{"$now"}` node, or `MISSING` when an unset env var means the
+ * whole key should be omitted (that is how a route says "leave this field out
+ * entirely" — see METAERP_TRANSFER_AUTO_SUBMIT).
+ */
+const MISSING = Symbol("metaerp:missing");
+
+function expandNode(value: unknown): unknown | typeof MISSING {
+  if (Array.isArray(value)) {
+    // Nested, because deployment codes also live inside arrays of objects:
+    // createPbp's approverList is `[{approveNode, handlerList}]`, and a
+    // top-level-only expansion would ship the literal {"$env":…} to the ERP.
+    const out: unknown[] = [];
+    for (const entry of value) {
+      const expanded = expandNode(entry);
+      if (expanded !== MISSING) out.push(expanded);
+    }
+    return out;
+  }
+  if (!value || typeof value !== "object") return value;
+  if ("$env" in value) {
+    const name = (value as { $env?: unknown }).$env;
+    const resolved = typeof name === "string" ? process.env[name]?.trim() : undefined;
+    return resolved ? resolved : MISSING;
+  }
+  if ("$now" in value) return erpTimestamp((value as { $now?: unknown }).$now);
+  const out: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    const expanded = expandNode(nested);
+    if (expanded !== MISSING) out[key] = expanded;
+  }
+  return out;
+}
+
 function expandDefaults(
   defaults: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (!defaults) return undefined;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(defaults)) {
-    if (value && typeof value === "object" && !Array.isArray(value) && "$env" in value) {
-      const name = (value as { $env?: unknown }).$env;
-      const resolved =
-        typeof name === "string" ? process.env[name]?.trim() : undefined;
-      if (resolved) out[key] = resolved;
-      continue;
-    }
-    if (value && typeof value === "object" && !Array.isArray(value) && "$now" in value) {
-      out[key] = erpTimestamp((value as { $now?: unknown }).$now);
-      continue;
-    }
-    out[key] = value;
-  }
+  const expanded = expandNode(defaults);
+  const out = (expanded === MISSING ? {} : expanded) as Record<string, unknown>;
   return Object.keys(out).length ? out : undefined;
 }
 

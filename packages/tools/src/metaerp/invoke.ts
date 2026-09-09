@@ -340,6 +340,44 @@ function assertWriteReceipt(
 ): void {
   const spec = route.write_receipt;
   if (!spec) return;
+  // createPbp answers with one receipt per submitted header, so the payload is
+  // an array. Every element is checked: a two-header submit that half-failed
+  // must not pass because the first receipt was fine.
+  const receipts = Array.isArray(data) ? data : [data];
+  if (receipts.length === 0) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 的回执是空数组，无法确认写入是否落库`,
+    );
+  }
+  const failures: string[] = [];
+  receipts.forEach((receipt, index) => {
+    const where = receipts.length > 1 ? `第 ${index + 1} 张单：` : "";
+    collectReceiptFailures(operation, route, spec, receipt, where, failures);
+  });
+
+  if (failures.length > 0) {
+    throw new Error(
+      `metaerp.invoke: '${operation}' 未在 ERP 落库——${failures.join("；")}。` +
+        `ERP 以 HTTP 200 返回但把失败写在了回执里，因此这里判失败而不是成功。`,
+    );
+  }
+}
+
+/** A non-empty error list, rendered for the failure message. */
+function errorListDetail(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return JSON.stringify(value).slice(0, 500);
+}
+
+function collectReceiptFailures(
+  operation: string,
+  route: MetaerpRoute,
+  spec: NonNullable<MetaerpRoute["write_receipt"]>,
+  data: unknown,
+  where: string,
+  failures: string[],
+): void {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     throw new Error(
       `metaerp.invoke: '${operation}' 的回执不是对象，无法确认写入是否落库`,
@@ -347,15 +385,29 @@ function assertWriteReceipt(
   }
   const receipt = data as Record<string, unknown>;
 
-  const failures: string[] = [];
   for (const field of spec.require_fields ?? []) {
     const value = receipt[field];
     if (value === undefined || value === null || value === "") {
-      failures.push(`回执缺少 ${field}（值为 ${JSON.stringify(value ?? null)}）`);
+      failures.push(`${where}回执缺少 ${field}（值为 ${JSON.stringify(value ?? null)}）`);
     }
   }
+  // A verdict field is present and non-empty even when it says the write
+  // failed, so require_fields cannot see it — the accepted values must be named.
+  for (const [field, accepted] of Object.entries(spec.require_values ?? {})) {
+    const value = receipt[field];
+    if (!accepted.includes(String(value ?? ""))) {
+      failures.push(
+        `${where}${field}=${JSON.stringify(value ?? null)}（需为 ${accepted.join(" / ")}）`,
+      );
+    }
+  }
+  for (const field of spec.error_list_fields ?? []) {
+    const detail = errorListDetail(receipt[field]);
+    if (detail) failures.push(`${where}${field}: ${detail}`);
+  }
 
-  const lines = route.line_field ? receipt[route.line_field] : undefined;
+  const lineField = spec.line_field ?? route.line_field;
+  const lines = lineField ? receipt[lineField] : undefined;
   if (Array.isArray(lines)) {
     lines.forEach((line, index) => {
       if (typeof line !== "object" || line === null) return;
@@ -364,22 +416,21 @@ function assertWriteReceipt(
         ? String(row[spec.line_status_field] ?? "")
         : "";
       if (status && (spec.line_failed_values ?? []).includes(status)) {
-        failures.push(`第 ${index + 1} 行状态 ${status}`);
+        failures.push(`${where}第 ${index + 1} 行状态 ${status}`);
       }
-      for (const field of spec.line_error_fields ?? []) {
-        const message = row[field];
-        if (typeof message === "string" && message.trim() !== "") {
-          failures.push(`第 ${index + 1} 行 ${field}: ${message}`);
+      for (const field of spec.line_require_fields ?? []) {
+        const value = row[field];
+        if (value === undefined || value === null || value === "") {
+          failures.push(
+            `${where}第 ${index + 1} 行缺少 ${field}（值为 ${JSON.stringify(value ?? null)}）`,
+          );
         }
       }
+      for (const field of spec.line_error_fields ?? []) {
+        const detail = errorListDetail(row[field]);
+        if (detail) failures.push(`${where}第 ${index + 1} 行 ${field}: ${detail}`);
+      }
     });
-  }
-
-  if (failures.length > 0) {
-    throw new Error(
-      `metaerp.invoke: '${operation}' 未在 ERP 落库——${failures.join("；")}。` +
-        `ERP 以 HTTP 200 返回但把失败写在了回执里，因此这里判失败而不是成功。`,
-    );
   }
 }
 
@@ -392,7 +443,11 @@ export function _markAppliedForTests(
 
 function markApplied(kind: "query" | "write", data: unknown): unknown {
   if (kind !== "write") return data;
-  if (typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  // An array receipt (one per submitted header) keeps its shape and gets the
+  // stamp per element — wrapping it in an object would change what the run
+  // trace and any downstream reader see.
+  if (Array.isArray(data)) return data.map((entry) => markApplied(kind, entry));
+  if (typeof data !== "object" || data === null) return data;
   const record = data as Record<string, unknown>;
   return "applied" in record ? record : { ...record, applied: true };
 }
@@ -630,6 +685,7 @@ export const metaerpInvoke = defineTool({
         timeoutMs,
         ...(routeDefaults ? { defaults: routeDefaults } : {}),
         ...(route.overrides ? { overrides: route.overrides } : {}),
+        ...(route.body_envelope ? { bodyEnvelope: route.body_envelope } : {}),
       });
       assertWriteReceipt(entry.operation, route, result.data);
       return {

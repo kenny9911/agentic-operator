@@ -211,6 +211,32 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
         schedule_derived: true,
         time_conflict: false,
         scan_date: "2027-01-05",
+        // The metaERP-shaped draft generateExecutionPlanDraft posts verbatim.
+        // Business values only — every deployment code (unitCode, documentType,
+        // itemCode, uom, requestor, approver) is injected by the route, so a
+        // model that guessed them would only be overwritten.
+        pbp_draft: {
+          pbpName: "数字员工执行计划-2027-01-05-PBP-2027-0101",
+          remark: "由数字员工按需求合并/库存/倒排结论自动生成",
+          totalPrice: "1440000",
+          pbpCreateLineDTOList: [
+            {
+              pbpLineNumber: 10,
+              pbpLineSequence: 10,
+              quantity: "12000",
+              primaryQuantity: "12000",
+              unitPrice: "120",
+              budgetAmount: "1440000",
+              beforeChangeAmount: "1440000",
+              needByDate: "2027-06-01",
+              // BR2-MERGE-04 的落库证据。v15 收下这两个字段并在回执里回带，
+              // 路由的 line_require_fields 据此判断来源映射有没有真的写进去。
+              sourceObjectId: "PBP-2027-0101",
+              sourceObjectLineId: PLAN_LINE,
+              remark: `来源需求行 ${PLAN_LINE}；物料 M-CAB-240 240mm² 电缆`,
+            },
+          ],
+        },
         ...carry(),
       };
     }

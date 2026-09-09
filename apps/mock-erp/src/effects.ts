@@ -1748,7 +1748,13 @@ const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
         return;
       }
       if (!isRecord(value)) return;
-      const direct = pick(value, "plan_line_id", "PBP_LINE_ID", "pbp_line_id");
+      const direct = pick(
+        value,
+        "plan_line_id",
+        "PBP_LINE_ID",
+        "pbp_line_id",
+        "sourceObjectLineId",
+      );
       if (direct !== undefined && direct !== "") sourceLineIds.add(String(direct));
       const members = pick(value, "member_plan_line_ids", "source_plan_line_ids");
       if (Array.isArray(members)) {
@@ -1758,6 +1764,10 @@ const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
     collect(pick(payload, "demand_plan_line"));
     collect(pick(payload, "merge_suggestion"));
     collect(pick(payload, "plan_line_id"));
+    // 切到真实 v15 后载荷是 metaERP 的 PbpCreateHeaderDTO，来源行号在行上的
+    // sourceObjectLineId 里（2026-09-09 实测 v15 原样收下并在回执里回带）。
+    // mock 认同一个字段，两边才是同一条规则，而不是两套判据。
+    collect(pick(payload, "pbpCreateLineDTOList"));
 
     const relationId = makeId("REL");
     const relations: Row[] = [...sourceLineIds].map((sourceLineId, index) => {
@@ -1777,7 +1787,7 @@ const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
       // 静默建一张查不回原始需求的计划，比直接失败糟得多。
       throw new MockErpError(
         400,
-        "createPbp: 载荷里没有任何来源计划行（demand_plan_line[].plan_line_id 或 merge_suggestion[].member_plan_line_ids），无法写入来源需求行映射——BR2-MERGE-04 要求一单一档、来源可溯",
+        "createPbp: 载荷里没有任何来源计划行（pbpCreateLineDTOList[].sourceObjectLineId、demand_plan_line[].plan_line_id 或 merge_suggestion[].member_plan_line_ids），无法写入来源需求行映射——BR2-MERGE-04 要求一单一档、来源可溯",
       );
     }
 

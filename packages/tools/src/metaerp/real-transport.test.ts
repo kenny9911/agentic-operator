@@ -777,11 +777,13 @@ describe("租户级默认通道", () => {
     process.env.METAERP_ALLOW_REAL_WRITES = "true";
     _clearMetaerpRoutesCacheForTests();
     // 场景一与场景二共用这些操作名；场景一切到真实 ERP 后，场景二曾跟着一起指向 v15。
-    for (const op of ["queryPbpHeader", "queryPr", "createPbp", "createTransactionOrder"]) {
+    for (const op of ["queryPbpHeader", "queryPr", "createProcPackageLines", "createTransactionOrder"]) {
       const kind = op.startsWith("query") ? "query" : "write";
       expect(resolveRoute(op, kind, "hc-digital-worker").transport, op).toBe("mock");
       expect(resolveRoute(op, kind, "hc-procurement").transport, op).not.toBe("mock");
     }
+    // createPbp 是这条钉子唯一的例外，靠操作级 tenant_overrides 单独开口——见下一个 describe。
+    expect(resolveRoute("createPbp", "write", "hc-digital-worker").transport).toBe("openapi");
     // 不在表里的操作对该租户依旧是 mock，不会因为租户默认而出错。
     expect(resolveRoute("queryAuditThresholdConfig", "query", "hc-digital-worker").transport).toBe("mock");
   });
@@ -791,5 +793,165 @@ describe("租户级默认通道", () => {
     _clearMetaerpRoutesCacheForTests();
     // hc-procurement 没有租户默认，但 updateTransactionOrder 有操作级覆盖 → stub
     expect(resolveRoute("updateTransactionOrder", "write", "hc-procurement").transport).toBe("stub");
+  });
+});
+
+describe("createPbp：请求体是数组，回执也是数组", () => {
+  // 2026-09-09 v15 实跑 PBP202609090001 的原始回执，逐字保留。整单结论在
+  // headerProcessedStatus——affectedRows 成功时也是 0，拿它当判据会把每次成功判成失败。
+  const receipt = {
+    affectedRows: 0,
+    pbpHeaderId: "2038537256255558642",
+    pbpHeaderSequence: "2038537256255427570",
+    pbpNumber: "PBP202609090001",
+    headerProcessedStatus: "SUCCESS",
+    pbpResponseLineList: [
+      {
+        pbpLineId: "2038537256255689714",
+        pbpLineNumber: "2038537256255624178",
+        sourceObjectId: "PBP-2027-0102",
+        sourceObjectLineId: "PBPL-2027-0102-01",
+        lineProcessedStatus: "SUCCESS",
+        lineMessageList: [],
+      },
+    ],
+    headerMessageList: [],
+  };
+
+  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  const route = () => resolveRoute("createPbp", "write", "hc-digital-worker");
+
+  it("declares the array body envelope the swagger requires", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(route().body_envelope).toBe("array");
+  });
+
+  it("opens the one authorised write while the tenant stays pinned to the mock", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    delete process.env.METAERP_ALLOW_REAL_WRITES;
+    // 顶层 tenants.hc-digital-worker = mock；操作级 tenant_overrides 更具体，只放开这一个。
+    expect(route().transport).toBe("openapi");
+    expect(resolveRoute("createProcPackageLines", "write", "hc-digital-worker").transport).toBe("mock");
+    expect(resolveRoute("createTransactionOrder", "write", "hc-digital-worker").transport).toBe("mock");
+  });
+
+  it("accepts the receipt of the plan that really landed", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [receipt]),
+    ).not.toThrow();
+  });
+
+  it("fails a header the ERP did not process, even with the numbers filled in", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        { ...receipt, headerProcessedStatus: "ERROR" },
+      ]),
+    ).toThrow(/headerProcessedStatus="ERROR"[\s\S]*需为 SUCCESS/);
+  });
+
+  it("fails on a non-empty message list — the ERP's own wording, not a status code", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        { ...receipt, headerMessageList: [{ message: "物料编码不存在" }] },
+      ]),
+    ).toThrow(/物料编码不存在/);
+  });
+
+  it("reads lines from the receipt's own array name, not the request's", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    // 请求发 pbpCreateLineDTOList，回执回 pbpResponseLineList——两侧不同名。
+    expect(route().line_field).toBe("pbpCreateLineDTOList");
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        {
+          ...receipt,
+          pbpResponseLineList: [
+            { lineProcessedStatus: "ERROR", lineMessageList: ["需求日期早于当前日期"] },
+          ],
+        },
+      ]),
+    ).toThrow(/第 1 行状态 ERROR[\s\S]*需求日期早于当前日期/);
+  });
+
+  // BR2-MERGE-04（合并计划必须有来源行映射）的落库证据就在行回执里：v15 把
+  // sourceObjectLineId 原样回带（PBP202609090002 实测），缺了就是映射没写进去
+  // ——而整单 headerProcessedStatus 照样是 SUCCESS。
+  it("fails a plan whose lines came back without their source mapping", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(route().write_receipt?.line_require_fields).toEqual(["sourceObjectLineId"]);
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        {
+          ...receipt,
+          pbpResponseLineList: [
+            { pbpLineId: "2038537256255689714", lineProcessedStatus: "SUCCESS", lineMessageList: [] },
+          ],
+        },
+      ]),
+    ).toThrow(/第 1 行缺少 sourceObjectLineId/);
+  });
+
+  it("accepts the same plan once the source line id is echoed back", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        {
+          ...receipt,
+          pbpResponseLineList: [
+            {
+              pbpLineId: "2038539268691137525",
+              sourceObjectId: "PBP-2027-0102",
+              sourceObjectLineId: "PBPL-2027-0102-01",
+              lineProcessedStatus: "SUCCESS",
+              lineMessageList: [],
+            },
+          ],
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("names the failing header when only one of several landed", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        receipt,
+        { ...receipt, pbpNumber: "", headerProcessedStatus: "ERROR" },
+      ]),
+    ).toThrow(/第 2 张单/);
+  });
+
+  it("stamps every receipt in the array, keeping the array shape", () => {
+    expect(_markAppliedForTests("write", [receipt])).toEqual([
+      { ...receipt, applied: true },
+    ]);
+  });
+});
+
+describe("$env 展开会下钻到数组和嵌套对象里", () => {
+  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  it("resolves the approver node nested inside approverList", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_PBP_APPROVE_NODE = "__userManual_7_handler";
+    process.env.METAERP_PBP_APPROVER = "wubin";
+    const overrides = resolveRoute("createPbp", "write", "hc-digital-worker").overrides ?? {};
+    expect(overrides.approverList).toEqual([
+      { approveNode: "__userManual_7_handler", handlerList: ["wubin"] },
+    ]);
+  });
+
+  it("drops a nested key whose env var is unset, rather than shipping {$env}", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    delete process.env.METAERP_PBP_APPROVE_NODE;
+    process.env.METAERP_PBP_APPROVER = "wubin";
+    const overrides = resolveRoute("createPbp", "write", "hc-digital-worker").overrides ?? {};
+    expect(overrides.approverList).toEqual([{ handlerList: ["wubin"] }]);
   });
 });
