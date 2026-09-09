@@ -64,11 +64,11 @@ roots, not protection against another hostile process with the same OS identity.
 
 ## Verification on 2026-09-09
 
-- 44 isolated library tests passed: 25 existing library cases, 8 filesystem
+- 46 isolated library tests passed: 25 existing library cases, 10 filesystem
   cases, and 11 storage integration cases. Coverage includes binary resources,
   owner isolation, stale revision checks, I/O failures, a real deferred SQL commit
   failure, archive/restore, missing files, reconciliation permissions, and old
-  runtime pins.
+  runtime pins, interrupted manifest writes, and deeply nested admitted bundles.
 - 8 catalog import tests and 16 runtime tests passed; API typecheck passed.
 - Live startup materialized 57 existing records: 53 shared, 4 tenant-owned,
   including 3 archived records. Reconciliation repeated with zero changes.

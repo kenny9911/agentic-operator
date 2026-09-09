@@ -69,6 +69,8 @@ export interface SkillLibraryFileProjection {
 type Decoded = { digest: string; files: { path: string; bytes: Buffer }[] };
 const MAX_MANIFEST_BYTES = 32 * 1024 * 1024;
 const DIGEST = /^[a-f0-9]{64}$/;
+const MAX_DIRECTORY_ENTRIES =
+  SKILL_BUNDLE_LIMITS.maxFiles * (SKILL_BUNDLE_LIMITS.maxPathDepth + 1) + 1;
 export class SkillLibraryFileError extends Error {
   constructor(
     message = "Skill files could not be synchronized. The database edit was not committed.",
@@ -227,14 +229,16 @@ function checkTree(root: string): string[] {
     if (prefix && entries.length === 0)
       fail("Unexpected empty bundle directory");
     for (const name of entries) {
-      if (++visited > SKILL_BUNDLE_LIMITS.maxFiles * 2)
+      if (++visited > MAX_DIRECTORY_ENTRIES)
         fail("Bundle directory exceeds its entry limit");
       const full = path.join(parent, name);
       const relative = prefix ? `${prefix}/${name}` : name;
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) fail("Symbolic links are not allowed");
-      if (stat.isDirectory()) walk(full, relative);
-      else if (stat.isFile() && stat.nlink === 1) {
+      if (stat.isDirectory()) {
+        paths.add(relative, "directory");
+        walk(full, relative);
+      } else if (stat.isFile() && stat.nlink === 1) {
         paths.add(relative);
         if (files.length >= SKILL_BUNDLE_LIMITS.maxFiles)
           fail("Bundle directory exceeds its file limit");
@@ -262,7 +266,13 @@ function verifyBundle(root: string, bundle: Decoded): void {
       fail("Existing immutable bundle bytes changed");
 }
 function replaceManifest(root: string, bytes: Buffer): void {
-  const temporary = path.join(root, `.current-${randomUUID()}.tmp`);
+  // Keep unfinished writes beside the managed root. A process crash must not
+  // turn an otherwise recoverable skill into a directory with unknown content.
+  // This remains on the same filesystem for an atomic rename into current.json.
+  const temporary = path.join(
+    path.dirname(root),
+    `.current-${randomUUID()}.tmp`,
+  );
   try {
     writeNew(temporary, bytes);
     renameSync(temporary, path.join(root, "current.json"));

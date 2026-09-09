@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -8,20 +8,26 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { skillBundleDigest } from "@agentic/skills";
+import { dirname, join } from "node:path";
+import { assertValidSkillBundle, skillBundleDigest } from "@agentic/skills";
 import type { SkillBundle } from "@agentic/contracts";
 import {
   projectSkillLibraryFiles,
   SkillLibraryFileError,
   type SkillLibraryFileSnapshot,
 } from "../src/services/skill-library-files";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return { ...original, renameSync: vi.fn(original.renameSync) };
+});
 
 let root: string;
 const binary = Buffer.from([0, 255, 1, 128, 13]);
@@ -77,10 +83,75 @@ beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "agentic-skill-files-")));
 });
 afterEach(() => {
+  vi.clearAllMocks();
   rmSync(root, { recursive: true, force: true });
 });
 
 describe("managed Skill filesystem projection", () => {
+  it("reconciles after a process crash leaves an unfinished manifest beside the managed directory", () => {
+    const first = project();
+    const rename = vi
+      .mocked(renameSync)
+      .mock.calls.find(([, to]) => to === first.manifestPath);
+    expect(rename).toBeDefined();
+    const temporary = String(rename![0]);
+    expect(dirname(temporary)).toBe(dirname(first.skillDirectory));
+    // Recreate the exact staging coordinate after the write but before rename,
+    // as if that process exited without running its finally block.
+    const unfinished = '{"interrupted":';
+    writeFileSync(temporary, unfinished, { mode: 0o600 });
+    const next = snapshot();
+    next.metadata.name = "reconciled-from-database";
+    expect(project(next).changed).toBe(true);
+    expect(manifest(first.manifestPath).metadata.name).toBe(
+      "reconciled-from-database",
+    );
+    expect(readFileSync(temporary, "utf8")).toBe(unfinished);
+    expect(readdirSync(first.skillDirectory).sort()).toEqual([
+      "bundles",
+      "current.json",
+      "owner.json",
+    ]);
+  });
+
+  it("projects and reconciles an admitted 343-file bundle with more than 1024 directory entries", () => {
+    const value: SkillBundle = {
+      files: [
+        bundle().files[0]!,
+        ...Array.from({ length: 342 }, (_, index) => ({
+          path: `references/p${index}/nested/item.txt`,
+          encoding: "utf8" as const,
+          content: `Reference ${index}\n`,
+        })),
+      ],
+    };
+    const validated = assertValidSkillBundle(value);
+    const input = snapshot();
+    input.draft = { revision: 1, bundle: value };
+    input.revisions = [input.draft];
+    input.versions = [
+      {
+        id: "skv-one",
+        versionNo: 1,
+        contentDigest: validated.digest,
+        bundle: value,
+      },
+    ];
+    const first = project(input);
+    const current = manifest(first.manifestPath);
+    expect(
+      readFileSync(
+        join(
+          first.skillDirectory,
+          current.draft.path,
+          "references/p341/nested/item.txt",
+        ),
+        "utf8",
+      ),
+    ).toBe("Reference 341\n");
+    expect(project(input).changed).toBe(false);
+  });
+
   it("writes one binary-safe bundle for identical draft/revision/publication and scopes shared and tenant directories", () => {
     const shared = project();
     expect(shared.skillDirectory).toBe(join(root, "shared/skills/skl-one"));
