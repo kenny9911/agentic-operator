@@ -8,6 +8,7 @@ import {
   isNull,
   ne,
   or,
+  sql,
 } from "drizzle-orm";
 import {
   auditLog,
@@ -36,6 +37,7 @@ import {
 import {
   assertValidSkillBundle,
   decodeSkillFile,
+  parseSkillDocument,
   SkillPathIndex,
   SKILL_BUNDLE_LIMITS,
   validateSkillBundle,
@@ -278,6 +280,7 @@ export class SkillLibraryStore {
         metadata: {
           name: skill.name,
           description: skill.description,
+          enabled: skill.enabled,
           latestVersionId: skill.latestVersionId,
           archivedAt: skill.archivedAt?.toISOString() ?? null,
           createdAt: skill.createdAt.toISOString(),
@@ -469,6 +472,7 @@ export class SkillLibraryStore {
       name: row.name,
       description: row.description,
       visibility: row.visibility,
+      enabled: row.enabled,
       latestVersionId: row.latestVersionId,
       latestVersionNo: version?.versionNo ?? null,
       archivedAt: row.archivedAt?.getTime() ?? null,
@@ -630,6 +634,88 @@ export class SkillLibraryStore {
       .get();
     if (!row) missing();
     return versionDto(row, privateAccess(ctx, skill));
+  }
+  /** Management reads remain available; callers that apply instructions must check live state. */
+  assertEnabled(ctx: SkillLibraryContext, id: string) {
+    if (!this.row(ctx, id).enabled)
+      throw new SkillLibraryError(
+        "skill_disabled",
+        "Enable this Skill before using its instructions.",
+        409,
+      );
+  }
+  /** The managed first-party snapshot and built-in authoring policy share one
+   * availability switch. Names alone cannot let a custom skill control it. */
+  assertCreatorEnabled(ctx: SkillLibraryContext) {
+    permission(ctx, "skills.write");
+    const owner = this.db
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(eq(tenants.slug, "__system"))
+      .get();
+    if (!owner) return; // Existing installations need not register the snapshot.
+    const rows = this.db
+      .select({
+        published: sql<
+          string | null
+        >`(SELECT value FROM json_each(${skillVersions.bundleJson}, '$.files') WHERE json_extract(value, '$.path') = 'SKILL.md' LIMIT 1)`,
+        draft: sql<
+          string | null
+        >`(SELECT value FROM json_each(${skillDrafts.bundleJson}, '$.files') WHERE json_extract(value, '$.path') = 'SKILL.md' LIMIT 1)`,
+      })
+      .from(managedSkills)
+      .leftJoin(
+        skillVersions,
+        and(
+          eq(skillVersions.id, managedSkills.latestVersionId),
+          eq(skillVersions.skillId, managedSkills.id),
+          eq(skillVersions.tenantId, owner.id),
+        ),
+      )
+      .leftJoin(
+        skillDrafts,
+        and(
+          eq(skillDrafts.skillId, managedSkills.id),
+          eq(skillDrafts.tenantId, owner.id),
+        ),
+      )
+      .where(
+        tenantScope(
+          { tenantId: owner.id },
+          managedSkills,
+        )(
+          and(
+            eq(managedSkills.visibility, "shared"),
+            eq(managedSkills.enabled, false),
+          ),
+        ),
+      )
+      .all();
+    for (const row of rows)
+      for (const document of [row.published, row.draft]) {
+        if (!document) continue;
+        let metadata;
+        try {
+          metadata = parseSkillDocument(
+            decodeSkillFile(JSON.parse(document)).toString("utf8"),
+          ).frontmatter.metadata;
+        } catch {
+          continue; // Invalid unrelated drafts do not disable intrinsic authoring.
+        }
+        if (
+          metadata?.["agentic-import-format"] === "catalog-v1" &&
+          metadata["agentic-catalog-id"] === "agentic/skill-creator" &&
+          metadata["agentic-source-id"] === "agentic" &&
+          metadata["agentic-upstream-path"] ===
+            "packages/skills/builtin/skill-creator" &&
+          metadata["agentic-upstream-name"] === "skill-creator"
+        )
+          throw new SkillLibraryError(
+            "skill_disabled",
+            "Enable the managed Skill Creator before using AI skill authoring.",
+            409,
+          );
+      }
   }
   draftForRead(ctx: SkillLibraryContext, id: string) {
     const row = this.row(ctx, id);
@@ -868,6 +954,58 @@ export class SkillLibraryStore {
         .where(tenantScope(ctx, managedSkills)(eq(managedSkills.id, id)))
         .run();
       audit(db, ctx, id, input.archived ? "archive" : "unarchive", {
+        revision: draft.revision,
+        latestVersionId: skill.latestVersionId,
+      });
+      return this.detail(ctx, id, db);
+    });
+  }
+  setEnabled(
+    ctx: SkillLibraryContext,
+    id: string,
+    input: {
+      enabled: boolean;
+      expectedEnabled: boolean;
+      expectedRevision: number;
+      expectedLatestVersionId: string | null;
+    },
+  ) {
+    return this.mutate((db) => {
+      const skill = this.writable(ctx, id, db, true);
+      ctx = ownerContext(ctx, skill);
+      const draft = this.revision(ctx, id, input.expectedRevision, db);
+      if (
+        skill.latestVersionId !== input.expectedLatestVersionId ||
+        skill.enabled !== input.expectedEnabled
+      )
+        throw new SkillLibraryError(
+          "revision_conflict",
+          "The Skill availability or publication changed. Reload before changing availability.",
+          409,
+          {
+            currentRevision: draft.revision,
+            latestVersionId: skill.latestVersionId,
+            enabled: skill.enabled,
+          },
+        );
+      if (skill.enabled === input.enabled) return this.detail(ctx, id, db);
+      db.update(managedSkills)
+        .set({ enabled: input.enabled, updatedAt: new Date() })
+        .where(
+          tenantScope(
+            ctx,
+            managedSkills,
+          )(
+            and(
+              eq(managedSkills.id, id),
+              eq(managedSkills.enabled, input.expectedEnabled),
+            ),
+          ),
+        )
+        .run();
+      audit(db, ctx, id, input.enabled ? "enable" : "disable", {
+        previousEnabled: skill.enabled,
+        enabled: input.enabled,
         revision: draft.revision,
         latestVersionId: skill.latestVersionId,
       });

@@ -96,7 +96,15 @@ export function SkillEvaluationPanel({
   }
   async function run(event: FormEvent) {
     event.preventDefault();
-    if (busy || disabled || !writable || !hasSource || invalidCriteria) return;
+    if (
+      busy ||
+      disabled ||
+      !detail.skill.enabled ||
+      !writable ||
+      !hasSource ||
+      invalidCriteria
+    )
+      return;
     const controller = new AbortController();
     activeRequest.current = controller;
     setBusy(true);
@@ -245,6 +253,9 @@ export function SkillEvaluationPanel({
             />
             <p className={styles.hint}>{copy.compareCosts}</p>
             {disabled && <p className={styles.hint}>{copy.savedOnly}</p>}
+            {!detail.skill.enabled && (
+              <p className={styles.hint}>{copy.skillDisabled}</p>
+            )}
             {!writable && <p className={styles.hint}>{copy.permission}</p>}
             <div className={styles.actions}>
               {busy && (
@@ -258,6 +269,7 @@ export function SkillEvaluationPanel({
                 disabled={
                   busy ||
                   disabled ||
+                  !detail.skill.enabled ||
                   !writable ||
                   !hasSource ||
                   invalidCriteria ||

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch reviewed, commit-pinned GitHub skill folders without running their code.
 
-sources.json is the operator-reviewed allow-list. --discover only reports new
+sources.json and curation.json are the operator-reviewed allow-list. --discover only reports new
 upstream candidates; it never changes pins, licenses, downloads or publications.
 """
 import argparse
@@ -139,6 +139,53 @@ def validate_review(source):
             raise ValueError("Pin the reviewed license bytes before downloading")
 
 
+def validate_curation(root, config, catalog=None):
+    """Require an explicit scope decision before a source can enter the library."""
+    curation = json.loads((root / "curation.json").read_text())
+    if curation.get("schemaVersion") != 1:
+        raise ValueError("Unsupported skill curation manifest")
+    retained, removed = curation.get("retained", []), curation.get("removed", [])
+    all_entries = retained + removed
+    if not retained or any(not entry.get("rationale") for entry in all_entries):
+        raise ValueError("Every curation decision requires a rationale")
+    if len({entry["id"] for entry in all_entries}) != len(all_entries):
+        raise ValueError("Curation ids must be unique across retained and removed skills")
+    retained_by_id = {entry["id"]: entry for entry in retained}
+    selected = [dict(skill, sourceId=source["id"]) for source in config["sources"] for skill in source["skills"]]
+    expected = {entry["id"] for entry in retained if entry["sourceId"] != "agentic"}
+    if len(selected) != len(expected) or {entry["id"] for entry in selected} != expected:
+        raise ValueError("Source selection must match retained curation; removed or unreviewed skills cannot be synced")
+    for entry in selected:
+        decision = retained_by_id[entry["id"]]
+        if any(entry[key] != decision[key] for key in ("name", "sourceId")) or entry["path"] != decision["upstreamPath"]:
+            raise ValueError(f"Source identity differs from retained curation: {entry['id']}")
+    if catalog is not None:
+        if len(catalog["skills"]) != len(retained_by_id) or {entry["id"] for entry in catalog["skills"]} != set(retained_by_id):
+            raise ValueError("Catalog selection must match retained curation")
+        for entry in catalog["skills"]:
+            decision = retained_by_id[entry["id"]]
+            if any(entry[key] != decision[key] for key in ("name", "sourceId", "upstreamPath")):
+                raise ValueError(f"Catalog identity differs from retained curation: {entry['id']}")
+    return curation
+
+
+def cached_source_tree(source, cached, previous_catalog):
+    """Allow offline pruning/refresh only from already verified unchanged pins."""
+    previous = {entry["id"]: entry for entry in previous_catalog["skills"]}
+    for skill in source["skills"]:
+        entry = previous.get(skill["id"])
+        url = f"https://github.com/{source['repository']}/tree/{source['revision']}/{skill['path']}"
+        if not entry or entry["sourceId"] != source["id"] or entry["sourceUrl"] != url or entry["revision"] != source["revision"]:
+            raise ValueError(f"Offline sync requires an already locked source and revision: {skill['id']}")
+    prefix = f"upstream/{source['id']}/"
+    items = [{"path": path[len(prefix):], "type": "blob", "mode": item["mode"],
+        "size": item["bytes"], "sha": item["gitBlobSha"]}
+        for path, item in cached.items() if path.startswith(prefix)]
+    if not items:
+        raise ValueError(f"No verified offline source files: {source['id']}")
+    return {"tree": items}
+
+
 def check_locked_tree(root, lock):
     """Verify the previous snapshot without requiring unchanged source pins."""
     expected = set()
@@ -166,7 +213,9 @@ def check_locked_tree(root, lock):
     actual = {p.relative_to(root).as_posix() for name in MANAGED_ROOTS for p in (root / name).rglob("*") if p.is_file() or p.is_symlink()}
     if actual != expected:
         raise ValueError(f"Untracked source files: {sorted(actual - expected)[:5]}")
-    actual_dirs = {name for name in MANAGED_ROOTS if (root / name).is_dir()} | {
+    # Git does not retain empty directories. Declared managed roots may be absent
+    # when their last bundle is pruned; nested untracked directories still fail.
+    actual_dirs = set(managed) | {name for name in MANAGED_ROOTS if (root / name).is_dir()} | {
         p.relative_to(root).as_posix() for name in MANAGED_ROOTS for p in (root / name).rglob("*") if p.is_dir()}
     if actual_dirs != expected_dirs:
         raise ValueError(f"Untracked source directories: {sorted(actual_dirs - expected_dirs)[:5]}")
@@ -179,6 +228,10 @@ def check(root):
     if sha256((root / "sources.json").read_bytes()) != lock["sourceManifestSha256"]:
         raise ValueError("Source pins changed; run sync to fetch and validate the reviewed revision")
     catalog = json.loads((root / "catalog.json").read_text())
+    config = json.loads((root / "sources.json").read_text())
+    validate_curation(root, config, catalog)
+    if sha256((root / "curation.json").read_bytes()) != lock.get("curationManifestSha256"):
+        raise ValueError("Curation changed; run sync to validate the reviewed selection")
     # Local maintained entries are separately digest-bound during import.
     upstream_entries = [s for s in catalog["skills"] if s["sourceId"] != "agentic"]
     if sha256(json.dumps(upstream_entries, sort_keys=True).encode()) != lock["catalogSha256"]:
@@ -186,13 +239,15 @@ def check(root):
     return {"files": len(expected), "skills": len(upstream_entries), "bytes": sum(x["bytes"] for x in lock["files"])}
 
 
-def sync(root, config):
+def sync(root, config, offline=False):
     manifest_bytes = (root / "sources.json").read_bytes()
     if json.loads(manifest_bytes) != config:
         raise ValueError("Source manifest changed after loading")
+    curation_bytes = (root / "curation.json").read_bytes()
     source_ids = [source["id"] for source in config["sources"]]
     if len(source_ids) != len(set(source_ids)):
         raise ValueError("Source ids must be unique")
+    validate_curation(root, config)
     previous_lock = None
     cached = {}
     if (root / "sources.lock.json").exists():
@@ -202,6 +257,10 @@ def sync(root, config):
         raise ValueError("Refusing to replace existing upstream content without a lock")
     catalog_bytes = (root / "catalog.json").read_bytes() if (root / "catalog.json").exists() else None
     old_catalog = json.loads(catalog_bytes) if catalog_bytes else {"skills": []}
+    if offline:
+        previous_upstream = [entry for entry in old_catalog["skills"] if entry["sourceId"] != "agentic"]
+        if not previous_lock or sha256(json.dumps(previous_upstream, sort_keys=True).encode()) != previous_lock.get("catalogSha256"):
+            raise ValueError("Offline sync requires the verified previous catalog provenance")
     root.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".skill-download-", dir=root))
     for name in MANAGED_ROOTS:
@@ -211,7 +270,7 @@ def sync(root, config):
     try:
         for source in config["sources"]:
             validate_review(source)
-            tree = source_tree(source)
+            tree = cached_source_tree(source, cached, old_catalog) if offline else source_tree(source)
             items = {x["path"]: x for x in tree["tree"]}
             def load_blob(item):
                 path = safe_path(item["path"])
@@ -223,6 +282,8 @@ def sync(root, config):
                     data = (root / relative).read_bytes()
                     validate_blob_bytes(item, data)
                     return data
+                if offline:
+                    raise ValueError(f"Offline source resource is not locked: {path}")
                 return verified_blob(source, item)
             # Check license bytes before fetching other resources.
             for skill in source["skills"]:
@@ -235,7 +296,8 @@ def sync(root, config):
             selected = list({x["path"]: x for x in selected}.values())
             if sum(x.get("size", 0) for x in selected) + sum(x["bytes"] for x in records) > MAX_DOWNLOAD:
                 raise ValueError("Reviewed collection exceeds download limit")
-            print(f"Fetching {source['id']}: {len(source['skills'])} skills, {len(selected)} files", flush=True)
+            action = "Reusing verified files for" if offline else "Fetching"
+            print(f"{action} {source['id']}: {len(source['skills'])} skills, {len(selected)} files", flush=True)
             def download(item):
                 data = load_blob(item)
                 relative = f"upstream/{source['id']}/{safe_path(item['path'])}"
@@ -282,6 +344,7 @@ def sync(root, config):
         if sum(item["bytes"] for item in records) > MAX_DOWNLOAD:
             raise ValueError("Reviewed collection and adaptations exceed byte limit")
         lock = {"schemaVersion": 1, "managedRoots": list(MANAGED_ROOTS), "sourceManifestSha256": sha256(manifest_bytes),
+                "curationManifestSha256": sha256(curation_bytes),
                 "catalogSha256": sha256(json.dumps(catalog, sort_keys=True).encode()),
                 "files": sorted(records, key=lambda x: x["path"])}
         catalog.extend(s for s in old_catalog["skills"] if s["sourceId"] == "agentic")
@@ -291,10 +354,13 @@ def sync(root, config):
             temp = stage / filename
             temp.write_text(json.dumps(data, indent=2) + "\n")
         (stage / "sources.json").write_bytes(manifest_bytes)
+        (stage / "curation.json").write_bytes(curation_bytes)
         check(stage)
         # Recheck inputs immediately before publishing; downloads may take time.
         if (root / "sources.json").read_bytes() != manifest_bytes:
             raise ValueError("Source manifest changed during sync")
+        if (root / "curation.json").read_bytes() != curation_bytes:
+            raise ValueError("Curation changed during sync")
         current_catalog = (root / "catalog.json").read_bytes() if (root / "catalog.json").exists() else None
         if current_catalog != catalog_bytes:
             raise ValueError("Catalog changed during sync")
@@ -338,12 +404,15 @@ def sync(root, config):
 
 
 def discover(config):
+    excluded = {(entry["sourceId"], entry["path"]): entry["reason"] for entry in config.get("excluded", [])}
     for source in config["sources"] + config.get("watchSources", []):
         tree = source_tree(source, "HEAD")
         known = {s["path"] for s in source.get("skills", [])}
         paths = sorted(x["path"][:-9] for x in tree["tree"] if x["path"].endswith("/SKILL.md"))
         print(json.dumps({"source": source["id"], "repository": source["repository"],
-            "revision": tree["sha"], "skillCount": len(paths), "unselected": [p for p in paths if p not in known]}))
+            "revision": tree["sha"], "skillCount": len(paths),
+            "unselected": [p for p in paths if p not in known and (source["id"], p) not in excluded],
+            "excluded": [{"path": p, "reason": excluded[(source["id"], p)]} for p in paths if (source["id"], p) in excluded]}))
 
 
 if __name__ == "__main__":
@@ -351,6 +420,7 @@ if __name__ == "__main__":
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="Verify the local collection offline")
     mode.add_argument("--discover", action="store_true", help="Report current official inventories without changing the collection")
+    mode.add_argument("--offline", action="store_true", help="Sync only already-locked source pins without network access; supports reviewed pruning")
     args = parser.parse_args()
     config = json.loads((ROOT / "sources.json").read_text())
     if args.check:
@@ -358,4 +428,4 @@ if __name__ == "__main__":
     elif args.discover:
         discover(config)
     else:
-        sync(ROOT, config)
+        sync(ROOT, config, offline=args.offline)

@@ -32,11 +32,17 @@ class CatalogSyncTests(unittest.TestCase):
             "licenseSha256": SYNC.sha256(self.contents["skills/example/LICENSE.txt"]),
         }]}
         self.config = {"sources": [self.source]}
+        self.curation = {"schemaVersion": 1, "retained": [{"id": "official-example", "name": "official-example",
+            "sourceId": "official", "upstreamPath": "skills/example", "rationale": "Business workflow fixture"}], "removed": []}
+        self.save_curation()
         self.save_manifest()
         self.downloaded = []
 
     def save_manifest(self):
         (self.root / "sources.json").write_text(json.dumps(self.config))
+
+    def save_curation(self):
+        (self.root / "curation.json").write_text(json.dumps(self.curation))
 
     def tree(self, _source):
         return {"tree": [{
@@ -67,12 +73,48 @@ class CatalogSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "executable mode"):
             SYNC.check(self.root)
 
+    def test_empty_managed_root_may_be_absent_in_a_fresh_git_checkout(self):
+        self.sync()
+        (self.root / "adapted").rmdir()
+        self.assertEqual(SYNC.check(self.root)["skills"], 1)
+
     def test_unchanged_blobs_are_reused_without_network_downloads(self):
         self.sync()
         self.downloaded.clear()
         self.sync()
         self.assertEqual(self.downloaded, [])
         self.assertEqual(SYNC.check(self.root)["skills"], 1)
+
+    def test_offline_sync_reuses_verified_pins_and_never_fetches(self):
+        self.sync()
+        with patch.object(SYNC, "source_tree", side_effect=AssertionError("Network is forbidden")), \
+                patch.object(SYNC, "verified_blob", side_effect=AssertionError("Download is forbidden")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            SYNC.sync(self.root, self.config, offline=True)
+        self.assertEqual(SYNC.check(self.root)["skills"], 1)
+
+    def test_offline_sync_refuses_a_new_pin_and_preserves_existing_bundle(self):
+        self.sync()
+        old_bundle = (self.root / "upstream/official/skills/example/SKILL.md").read_bytes()
+        self.source["revision"] = "b" * 40
+        self.save_manifest()
+        with self.assertRaisesRegex(ValueError, "already locked source and revision"):
+            SYNC.sync(self.root, self.config, offline=True)
+        self.assertEqual((self.root / "upstream/official/skills/example/SKILL.md").read_bytes(), old_bundle)
+
+    def test_offline_sync_rejects_edited_catalog_provenance(self):
+        self.sync()
+        self.source["revision"] = "b" * 40
+        self.save_manifest()
+        catalog_path = self.root / "catalog.json"
+        catalog = json.loads(catalog_path.read_text())
+        catalog["skills"][0]["revision"] = "b" * 40
+        catalog["skills"][0]["sourceUrl"] = f"https://github.com/example/skills/tree/{'b' * 40}/skills/example"
+        catalog_path.write_text(json.dumps(catalog))
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "verified previous catalog provenance"):
+            SYNC.sync(self.root, self.config, offline=True)
+        self.assertEqual(self.snapshot(), before)
 
     def test_untracked_files_and_empty_directories_are_preserved(self):
         self.sync()
@@ -154,6 +196,74 @@ class CatalogSyncTests(unittest.TestCase):
         with patch.object(self, "blob", mutate_manifest), self.assertRaisesRegex(ValueError, "manifest changed during sync"):
             self.sync()
         self.assertFalse((self.root / "upstream").exists())
+
+    def test_removed_skill_cannot_be_reintroduced_by_source_selection(self):
+        removed = dict(self.source["skills"][0], id="official-deploy", name="official-deploy", path="skills/deploy")
+        self.curation["removed"] = [{"id": "official-deploy", "name": "official-deploy", "sourceId": "official",
+            "upstreamPath": "skills/deploy", "rationale": "Deployment-time tooling is excluded"}]
+        self.save_curation()
+        self.source["skills"].append(removed)
+        self.save_manifest()
+        with patch.object(SYNC, "source_tree", side_effect=AssertionError("No network expected")):
+            with self.assertRaisesRegex(ValueError, "removed or unreviewed"):
+                self.sync()
+        self.assertFalse((self.root / "upstream").exists())
+
+    def test_curation_identity_cannot_redirect_a_retained_id(self):
+        self.source["skills"][0]["path"] = "skills/deploy"
+        self.save_manifest()
+        with self.assertRaisesRegex(ValueError, "identity differs"):
+            self.sync()
+
+    def test_duplicate_retained_entries_are_rejected(self):
+        self.sync()
+        catalog = json.loads((self.root / "catalog.json").read_text())
+        catalog["skills"].append(dict(catalog["skills"][0]))
+        with self.assertRaisesRegex(ValueError, "Catalog selection"):
+            SYNC.validate_curation(self.root, self.config, catalog)
+        self.source["skills"].append(dict(self.source["skills"][0]))
+        self.save_manifest()
+        with self.assertRaisesRegex(ValueError, "Source selection"):
+            self.sync()
+
+    def test_curation_mutation_during_sync_preserves_the_previous_snapshot(self):
+        self.sync()
+        before = (self.root / "catalog.json").read_bytes()
+        original_tree = self.tree
+
+        def mutate_curation(source):
+            self.curation["retained"][0]["rationale"] = "Changed during sync"
+            self.save_curation()
+            return original_tree(source)
+
+        with patch.object(self, "tree", mutate_curation), self.assertRaisesRegex(ValueError, "Curation changed during sync"):
+            self.sync()
+        self.assertEqual((self.root / "catalog.json").read_bytes(), before)
+
+    def test_reviewed_prune_preserves_authored_skills_outside_managed_roots(self):
+        for path, content in list(self.contents.items()):
+            self.contents[path.replace("skills/example/", "skills/retired/")] = content
+        retired = dict(self.source["skills"][0], id="official-retired", name="official-retired",
+            path="skills/retired", licensePath="skills/retired/LICENSE.txt")
+        self.source["skills"].append(retired)
+        decision = {"id": "official-retired", "name": "official-retired", "sourceId": "official",
+            "upstreamPath": "skills/retired", "rationale": "Previously selected development fixture"}
+        self.curation["retained"].append(decision)
+        self.save_manifest()
+        self.save_curation()
+        self.sync()
+        authored = self.root / "local/customer-ontology/SKILL.md"
+        authored.parent.mkdir(parents=True)
+        authored.write_text("Business ontology instructions owned by the project")
+        self.source["skills"].pop()
+        self.curation["retained"].pop()
+        self.curation["removed"].append(decision)
+        self.save_manifest()
+        self.save_curation()
+        self.sync()
+        self.assertFalse((self.root / "upstream/official/skills/retired").exists())
+        self.assertTrue((self.root / "upstream/official/skills/example/SKILL.md").is_file())
+        self.assertEqual(authored.read_text(), "Business ontology instructions owned by the project")
 
     def test_maintained_skill_id_collision_preserves_previous_catalog(self):
         maintained = {"sourceId": "agentic", "id": "official-example", "name": "maintained-example"}

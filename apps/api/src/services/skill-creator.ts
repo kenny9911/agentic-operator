@@ -72,6 +72,8 @@ export interface SkillCreatorHost {
   gateway?: SkillCreatorGateway;
   signal?: AbortSignal;
   attribution?: Pick<UsageAttribution, "interactionId" | "requestId" | "correlationId" | "apiRoute" | "httpMethod">;
+  /** Trusted live check for the authoring policy, independent of the target draft. */
+  authorizePolicy?: () => void | Promise<void>;
 }
 type Identity = Pick<AuthedContext, "tenantId" | "tenantSlug" | "userId" | "via" | "credentialId">;
 
@@ -161,6 +163,7 @@ function capabilityDisclosures(proposal: SkillCreatorProposal, capabilities: Ski
 /** Natural-language creation/revision with one bounded schema-repair attempt and honest provider provenance. */
 export async function generateSkill(ctx: Identity, request: GenerateSkillBody, host: SkillCreatorHost): Promise<GenerateSkillResponse> {
   host.signal?.throwIfAborted();
+  await host.authorizePolicy?.();
   const input = GenerateSkillBodySchema.parse(request);
   const modelPolicy = skillCreatorModelPolicy(input.modelRoute);
   const capabilities = CapabilitySchema.parse(host.capabilities);
@@ -183,6 +186,8 @@ export async function generateSkill(ctx: Identity, request: GenerateSkillBody, h
     host.signal?.throwIfAborted();
     const taskType = attempt === 0 ? "agent.author" as const : "output.repair" as const;
     if (promptBytes(messages) > SKILL_GENERATION_LIMITS.maxPromptBytes) throw new SkillGenerationError("context_too_large", "Skill Creator repair context exceeds the prompt size limit.", attempts);
+    await host.authorizePolicy?.();
+    host.signal?.throwIfAborted();
     const response = await gateway.chat({
       tenantId: ctx.tenantId, tenantSlug: ctx.tenantSlug,
       purpose: "skills.skill-authoring", routing: { taskType, requestedRoute: modelPolicy.route, parameterPrecedence: "request" },

@@ -21,6 +21,7 @@ export const ManagedSkillSummarySchema = z
     name: z.string(),
     description: z.string(),
     visibility: SkillVisibilitySchema,
+    enabled: z.boolean().default(true),
     latestVersionId: z.string().nullable(),
     latestVersionNo: Revision.nullable(),
     archivedAt: Timestamp.nullable(),
@@ -125,6 +126,15 @@ export const ArchiveSkillBodySchema = z
     expectedLatestVersionId: z.string().nullable(),
   })
   .strict();
+export const SetSkillEnabledBodySchema = z
+  .object({
+    enabled: z.boolean(),
+    expectedEnabled: z.boolean(),
+    expectedRevision: Revision,
+    expectedLatestVersionId: z.string().nullable(),
+  })
+  .strict();
+export type SetSkillEnabledBody = z.infer<typeof SetSkillEnabledBodySchema>;
 export const ValidateSkillBodySchema = z
   .object({ bundle: SkillBundleSchema })
   .strict();

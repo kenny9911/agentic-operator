@@ -2,7 +2,19 @@ export const skillsEn = {
   title: "Skills",
   subtitle: "Reusable instructions for your agents and workflows.",
   workspaceScope:
-    "Current workspace: {tenant}. Published shared skills are available to every tenant.",
+    "Current workspace: {tenant}. Enabled, published shared skills are available to every tenant.",
+  enabled: "Enabled",
+  disabled: "Disabled",
+  runtimeToggle: "Available to agents: {name}",
+  updatingAvailability: "Updating…",
+  availabilityHint:
+    "Only enabled, published skills are available to agents and workflows. Disabled skills stay in the library for editing.",
+  availabilityReadonly:
+    "Only this skill's library administrator can change its availability.",
+  availabilityArchived:
+    "Archived skills are unavailable. Restore this skill before changing its availability.",
+  availabilityConflict:
+    "This skill changed before the update was saved. Check its current state and try again.",
   refresh: "Refresh",
   refreshing: "Refreshing…",
   loadedCount: "Skills loaded: {count}",
@@ -13,7 +25,7 @@ export const skillsEn = {
   import: "Import skill",
   help: "Help & examples",
   search: "Search skills",
-  available: "Available",
+  available: "All skills",
   owned: "This tenant",
   shared: "Shared library",
   archived: "Archived",
@@ -162,7 +174,17 @@ export const skillsEn = {
 export const skillsZh = {
   title: "技能",
   subtitle: "为智能体和工作流提供可复用的操作指引。",
-  workspaceScope: "当前工作区：{tenant}。已发布的共享技能可供所有租户使用。",
+  workspaceScope:
+    "当前工作区：{tenant}。已启用并发布的共享技能可供所有租户使用。",
+  enabled: "已启用",
+  disabled: "已禁用",
+  runtimeToggle: "可供智能体使用：{name}",
+  updatingAvailability: "更新中…",
+  availabilityHint:
+    "只有已启用并发布的技能可供智能体和工作流使用。已禁用的技能仍保留在技能库中，可继续编辑。",
+  availabilityReadonly: "只有该技能库的管理员可以更改此技能的可用状态。",
+  availabilityArchived: "已归档的技能不可用。请先恢复技能，再更改可用状态。",
+  availabilityConflict: "保存更新前，该技能已发生变化。请检查当前状态后重试。",
   refresh: "刷新",
   refreshing: "刷新中…",
   loadedCount: "已加载技能：{count}",
@@ -173,7 +195,7 @@ export const skillsZh = {
   import: "导入技能",
   help: "帮助与示例",
   search: "搜索技能",
-  available: "可用技能",
+  available: "全部技能",
   owned: "当前租户",
   shared: "共享技能库",
   archived: "已归档",

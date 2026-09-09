@@ -93,6 +93,32 @@ Selected rows identify the Tenant or shared source and offer version controls. *
 
 Missing, archived, unpublished, outside-scope and unavailable pinned entries remain visible with recovery actions. Restore or publish the Skill, fix the pin or parent scope, or remove the assignment. A library loading failure does not clear your saved selections. Use **Load more** to search additional catalog pages.
 
+## Enable or disable a Skill
+
+Use the **Enabled / Disabled** switch on a Skills row or its detail page. Disabled
+Skills stay visible for management, editing and export, but agents cannot discover,
+activate, read their resources or run their scripts. Comparisons also require an
+enabled Skill. Publishing a new version does not turn a disabled Skill back on.
+
+Disabling the maintained Agentic Skill Creator also stops Skill Builder from
+using that authoring policy, including repair attempts. You can still manually
+edit a disabled Skill; revising a disabled target with AI is allowed when the
+creator itself is enabled. An installation without a registered creator snapshot
+continues to use its built-in authoring policy.
+
+Availability belongs to the Skill, across all its versions. Tenant owners with
+Skills write permission can change their Skills; shared Skills require a platform
+superadmin. Disabling a shared Skill affects every tenant that uses it. Stale
+updates fail explicitly so one operator cannot silently overwrite another's switch.
+
+The runtime checks current availability even for captured versions and active
+sessions. A disabled active Skill blocks subsequent guidance or native-agent
+preparation; existing assignments must be removed or the Skill enabled before
+continuing. Content already sent to an in-flight model call cannot be recalled.
+Archiving and disabling are separate: archive preserves historical access, whereas
+disable revokes future runtime access to the Skill. Removed catalog imports are
+both disabled and archived.
+
 ## What a run keeps
 
 Each managed run captures an authorized catalog with exact Skill identities, versions and content digests. A later publication does not retarget an in-progress run, replay or retry. Activated instructions are reconstructed for later model turns, including after chat history is shortened, without relying on the model to remember them.
@@ -139,7 +165,7 @@ The native Codex adapter targets the repository's pinned runtime and verifies di
 
 | Symptom | Check |
 | --- | --- |
-| A Skill is absent from the selector | Publish it, restore it if archived, verify the current Tenant and inherited scope, and load more catalog pages. |
+| A Skill is absent from the selector | Enable and publish it, restore it if archived, verify the current Tenant and inherited scope, and load more catalog pages. |
 | An Agent ignores useful guidance | Improve the description and relevant example; inspect the run's exact version and activation. Use explicit start activation when appropriate. |
 | A Tool is unavailable despite Skill instructions | Grant the actual business Tool through the existing policy and configure its integration. Changing Skill text cannot grant access. |
 | A resource cannot be read | Verify its relative path, bundle inclusion, access policy and read limits. Exporting Markdown alone excludes resources. |
@@ -172,3 +198,27 @@ run snapshots. The filesystem copies are not automatically imported back. A
 superadmin can run `pnpm skills:reconcile` against the running API to rebuild
 missing directory copies. Do not commit these runtime directories; the reviewed
 shared source collection is already retained in the repository.
+
+## Curated business and agentic skills
+
+The reviewed import catalog retains 17 business and agentic-tool Skills. It excludes
+Vercel, deployment/DevOps, GitHub/merging, frameworks, application development,
+developer testing and other development-time bundles. Existing authored business
+and ontology Skills remain in their tenant/project scopes. The exact retained and
+removed identities and reasons are in `skills-library/curation.json`; ordinary
+source sync cannot reintroduce a removed selection without updating that policy.
+
+After applying migration 0083 and restarting the API, reconcile previously
+published imports through its authenticated administrative interface:
+
+```sh
+corepack pnpm skills:retire
+corepack pnpm skills:retire --apply
+```
+
+The default is a dry run. The apply command checks source provenance, disables each
+matching removed import, then archives it. Immutable publications and run evidence
+remain available for history. Unrelated authored Skills are not retired. Repeating
+the command reports already-retired records without recreating them. A conflict or
+unexpected identity is reported instead of overwriting it. Set `AGENTIC_API_TOKEN`
+when the API requires an authenticated platform-superadmin token.

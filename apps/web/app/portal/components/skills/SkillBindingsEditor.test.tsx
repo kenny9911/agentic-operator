@@ -49,6 +49,7 @@ function skill(
     latestVersionId: `v-${id}`,
     latestVersionNo: 1,
     archivedAt: null,
+    enabled: true,
     createdAt: 1,
     updatedAt: 1,
     canEdit: true,
@@ -111,13 +112,28 @@ describe("Skill assignment controls", () => {
       skill("shared", { visibility: "shared" }),
       skill("draft", { latestVersionId: null }),
       skill("archived", { archivedAt: 4 }),
+      skill("switched-off", { enabled: false }),
     ];
     const html = render({ mode: "selected", skills: [] });
     expect(html).toContain('value="own"');
     expect(html).toContain('value="shared"');
     expect(html).not.toContain('value="draft"');
     expect(html).not.toContain('value="archived"');
+    expect(html).not.toContain('value="switched-off"');
     expect(html).toContain("Shared library");
+  });
+
+  it("keeps disabled assignments and their pins editable without offering them as new choices", () => {
+    state.details.off = detail(skill("off", { enabled: false }));
+    const html = render({
+      mode: "selected",
+      skills: [{ id: "off", versionId: "v-off", activate: true }],
+    });
+    expect(html).toContain("This Skill is disabled in the library");
+    expect(html).toContain('aria-label="Remove off"');
+    expect(html).toContain('value="v-off" selected=""');
+    expect(html).toContain('checked=""');
+    expect(html).toContain("/portal/tenant/skills/off");
   });
 
   it("keeps missing, archived, and unavailable pinned assignments visible with recovery actions", () => {

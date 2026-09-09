@@ -19,6 +19,20 @@ import {
   type SkillLibraryContext,
 } from "./skill-library-store";
 
+function authorizedCreatorHost(
+  store: SkillLibraryStore,
+  ctx: SkillLibraryContext,
+  host: SkillCreatorHost,
+): SkillCreatorHost {
+  return {
+    ...host,
+    authorizePolicy: async () => {
+      await host.authorizePolicy?.();
+      store.assertCreatorEnabled(ctx);
+    },
+  };
+}
+
 export async function previewSkillImport(input: unknown) {
   const body = ImportSkillBodySchema.parse(input);
   let bundle: SkillBundle;
@@ -109,7 +123,7 @@ export async function createGeneratedSkill(
   const generation = await generateSkill(
     ctx,
     GenerateSkillBodySchema.parse(request),
-    host,
+    authorizedCreatorHost(store, ctx, host),
   );
   host.signal?.throwIfAborted();
   return {
@@ -135,7 +149,7 @@ export async function reviseGeneratedSkill(
   const generation = await generateSkill(
     ctx,
     GenerateSkillBodySchema.parse(request),
-    { ...host, baseBundle: base.bundle },
+    { ...authorizedCreatorHost(store, ctx, host), baseBundle: base.bundle },
   );
   host.signal?.throwIfAborted();
   return {
