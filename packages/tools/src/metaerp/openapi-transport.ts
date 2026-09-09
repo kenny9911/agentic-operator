@@ -97,6 +97,8 @@ export interface OpenapiCallInput {
   defaults?: Record<string, unknown>;
   /** 强制字段，合并在调用方之上——调用方给了也会被覆盖。 */
   overrides?: Record<string, unknown>;
+  /** `"array"` 时把合并好的单据头包成单元素数组再发（createPbp 的请求体形状）。 */
+  bodyEnvelope?: "array";
 }
 
 export interface TransportResult {
@@ -112,17 +114,23 @@ export async function callMetaerpOpenapi(
   const { preset } = credentials;
   const url = preset.apigwBase + normalizeMetaerpPath(input.path, preset);
 
+  // Merge first, wrap second: every scope layer (deployment defaults, route
+  // defaults, caller, route overrides) acts on the document header, and only
+  // the outermost shape differs per operation.
+  const document = {
+    ...credentials.defaults,
+    ...(input.defaults ?? {}),
+    ...input.payload,
+    ...(input.overrides ?? {}),
+  };
+  const body = input.bodyEnvelope === "array" ? [document] : document;
+
   const send = async (token: string) =>
     httpRequest(url, {
       method: "POST",
       insecureTls: preset.insecureTls,
       timeoutMs,
-      json: {
-        ...credentials.defaults,
-        ...(input.defaults ?? {}),
-        ...input.payload,
-        ...(input.overrides ?? {}),
-      },
+      json: body,
       headers: {
         authorization: token,
         "x-renter-id": credentials.renterId,

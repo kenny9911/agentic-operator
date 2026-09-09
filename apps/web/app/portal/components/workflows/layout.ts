@@ -88,42 +88,89 @@ export function autoPackLayout(
   const declared = new Set(agents.map((a) => a.stage));
   const effectiveStage = new Map<string, number>();
 
-  if (declared.size === 1) {
-    // Topo-sort: who emits an event that anyone else triggers on?
-    const emitterOf = new Map<string, string[]>(); // event → agent ids that emit it
-    for (const a of agents) {
-      for (const e of a.emits ?? []) {
-        const arr = emitterOf.get(e) ?? [];
-        arr.push(a.id);
-        emitterOf.set(e, arr);
-      }
+  // event → agent ids that emit it. Needed by both the topo-sort below and the
+  // lane barycenter at the end, so it is built once here.
+  const emitterOf = new Map<string, string[]>();
+  for (const a of agents) {
+    for (const e of a.emits ?? []) {
+      const arr = emitterOf.get(e) ?? [];
+      arr.push(a.id);
+      emitterOf.set(e, arr);
     }
-    // Memoized depth — guard against accidental cycles by capping at agents.length.
-    const depth = new Map<string, number>();
-    const visiting = new Set<string>();
-    function depthOf(id: string): number {
-      const cached = depth.get(id);
-      if (cached !== undefined) return cached;
-      if (visiting.has(id)) return 0; // cycle break
-      visiting.add(id);
-      const agent = agents.find((a) => a.id === id);
-      const triggers = agent?.triggers ?? [];
-      let maxParent = -1;
-      for (const t of triggers) {
-        const parents = emitterOf.get(t) ?? [];
-        for (const p of parents) {
-          if (p === id) continue;
-          maxParent = Math.max(maxParent, depthOf(p));
+  }
+
+  if (declared.size === 1) {
+    // 分层 = 事件图上的最长路径，但事件图有环：审核 ⇄ 退回整改、组包 ⇄ 合规预警、
+    // 计划确认驳回后退回重排。所以先确定性地剥掉回边，再在剩下的 DAG 上求最长路径。
+    //
+    // 早先的写法是带记忆化的递归 depthOf，撞到正在访问的节点就返回 0。问题在于
+    // 这个「环打断值」也被缓存了下来：环里谁先被计算，另一个就永久停在第 0 列。
+    // 实测场景二因此把最后一个节点 submitPlanForApproval 排到第 3 列，接近结尾的
+    // annotateFrameAndCentralPurchase 排到第 1 列，连线满屏往回跳。
+    const childrenOf = new Map<string, string[]>();
+    const parentCount = new Map<string, number>();
+    for (const a of agents) {
+      childrenOf.set(a.id, []);
+      parentCount.set(a.id, 0);
+    }
+    const edges: Array<[string, string]> = [];
+    for (const a of agents) {
+      for (const t of a.triggers ?? []) {
+        for (const parent of emitterOf.get(t) ?? []) {
+          if (parent !== a.id) edges.push([parent, a.id]);
         }
       }
-      const d = maxParent + 1; // 0 when no parents
-      depth.set(id, d);
-      visiting.delete(id);
-      return d;
     }
-    for (const a of agents) {
-      effectiveStage.set(a.id, Math.min(depthOf(a.id), agents.length));
+
+    // 回边判定：从根节点（无父节点者）按清单顺序做一次深度优先遍历，指向仍在栈上的
+    // 节点的边就是回边。遍历顺序固定，判定结果因而与「谁先被查询」无关。
+    const forward = new Map<string, string[]>();
+    for (const a of agents) forward.set(a.id, []);
+    for (const [from, to] of edges) forward.get(from)!.push(to);
+    const parentsById = new Map<string, string[]>();
+    for (const a of agents) parentsById.set(a.id, []);
+    for (const [from, to] of edges) parentsById.get(to)!.push(from);
+
+    const backEdges = new Set<string>();
+    const visited = new Set<string>();
+    const onStack = new Set<string>();
+    const walk = (id: string): void => {
+      visited.add(id);
+      onStack.add(id);
+      for (const child of forward.get(id) ?? []) {
+        if (onStack.has(child)) {
+          backEdges.add(`${id}->${child}`);
+          continue;
+        }
+        if (!visited.has(child)) walk(child);
+      }
+      onStack.delete(id);
+    };
+    const roots = agents.filter((a) => (parentsById.get(a.id) ?? []).length === 0);
+    for (const root of roots) if (!visited.has(root.id)) walk(root.id);
+    // 整张图都在环里时没有根节点；按清单顺序补齐，仍然是确定性的。
+    for (const a of agents) if (!visited.has(a.id)) walk(a.id);
+
+    for (const [from, to] of edges) {
+      if (backEdges.has(`${from}->${to}`)) continue;
+      childrenOf.get(from)!.push(to);
+      parentCount.set(to, (parentCount.get(to) ?? 0) + 1);
     }
+
+    // 剩下的是 DAG，Kahn 拓扑序上求最长路径：节点列号 = 所有前驱列号最大值 + 1。
+    const depth = new Map<string, number>(agents.map((a) => [a.id, 0]));
+    const queue = agents.filter((a) => (parentCount.get(a.id) ?? 0) === 0).map((a) => a.id);
+    const pending = new Map(parentCount);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      for (const child of childrenOf.get(id) ?? []) {
+        depth.set(child, Math.max(depth.get(child) ?? 0, (depth.get(id) ?? 0) + 1));
+        const left = (pending.get(child) ?? 0) - 1;
+        pending.set(child, left);
+        if (left === 0) queue.push(child);
+      }
+    }
+    for (const a of agents) effectiveStage.set(a.id, depth.get(a.id) ?? 0);
   } else {
     for (const a of agents) effectiveStage.set(a.id, a.stage);
   }
@@ -136,9 +183,40 @@ export function autoPackLayout(
     arr.push(a.id);
     byStage.set(s, arr);
   }
+  // Step 3: lanes. Alphabetical order put siblings wherever their names fell,
+  // so a straight chain zig-zagged across rows. Order each column by its
+  // parents' rows instead (barycenter): the main line stays on one row and
+  // branches settle underneath it. Ties keep the manifest's own order, so the
+  // result is still deterministic.
+  const parentsOf = new Map<string, string[]>();
+  for (const agent of agents) {
+    const parents: string[] = [];
+    for (const trigger of agent.triggers ?? []) {
+      for (const emitter of emitterOf.get(trigger) ?? []) {
+        if (emitter !== agent.id) parents.push(emitter);
+      }
+    }
+    parentsOf.set(agent.id, parents);
+  }
+
   const out: Record<string, { stage: number; lane: number }> = {};
-  for (const [stage, ids] of byStage) {
-    const sorted = [...ids].sort();
+  for (const stage of [...byStage.keys()].sort((a, b) => a - b)) {
+    const ids = byStage.get(stage)!;
+    const barycenter = (id: string): number => {
+      // Only parents already placed (a lower column) can pull a row.
+      const lanes = (parentsOf.get(id) ?? [])
+        .map((parent) => out[parent]?.lane)
+        .filter((lane): lane is number => lane !== undefined);
+      if (lanes.length === 0) return Number.POSITIVE_INFINITY;
+      return lanes.reduce((sum, lane) => sum + lane, 0) / lanes.length;
+    };
+    // 平局（都没有已放置的父节点，例如第 0 列）仍按 id 字母序——保持既有的确定性
+    // 约定；重心排序只影响真正有父节点可参照的那些列，那才是锯齿的来源。
+    const sorted = [...ids].sort((a, b) => {
+      const diff = barycenter(a) - barycenter(b);
+      if (diff !== 0 && Number.isFinite(diff)) return diff;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
     sorted.forEach((id, lane) => {
       out[id] = { stage, lane };
     });

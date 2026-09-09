@@ -77,11 +77,12 @@ interface SentEvent {
 
 /** Fields every downstream `payload_from: event.data` hop needs to keep carrying. */
 function carry(extra: Record<string, unknown> = {}) {
+  // Only what every hop's contract really carries. Identifiers the ERP writes
+  // need must come from the shapes the contracts define (nested lists, form
+  // answers) — a top-level shortcut here would hide exactly the shape bugs the
+  // real model hits: the mock used to accept only a top-level
+  // package_scheme_id while recommendPackagingScheme emits package_scheme[].
   return {
-    plan_id: PLAN_HEADER,
-    plan_line_id: PLAN_LINE,
-    pbp_header_id: PLAN_HEADER,
-    package_scheme_id: PACKAGE_SCHEME,
     scan_date: "2027-01-05",
     ...extra,
   };
@@ -121,10 +122,24 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
   function scriptedOutput(purpose: string): Record<string, unknown> | null {
     if (purpose.includes("scanApprovedDemandPlan")) {
       return {
-        demand_plan: { pbp_header_id: PLAN_HEADER, status: "已批准" },
-        demand_plan_line: [
-          { plan_line_id: PLAN_LINE, material_code: "M-CAB-240", quantity: 12000 },
+        demand_plan: [
+          { plan_id: PLAN_HEADER, plan_no: PLAN_HEADER, business_type: "物资", status: "已批准" },
         ],
+        demand_plan_line: [
+          {
+            plan_line_id: PLAN_LINE,
+            plan_id: PLAN_HEADER,
+            material_code: "M-CAB-240",
+            quantity: 12000,
+            required_arrival_date: "2027-03-10",
+            inventory_org: "ORG-HD-01",
+          },
+        ],
+        merge_thresholds: {
+          merge_window_days: 30,
+          split_window_days: 60,
+          threshold_ids: ["AT-MERGE-NEAR", "AT-SPLIT-FAR"],
+        },
         scanned_line_count: 4,
         coverage_note: "已全量纳入状态=已批准的计划行。",
         scan_date: "2027-01-05",
@@ -148,25 +163,41 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
           },
         ],
         split_required: required,
-        thresholds_used: { date_gap_days: 30 },
+        thresholds_used: {
+          merge_window_days: 30,
+          split_window_days: 60,
+          threshold_ids: ["AT-MERGE-NEAR", "AT-SPLIT-FAR"],
+        },
         scan_date: "2027-01-05",
         ...carry(),
       };
     }
     if (purpose.includes("verifyInventoryAvailability")) {
+      // Shaped like the contract: the transfer branch is decided per line by
+      // stock_check_flag, and the mock's createTransactionOrder builds one
+      // transfer per '可调度' line from exactly these rows.
       return {
-        demand_plan_line: [{ plan_line_id: PLAN_LINE }],
+        demand_plan_line: [
+          { plan_line_id: PLAN_LINE, plan_id: PLAN_HEADER, material_code: "M-CAB-240", quantity: 12000, inventory_org: "ORG-HD-01" },
+        ],
         stock_check_result: [
-          { plan_line_id: PLAN_LINE, onhand_qty: 200, required_qty: 12000, gap_qty: 11800 },
+          {
+            stock_check_id: "SCK-001",
+            plan_line_id: PLAN_LINE,
+            material_code: "M-CAB-240",
+            inventory_org: "ORG-HD-01",
+            onhand_qty: purchaseRequired ? 200 : 12000,
+            reserved_qty: purchaseRequired ? 0 : 500,
+            available_qty: purchaseRequired ? 200 : 11500,
+            safety_stock_qty: 2000,
+            max_stock_qty: 10000,
+            stock_check_flag: purchaseRequired ? "需采购" : "可调度",
+            explanation: purchaseRequired ? "可用量 200 < 需求 12000" : "现有量 12000 ≥ 最大库存 10000",
+          },
         ],
         purchase_required: purchaseRequired,
         scan_date: "2027-01-05",
-        ...carry({
-          material_id: "M-CAB-240",
-          from_warehouse: "WH-HD-01",
-          to_warehouse: "WH-HD-02",
-          qty: 200,
-        }),
+        ...carry(),
       };
     }
     if (purpose.includes("derivePurchaseSchedule")) {
@@ -180,6 +211,32 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
         schedule_derived: true,
         time_conflict: false,
         scan_date: "2027-01-05",
+        // The metaERP-shaped draft generateExecutionPlanDraft posts verbatim.
+        // Business values only — every deployment code (unitCode, documentType,
+        // itemCode, uom, requestor, approver) is injected by the route, so a
+        // model that guessed them would only be overwritten.
+        pbp_draft: {
+          pbpName: "数字员工执行计划-2027-01-05-PBP-2027-0101",
+          remark: "由数字员工按需求合并/库存/倒排结论自动生成",
+          totalPrice: "1440000",
+          pbpCreateLineDTOList: [
+            {
+              pbpLineNumber: 10,
+              pbpLineSequence: 10,
+              quantity: "12000",
+              primaryQuantity: "12000",
+              unitPrice: "120",
+              budgetAmount: "1440000",
+              beforeChangeAmount: "1440000",
+              needByDate: "2027-06-01",
+              // BR2-MERGE-04 的落库证据。v15 收下这两个字段并在回执里回带，
+              // 路由的 line_require_fields 据此判断来源映射有没有真的写进去。
+              sourceObjectId: "PBP-2027-0101",
+              sourceObjectLineId: PLAN_LINE,
+              remark: `来源需求行 ${PLAN_LINE}；物料 M-CAB-240 240mm² 电缆`,
+            },
+          ],
+        },
         ...carry(),
       };
     }
@@ -193,23 +250,35 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
           ? []
           : [{ finding_id: "AFD-001", rule_id: "BR2-AUDIT-01", detail: "超年度计划金额" }],
         audit_passed: passed,
-        thresholds_used: { over_plan_ratio: 0.1 },
+        thresholds_used: { price_deviation_ratio: 0.1, threshold_ids: ["AT-PRICE-DEV"] },
         scan_date: "2027-01-05",
-        ...carry({ audit_opinion_id: "AOP-001" }),
+        ...carry(),
       };
     }
     if (purpose.includes("recommendPackagingScheme")) {
       const compliant = packagingCompliant[Math.min(packagingCalls, packagingCompliant.length - 1)] ?? true;
       packagingCalls += 1;
+      // A LIST, as the contract says — the mock's createProcPackageLines used
+      // to read only a top-level package_scheme_id and would 400 on this.
       return {
-        package_scheme: { package_scheme_id: PACKAGE_SCHEME, scheme_name: "2027 年一季度电缆组包" },
+        package_scheme: [
+          {
+            package_scheme_id: PACKAGE_SCHEME,
+            package_name: "2027 年一季度电缆组包",
+            category_code: "CAT-CABLE",
+            member_plan_line_ids: [PLAN_LINE],
+            total_amount: 2160000,
+            category_count: 1,
+            required_arrival_window: "2027-03",
+          },
+        ],
         packaging_finding: compliant
           ? []
-          : [{ finding_id: "PFD-001", rule_id: "BR2-PKG-02", detail: "跨品类混包" }],
+          : [{ pkg_finding_id: "PFD-001", package_scheme_id: PACKAGE_SCHEME, finding_type: "品类混装超限", threshold_value: 1, actual_value: 2, explanation: "跨品类混包" }],
         packaging_compliant: compliant,
-        thresholds_used: { max_lines_per_package: 20 },
+        thresholds_used: { package_max_amount: 5000000, package_category_mixed: 1, threshold_ids: ["AT-PKG-AMOUNT", "AT-PKG-CATEGORY"] },
         scan_date: "2027-01-05",
-        ...carry({ alert_id: "PKA-001" }),
+        ...carry(),
       };
     }
     return null;
@@ -567,6 +636,49 @@ describe.sequential("hc-digital-worker scenario 2 digital-employee cascade (E2E)
     const [transfer] = runsFor("createInventoryTransferOrder");
     expect(transfer!.status).toBe("ok");
     expect((await journalOps()).map((e) => e.op)).toContain("createTransactionOrder");
+  });
+
+  it("proceeds after the planner confirmed the rectification, however the re-audit votes", async () => {
+    // 实测：审核与退回整改来回跑了六轮。退回事件把拦截时的原始载荷原样送回，ERP 数据
+    // 没变，复审必然得出一样的结论；加了「只在第一次拦截」的护栏后它不再空转，但链路
+    // 停在了复审——模型把 AF-20270105-01 改名成 AF-20270105-01-NEW 又提了一遍。
+    // 人工闸口是「这批已整改」的权威判据，所以复审无条件放行。
+    resetScript();
+    auditPasses = [false, false, false, false];
+
+    const delivered = await dispatchCascade("DAILY_DEMAND_PLAN_SCAN_SCHEDULED", {
+      subject: "dw-noloop-audit",
+      scan_date: "2027-01-05",
+      scan_batch_id: "DW-20270105-002",
+    });
+    const count = (name: string) => delivered.filter((entry) => entry === name).length;
+
+    // 拦截与退回各一次，不再来回。
+    expect(count("PLAN_AUDIT_INTERCEPTED")).toBe(1);
+    expect(count("PLAN_RECTIFICATION_SUBMITTED")).toBe(1);
+    // 复审仍投 false，但计划员已经确认整改，链路继续往下走。
+    expect(count("ANNUAL_PLAN_AUDITED")).toBe(1);
+    expect(delivered).toContain("PACKAGING_SCHEME_RECOMMENDED");
+  });
+
+  it("alerts once, then stops — the packaging loop cannot spin", async () => {
+    // 这条回环里没有人工闸口，纯机器空转：同一个超限的断路器合并包被反复重出，
+    // 组包与预警之间跑了五轮以上。
+    resetScript();
+    packagingCompliant = [false, false, false, false];
+
+    const delivered = await dispatchCascade("DAILY_DEMAND_PLAN_SCAN_SCHEDULED", {
+      subject: "dw-noloop-packaging",
+      scan_date: "2027-01-05",
+      scan_batch_id: "DW-20270105-003",
+    });
+    const count = (name: string) => delivered.filter((entry) => entry === name).length;
+
+    expect(count("PACKAGING_COMPLIANCE_VIOLATED")).toBe(1);
+    expect(count("PACKAGING_ALERT_RAISED")).toBe(1);
+    // 二次编排仍不合规 → 不再发预警，也不放行下游：停下来比带着超限的包往下走好。
+    expect(count("PACKAGING_SCHEME_RECOMMENDED")).toBe(0);
+    expect(delivered).not.toContain("PLAN_AND_PACKAGE_CONFIRMED");
   });
 
   it("stops the gate on a planner rejection: run fails, no ERP write, no downstream event", async () => {

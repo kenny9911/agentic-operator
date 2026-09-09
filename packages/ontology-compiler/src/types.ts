@@ -189,7 +189,18 @@ export interface OverlayEmission {
 
 export interface OverlayRuleGate {
   /** `condition` requires `condition`; anything else compiles a logic judge. */
-  strategy: "condition" | "judge";
+  /**
+   * `receipt` — 该规则要求的证据由这个动作**自己的写入**产生，因此它不能当前置闸口。
+   *
+   * 本体里出现过自锁绑定：generateExecutionPlanDraft 的 side_effects 明写「回写来源行
+   * 映射落库结果」（relation_record_id / source_mapping_written），而 BR2-MERGE-04 又被
+   * 绑成同一个动作的 precondition——动作被自己写入的结果卡住，永远执行不了，实跑中它
+   * 每次都判 violation，链路到此静默中止。
+   *
+   * 声明为 receipt 后，编译器不再生成前置闸口；规则改由该写操作在路由表里的
+   * `write_receipt` 判据强制（回执缺字段即整步失败），检查落在证据真正存在的时点上。
+   */
+  strategy: "condition" | "judge" | "receipt";
   condition?: string;
   /** Extra prompt context telling the judge where its facts live in the
    * trigger event payload. */

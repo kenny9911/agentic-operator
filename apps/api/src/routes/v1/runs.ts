@@ -7,13 +7,18 @@ import {
   tenantEventName,
 } from "@agentic/runtime";
 import { makeId } from "@agentic/shared";
-import { BulkRunActionBody, ListRunsQuery } from "@agentic/contracts";
+import {
+  BulkRunActionBody,
+  ListRunExecutionsQuery,
+  ListRunsQuery,
+} from "@agentic/contracts";
 import { requirePermission } from "../../plugins/rbac";
 import { writeAudit } from "../../plugins/audit";
 import {
   getRun,
   getRunUsageSummary,
   listRecentRuns,
+  listRunExecutions,
   listRunsPaged,
   listSteps,
   listRunChain,
@@ -58,6 +63,7 @@ export async function runsRoutes(app: FastifyInstance) {
         agentName: q.agent,
         query: q.q,
         parentRunId: q.parentRunId,
+        subject: q.subject,
         triggerEvent: q.triggerEvent,
         invocationSource: q.invocationSource,
         businessResult: q.businessResult,
@@ -78,6 +84,7 @@ export async function runsRoutes(app: FastifyInstance) {
       agentName: q.agent,
       query: q.q,
       parentRunId: q.parentRunId,
+      subject: q.subject,
       triggerEvent: q.triggerEvent,
       invocationSource: q.invocationSource,
       businessResult: q.businessResult,
@@ -89,6 +96,23 @@ export async function runsRoutes(app: FastifyInstance) {
       to: q.to,
     });
     return reply.ok(rows);
+  });
+
+  /**
+   * GET /v1/runs/executions — the workflow executions list.
+   *
+   * Registered ahead of `/runs/:id` on purpose: a param route would swallow
+   * "executions" as a run id and answer 404 for the whole feature.
+   */
+  app.get("/runs/executions", async (req, reply) => {
+    const auth = requirePermission(req, "runs.read");
+    const q = ListRunExecutionsQuery.parse(req.query);
+    const result = await listRunExecutions(auth.tenantSlug, {
+      page: q.page,
+      pageSize: q.pageSize,
+      query: q.q,
+    });
+    return reply.ok(result);
   });
 
   // GET /v1/runs/:id — single, strictly tenant-scoped.

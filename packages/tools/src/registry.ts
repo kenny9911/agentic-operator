@@ -534,6 +534,11 @@ const REGISTRATIONS: ToolRegistration[] = [
           type: "string",
           description: "\u53ef\u9009\uff1a\u6309\u4e1a\u52a1\u7c7b\u578b\u7b5b\u9009 stages\uff1b\u7b5b\u4e0d\u5230\u62a5\u9519\u3002",
         },
+        reference_date: {
+          type: "string",
+          description:
+            "\u53ef\u9009\uff1a\u53c2\u8003\u65e5\uff08\u4e00\u822c\u662f scan_date\uff0cYYYY-MM-DD\uff09\u3002\u7ed9\u4e86\u5c31\u8fd4\u56de slack_days\uff08\u6700\u65e9\u5f00\u5de5\u65e5 \u2212 \u53c2\u8003\u65e5\uff09\u4e0e time_conflict\uff08\u4e3a\u8d1f\u5373\u51b2\u7a81\uff09\u3002",
+        },
       },
       argsExample: {
         required_arrival_date: "2026-09-10",
@@ -551,6 +556,9 @@ const REGISTRATIONS: ToolRegistration[] = [
         stage_count: { type: "number" },
         total_cycle_days: { type: "number" },
         earliest_start_date: { type: "string" },
+        reference_date: { type: "string | null" },
+        slack_days: { type: "number | null", description: "\u6700\u65e9\u5f00\u5de5\u65e5 \u2212 \u53c2\u8003\u65e5\uff1b\u8d1f\u6570\u5373\u5de5\u671f\u4e0d\u591f" },
+        time_conflict: { type: "boolean | null" },
         planned_dates: {
           type: "array",
           description:
@@ -564,6 +572,9 @@ const REGISTRATIONS: ToolRegistration[] = [
         stage_count: 2,
         total_cycle_days: 80,
         earliest_start_date: "2026-06-22",
+        reference_date: null,
+        slack_days: null,
+        time_conflict: null,
         planned_dates: [
           {
             stage_node: "\u7acb\u9879",

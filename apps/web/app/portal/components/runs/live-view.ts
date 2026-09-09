@@ -19,7 +19,12 @@
  */
 
 import type { RunStreamEvent as StreamEvent } from "@agentic/contracts";
-import type { AgentLiveStatus } from "@/lib/hooks/useWorkflowLiveState";
+import type {
+  AgentLiveState,
+  AgentLiveStatus,
+  UseWorkflowLiveStateResult,
+  WorkflowLiveState,
+} from "@/lib/hooks/useWorkflowLiveState";
 import { fmtDur, fmtNum } from "@/app/portal/lib/format";
 
 /**
@@ -428,9 +433,21 @@ export function nodeFreshness(
   status: AgentLiveStatus | undefined,
   lastEventAt: number | null | undefined,
   now: number,
+  /**
+   * The canvas is pinned to ONE execution and this node belongs to it.
+   *
+   * The elapsed-time decay above answers "what is happening now" on a canvas
+   * that replays every frame it ever received. Once the canvas is pinned to a
+   * subject, that question is already answered by the pin: every coloured node
+   * ran in the execution being looked at, and greying it out after five
+   * minutes erases the path the operator opened the view to read. A历史 run
+   * would otherwise render entirely grey.
+   */
+  pinnedToExecution = false,
 ): NodeFreshness {
   if (status === "running" || status === "waiting_human") return "live";
   if (status !== "ok" && status !== "failed") return "stale";
+  if (pinnedToExecution) return "recent";
   if (lastEventAt == null) return "stale";
   return now - lastEventAt <= FRESH_WINDOW_MS ? "recent" : "stale";
 }
@@ -466,35 +483,10 @@ export function nextFollowState(args: {
   return distance <= TAIL_SLACK_PX;
 }
 
-/** Longest subtitle a node can carry before it crowds the card. */
-const SUBTITLE_MAX = 22;
-/** The compiler's category prefix — 【查】【算】【评】【行】 and the like. */
-const CATEGORY_PREFIX = /^【[^】]{1,4}】\s*/;
-
-/**
- * A one-line Chinese gloss for a node, from the agent's own description.
- *
- * The canvas shows manifest names — `collectChainExecutionData`,
- * `scoreOnTimeProbability` — which say what an agent is called, not what it
- * does. The description is right there in the definition, but it is a
- * paragraph: the useful part is its opening clause, up to the first break.
- *
- * Returns null rather than a truncated fragment when nothing short enough can
- * be salvaged; a node with no subtitle beats a node with a misleading one.
- */
-export function agentSubtitle(description: string | undefined | null): string | null {
-  const body = (description ?? "").trim().replace(CATEGORY_PREFIX, "");
-  if (!body) return null;
-  // First clause: Chinese and Latin sentence breaks alike.
-  const clause = body.split(/[，。；：,.;:—\n]/)[0]?.trim() ?? "";
-  if (!clause) return null;
-  if (clause.length <= SUBTITLE_MAX) return clause;
-  // A long opening clause is prose, not a label. Cut on a natural boundary if
-  // there is one inside the budget, rather than mid-word.
-  const clipped = clause.slice(0, SUBTITLE_MAX);
-  const boundary = Math.max(clipped.lastIndexOf("、"), clipped.lastIndexOf("／"));
-  return `${boundary > SUBTITLE_MAX / 2 ? clipped.slice(0, boundary) : clipped}…`;
-}
+// `agentSubtitle` lives in lib/agent-title.ts: the Workflows canvas renders the
+// same gloss on its own node cards, and two copies of the clipping rule would
+// drift. Re-exported here so this module stays the one import for view logic.
+export { agentSubtitle } from "@/lib/agent-title";
 
 export interface NodeVisual {
   /** CSS custom property name carrying the accent colour. */
@@ -645,4 +637,104 @@ export function countStates(
     else counts.idle += 1;
   }
   return counts;
+}
+
+// ─── history: rebuild a canvas state from persisted runs ─────────────────────
+
+/** The persisted run fields this rebuild needs — a structural subset of
+ *  `RunListRow`, so any row from `GET /v1/runs` satisfies it. */
+export interface ExecutionRunRow {
+  id: string;
+  status: string;
+  agentName: string;
+  subject?: string | null;
+  /** ISO string over the wire, epoch ms in tests — both are accepted. */
+  startedAt?: string | number | null;
+  endedAt?: string | number | null;
+  queuedAt?: string | number | null;
+}
+
+function asEpoch(value: string | number | null | undefined): number | null {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Rebuild the canvas state for ONE finished execution from its runs.
+ *
+ * The live canvas is fed by the SSE stream, so it can only colour what it
+ * watched happen: reload the page, or open the view an hour later, and the
+ * graph is blank. History has to come from the rows instead — same shape, so
+ * the same canvas renders it with no second code path to keep in step.
+ *
+ * `waitingTaskIds` stays empty on purpose: a task badge is an invitation to
+ * act, and the actionable surface belongs to the live view. What history owes
+ * the reader is the path — which nodes ran, which failed, which never ran.
+ */
+export function executionStateFromRuns(
+  rows: readonly ExecutionRunRow[],
+  subject: string,
+): UseWorkflowLiveStateResult & WorkflowLiveState {
+  const agents: Record<string, AgentLiveState> = {};
+  const runAgent: Record<string, string> = {};
+  const runSubject: Record<string, string | null> = {};
+
+  for (const row of rows) {
+    if (!row.agentName) continue;
+    runAgent[row.id] = row.agentName;
+    runSubject[row.id] = row.subject ?? subject;
+    const at =
+      asEpoch(row.endedAt) ?? asEpoch(row.startedAt) ?? asEpoch(row.queuedAt);
+    const status: AgentLiveStatus =
+      row.status === "failed"
+        ? "failed"
+        : row.status === "waiting"
+          ? "waiting_human"
+          : row.status === "running" || row.status === "queued"
+            ? "running"
+            : row.status === "ok"
+              ? "ok"
+              : "idle";
+    const prev = agents[row.agentName];
+    // An agent can run several times in one execution (a rectification loop
+    // re-enters it). The worst outcome is the one worth showing: a node that
+    // failed and was retried has still failed once in this execution.
+    const keep =
+      prev == null ||
+      (prev.state !== "failed" && status === "failed") ||
+      (prev.state === "ok" && status !== "ok") ||
+      (prev.lastEventAt != null && at != null && at > prev.lastEventAt);
+    if (!keep) continue;
+    agents[row.agentName] = {
+      state: prev?.state === "failed" && status !== "failed" ? "failed" : status,
+      activeRunId: status === "running" ? row.id : (prev?.activeRunId ?? null),
+      lastRunId: row.id,
+      runningCount: status === "running" ? 1 : 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      lastError: null,
+      lastEventAt: at ?? prev?.lastEventAt ?? null,
+      lastSubject: subject,
+      waitingTaskIds: [],
+    };
+  }
+
+  return {
+    agents,
+    runAgent,
+    runSubject,
+    taskSubject: {},
+    latestSubject: subject,
+    runOrder: Object.keys(runAgent),
+    taskAgent: {},
+    runTasks: {},
+    runDidWork: {},
+    pendingTasks: {},
+    pulses: [],
+    // No stream, so no edge animates — a finished execution has nothing in
+    // flight to pulse.
+    activeEventNames: new Set<string>(),
+  };
 }

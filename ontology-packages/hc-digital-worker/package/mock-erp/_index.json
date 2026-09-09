@@ -86,6 +86,12 @@
       "operation": "queryPbpLine"
     },
     {
+      "entity": "ss_pbp_rel_t",
+      "file": "ss_pbp_rel_t.json",
+      "object_id": "ss_pbp_rel_t",
+      "operation": "queryPbpRelations"
+    },
+    {
       "entity": "dw_plan_audit_finding_t",
       "file": "dw_plan_audit_finding_t.json",
       "object_id": "Plan_Audit_Finding",

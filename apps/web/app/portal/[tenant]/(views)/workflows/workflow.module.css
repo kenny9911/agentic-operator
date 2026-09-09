@@ -221,6 +221,27 @@
   -webkit-box-orient: vertical;
 }
 
+/* A title sharing the card with a gloss gets one line, not two. Measured in a
+ * DOM replica at NODE_H 76 (border 2 + padding 11 leaves 63): pill row 20.7 +
+ * title 3+19 + gloss 2+14 = 58.7. A two-line title (37) would overflow it by
+ * 13, so the second line is what gives way — the gloss says more than it did. */
+.nodeTitleTight {
+  -webkit-line-clamp: 1;
+}
+
+/* What the step does, in one clipped line — the same gloss the Runs canvas
+   shows. Full text lives in the card's tooltip. */
+.nodeDesc {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 14px;
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Technical id as a subtitle: one line, end-ellipsis, full id on hover. */
 .nodeId {
   flex: 0 0 auto;

@@ -379,3 +379,42 @@ describe("RAAS LAYOUT regression guard — hand-tuned positions must never move"
     `);
   });
 });
+
+describe("有环的事件图也要从左往右排", () => {
+  /** 场景二的形状：一条主链，外加两个回环（审核⇄退回整改、组包⇄合规预警）。 */
+  const agents = [
+    { id: "scan", stage: 99, triggers: ["SCHEDULED"], emits: ["SCANNED"] },
+    { id: "draft", stage: 99, triggers: ["SCANNED"], emits: ["DRAFTED"] },
+    { id: "audit", stage: 99, triggers: ["DRAFTED", "RECTIFIED"], emits: ["AUDITED", "INTERCEPTED"] },
+    { id: "rectify", stage: 99, triggers: ["INTERCEPTED"], emits: ["RECTIFIED"] },
+    { id: "packaging", stage: 99, triggers: ["AUDITED", "ALERTED"], emits: ["PACKAGED", "VIOLATED"] },
+    { id: "alert", stage: 99, triggers: ["VIOLATED"], emits: ["ALERTED"] },
+    { id: "submit", stage: 99, triggers: ["PACKAGED"], emits: [] },
+  ];
+
+  it("puts the terminal node last, whichever order the agents are declared in", () => {
+    const forward = autoPackLayout(agents);
+    const reversed = autoPackLayout([...agents].reverse());
+    // 早先的递归写法把「环打断值」也记忆化了：环里谁先被计算，另一个就永久停在第 0 列，
+    // 于是列号取决于声明顺序，最后一个节点会排到中间。
+    expect(forward.submit!.stage).toBe(reversed.submit!.stage);
+    expect(forward.scan!.stage).toBe(0);
+    const maxStage = Math.max(...Object.values(forward).map((p) => p.stage));
+    expect(forward.submit!.stage).toBe(maxStage);
+  });
+
+  it("keeps every forward edge pointing right", () => {
+    const layout = autoPackLayout(agents);
+    const forwardEdges: Array<[string, string]> = [
+      ["scan", "draft"],
+      ["draft", "audit"],
+      ["audit", "rectify"],
+      ["audit", "packaging"],
+      ["packaging", "alert"],
+      ["packaging", "submit"],
+    ];
+    for (const [from, to] of forwardEdges) {
+      expect(layout[to]!.stage, `${from} → ${to}`).toBeGreaterThan(layout[from]!.stage);
+    }
+  });
+});
