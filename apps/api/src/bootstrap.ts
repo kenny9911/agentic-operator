@@ -451,6 +451,16 @@ export async function bootstrapRuntime(
   // tenant bootstrap for both declarative and CodeAct generated functions.
   if (!sandboxRunner) installProductionGeneratedAgentAuthorizationVerifier();
 
+  // Rebuild directory views from durable Skills before accepting new edits.
+  // Historical versions and runtime snapshots keep their database identities.
+  if (!sandboxRunner && process.env.NODE_ENV !== "test") {
+    const { SkillLibraryStore } = await import("./services/skill-library-store");
+    const skillFiles = new SkillLibraryStore().reconcileFiles();
+    console.log(
+      `[bootstrap] skill directories — ${skillFiles.skills} reconciled, ${skillFiles.changed} updated`,
+    );
+  }
+
   // Recover the distributed promotion checkpoint before the first manifest
   // bootstrap. The runtime verifier intentionally rejects pending ledger
   // records outside the exact in-process activation window, so doing this

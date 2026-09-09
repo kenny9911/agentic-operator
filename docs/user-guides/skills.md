@@ -148,3 +148,27 @@ The native Codex adapter targets the repository's pinned runtime and verifies di
 | An import fails | Resolve path/name collisions, unsafe paths, invalid metadata or size diagnostics. Do not remove needed binary assets merely to hide an error. |
 
 For implementation details and verification limits, see the [design](../design/skills-and-skill-builder.md), [current evidence ledger](../design/skills-implementation-status.md), [primary-source research](../research/2026-09-09-skills-and-agent-harnesses.md), [Agent Studio guide](agent-studio.md) and [Workflow authoring guide](workflow-authoring.md).
+
+## Where skills are stored
+
+Published shared skills are available from every tenant's Skills page. The tenant
+in `/portal/<tenant>/skills` is the active workspace, not the owner of shared
+skills. Use **Shared library** for the shared catalog and **This tenant** for
+tenant-owned skills.
+
+- Reviewed upstream downloads: `skills-library/` in the repository, shared and
+  retained in Git with source pins and licenses.
+- Managed shared skills: `data/shared/skills/<skill-id>/`.
+- Managed tenant skills: `data/tenants/<tenant-slug>/skills/<skill-id>/`.
+
+The last two paths follow the deployment's configured data and tenant roots.
+Open `current.json` to find the current draft or a published version; its relative
+bundle path contains `SKILL.md` and every bundled resource. Creation and edits
+update these directories automatically. Names can change without moving the
+stable skill ID. Archived skills keep their history.
+
+Use the portal to edit skills; the database retains the authorized content and
+run snapshots. The filesystem copies are not automatically imported back. A
+superadmin can run `pnpm skills:reconcile` against the running API to rebuild
+missing directory copies. Do not commit these runtime directories; the reviewed
+shared source collection is already retained in the repository.
