@@ -447,14 +447,14 @@ function erpTimestamp(spec: unknown): string {
  */
 const MISSING = Symbol("metaerp:missing");
 
-function expandNode(value: unknown): unknown | typeof MISSING {
+function expandNode(value: unknown, enforceRequired: boolean): unknown | typeof MISSING {
   if (Array.isArray(value)) {
     // Nested, because deployment codes also live inside arrays of objects:
     // createPbp's approverList is `[{approveNode, handlerList}]`, and a
     // top-level-only expansion would ship the literal {"$env":…} to the ERP.
     const out: unknown[] = [];
     for (const entry of value) {
-      const expanded = expandNode(entry);
+      const expanded = expandNode(entry, enforceRequired);
       if (expanded !== MISSING) out.push(expanded);
     }
     return out;
@@ -463,12 +463,26 @@ function expandNode(value: unknown): unknown | typeof MISSING {
   if ("$env" in value) {
     const name = (value as { $env?: unknown }).$env;
     const resolved = typeof name === "string" ? process.env[name]?.trim() : undefined;
-    return resolved ? resolved : MISSING;
+    if (resolved) return resolved;
+    // 「没设就整字段省略」是有意的（METAERP_TRANSFER_AUTO_SUBMIT 靠它关掉），但对部署级
+    // 身份编码就成了灾难：字段静默消失，ERP 回一句「字段:不能为空」而且不说是哪个字段。
+    // 2026-09-09 实测踩到的是更隐蔽的一种——dev 栈父进程持有的是启动那一刻的 env 快照，
+    // node --watch 重启子进程并不会重读 .env，于是当天新加的变量一个都没生效，
+    // 报文少了十几个字段却毫无提示。声明 required 的字段缺了就当场报出变量名。
+    if (enforceRequired && (value as { required?: unknown }).required === true) {
+      throw new Error(
+        `metaerp routes: 环境变量 ${String(name)} 未设置或为空，而路由把它声明为必需——` +
+          `该字段会整个从报文里消失，ERP 只会回一句「字段:不能为空」且不说是哪个字段。` +
+          `请在 .env 里补上它；注意改完 .env 必须重启整个 dev 栈（node --watch 只重载代码，不重读 env）。`,
+      );
+    }
+    return MISSING;
   }
   if ("$now" in value) return erpTimestamp((value as { $now?: unknown }).$now);
   const out: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(value)) {
-    const expanded = expandNode(nested);
+    if (key === "required") continue; // the marker itself never reaches the ERP
+    const expanded = expandNode(nested, enforceRequired);
     if (expanded !== MISSING) out[key] = expanded;
   }
   return out;
@@ -476,9 +490,10 @@ function expandNode(value: unknown): unknown | typeof MISSING {
 
 function expandDefaults(
   defaults: Record<string, unknown> | undefined,
+  enforceRequired: boolean,
 ): Record<string, unknown> | undefined {
   if (!defaults) return undefined;
-  const expanded = expandNode(defaults);
+  const expanded = expandNode(defaults, enforceRequired);
   const out = (expanded === MISSING ? {} : expanded) as Record<string, unknown>;
   return Object.keys(out).length ? out : undefined;
 }
@@ -499,17 +514,25 @@ export function resolveRoute(
       : tenantDefault
         ? { ...(base ?? { transport: "mock" as const }), transport: tenantDefault.transport }
         : base;
+  // `required` is enforced only for a call that will actually reach the real ERP.
+  // A route the gates are about to downgrade to the mock has no business
+  // demanding v15's deployment codes, and neither has a lookup that only asks
+  // where an operation lives.
+  const willBeReal =
+    stored !== undefined &&
+    stored.transport !== "mock" &&
+    stored.transport !== "stub" &&
+    metaerpTransportMode() === "real" &&
+    (kind !== "write" || metaerpRealWritesEnabled() || stored.allow_real_write === true);
+  const expand = (value: Record<string, unknown> | undefined) =>
+    expandDefaults(value, willBeReal);
   const declared: MetaerpRoute = stored
     ? {
         ...stored,
-        ...(stored.defaults ? { defaults: expandDefaults(stored.defaults) } : {}),
-        ...(stored.overrides ? { overrides: expandDefaults(stored.overrides) } : {}),
-        ...(stored.line_defaults
-          ? { line_defaults: expandDefaults(stored.line_defaults) }
-          : {}),
-        ...(stored.line_overrides
-          ? { line_overrides: expandDefaults(stored.line_overrides) }
-          : {}),
+        ...(stored.defaults ? { defaults: expand(stored.defaults) } : {}),
+        ...(stored.overrides ? { overrides: expand(stored.overrides) } : {}),
+        ...(stored.line_defaults ? { line_defaults: expand(stored.line_defaults) } : {}),
+        ...(stored.line_overrides ? { line_overrides: expand(stored.line_overrides) } : {}),
       }
     : { transport: "mock" as const };
   // A stub reaches no system at all, so neither gate applies to it: there is

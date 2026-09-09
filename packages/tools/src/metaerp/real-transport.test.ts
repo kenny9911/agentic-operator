@@ -61,6 +61,44 @@ async function startServer(
   };
 }
 
+const PBP_DEPLOYMENT_KEYS = [
+  "METAERP_PBP_APPROVER",
+  "METAERP_PBP_APPROVE_NODE",
+  "METAERP_PBP_BUSINESS_TYPE",
+  "METAERP_PBP_CATEGORY_CONFIG_ITEM",
+  "METAERP_PBP_CATEGORY_DESCRIPTION",
+  "METAERP_PBP_CATEGORY_ID",
+  "METAERP_PBP_CATEGORY_SECTIONS",
+  "METAERP_PBP_CURRENCY_NAME",
+  "METAERP_PBP_DEFAULT_NAME",
+  "METAERP_PBP_DEPARTMENT_CODE",
+  "METAERP_PBP_DOCUMENT_SUB_TYPE",
+  "METAERP_PBP_DOCUMENT_TYPE",
+  "METAERP_PBP_HEADER_SEQUENCE",
+  "METAERP_PBP_ITEM_CODE",
+  "METAERP_PBP_ITEM_DESC",
+  "METAERP_PBP_LINE_TYPE_CODE",
+  "METAERP_PBP_ORGANIZATION_NAME",
+  "METAERP_PBP_REQUESTOR_ID",
+  "METAERP_PBP_REQUESTOR_NAME",
+  "METAERP_PBP_REQUESTOR_NUMBER",
+  "METAERP_PBP_SOURCE_OBJECT_TYPE",
+  "METAERP_PBP_SUBMIT_FLAG",
+  "METAERP_PBP_UOM_CODE",
+  "METAERP_PBP_UOM_NAME",
+] as const;
+
+/**
+ * createPbp 的路由把部署级编码声明为 required，解析成真实通道时缺一个就当场报错。
+ * 需要真实解析它的用例先喂上——下面几个 describe 是文件顶层的兄弟，拿不到
+ * `metaerp real transports` 那个 beforeEach。
+ */
+function seedDeployment(): void {
+  process.env.METAERP_DEFAULT_UNIT_CODE = "1000";
+  process.env.METAERP_DEFAULT_ORGANIZATION_CODE = "YF1";
+  for (const key of PBP_DEPLOYMENT_KEYS) process.env[key] = `test-${key}`;
+}
+
 const ENV_KEYS = [
   "METAERP_ENV",
   "METAERP_ACCOUNT",
@@ -79,6 +117,7 @@ const ENV_KEYS = [
   "METAERP_CONFIG_FILE",
   "METAERP_DEFAULT_UNIT_CODE",
   "METAERP_DEFAULT_ORGANIZATION_CODE",
+  ...PBP_DEPLOYMENT_KEYS,
 ];
 
 describe("metaerp real transports", () => {
@@ -95,6 +134,11 @@ describe("metaerp real transports", () => {
     process.env.METAERP_RENTER_ID = "1780520994662254112";
     delete process.env.METAERP_DEFAULT_UNIT_CODE;
     delete process.env.METAERP_DEFAULT_ORGANIZATION_CODE;
+    // createPbp 的部署级编码：路由把它们声明为 required，缺一个 resolveRoute 就当场
+    // 报错（这正是它的用途——见「$env 展开」那组用例）。这里统一喂假值，个别用例再删
+    // 掉其中一个来验证报错。范围键（unitCode/organizationCode）不在这里喂：有用例逐字
+    // 断言请求体，多两个键就红。需要真实 createPbp 路由的 describe 各自 seedDeployment()。
+    for (const key of PBP_DEPLOYMENT_KEYS) process.env[key] = `test-${key}`;
     _clearMetaerpConfigCacheForTests();
     _clearMetaerpTokenCacheForTests();
     _clearMetaerpSessionCacheForTests();
@@ -227,6 +271,7 @@ describe("metaerp real transports", () => {
     it("releases writes only when that is said out loud too", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
       process.env.METAERP_ALLOW_REAL_WRITES = "true";
+      seedDeployment(); // 真实解析 createPbp 需要它的部署级编码齐备
       expect(resolveRoute("createPbp", "write").transport).toBe("openapi");
     });
 
@@ -769,7 +814,10 @@ describe("租户级路由覆盖", () => {
 });
 
 describe("租户级默认通道", () => {
-  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  beforeEach(() => {
+    seedDeployment();
+    _clearMetaerpRoutesCacheForTests();
+  });
   afterEach(() => _clearMetaerpRoutesCacheForTests());
 
   it("pins a whole tenant to the mock while the same operations stay real for everyone else", () => {
@@ -820,6 +868,8 @@ describe("createPbp：请求体是数组，回执也是数组", () => {
 
   beforeEach(() => _clearMetaerpRoutesCacheForTests());
   afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  beforeEach(seedDeployment);
 
   const route = () => resolveRoute("createPbp", "write", "hc-digital-worker");
 
@@ -934,7 +984,10 @@ describe("createPbp：请求体是数组，回执也是数组", () => {
 });
 
 describe("$env 展开会下钻到数组和嵌套对象里", () => {
-  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  beforeEach(() => {
+    seedDeployment();
+    _clearMetaerpRoutesCacheForTests();
+  });
   afterEach(() => _clearMetaerpRoutesCacheForTests());
 
   it("resolves the approver node nested inside approverList", () => {
@@ -947,11 +1000,24 @@ describe("$env 展开会下钻到数组和嵌套对象里", () => {
     ]);
   });
 
-  it("drops a nested key whose env var is unset, rather than shipping {$env}", () => {
+  it("drops an optional key whose env var is unset, rather than shipping {$env}", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    // 演示锚点：留空即回到「模型按需求行给物料」，所以它是可选的。
+    delete process.env.METAERP_PBP_ITEM_CODE;
+    const lineOverrides =
+      resolveRoute("createPbp", "write", "hc-digital-worker").line_overrides ?? {};
+    expect("itemCode" in lineOverrides).toBe(false);
+    expect(JSON.stringify(lineOverrides)).not.toContain("$env");
+  });
+
+  // 静默丢字段是 2026-09-09 那次实跑的真正病根：dev 栈父进程持有启动时的 env 快照，
+  // node --watch 重启子进程不重读 .env，当天新加的变量一个都没进去，报文少了十几个
+  // 字段，ERP 只回「字段:不能为空」且不说是哪个字段。声明 required 的当场报变量名。
+  it("throws with the variable's name when a required deployment code is unset", () => {
     process.env.METAERP_TRANSPORT_MODE = "real";
     delete process.env.METAERP_PBP_APPROVE_NODE;
-    process.env.METAERP_PBP_APPROVER = "wubin";
-    const overrides = resolveRoute("createPbp", "write", "hc-digital-worker").overrides ?? {};
-    expect(overrides.approverList).toEqual([{ handlerList: ["wubin"] }]);
+    expect(() => resolveRoute("createPbp", "write", "hc-digital-worker")).toThrow(
+      /METAERP_PBP_APPROVE_NODE[\s\S]*字段:不能为空/,
+    );
   });
 });

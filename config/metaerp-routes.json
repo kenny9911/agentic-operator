@@ -135,36 +135,46 @@
       },
       "overrides": {
         "unitCode": {
-          "$env": "METAERP_DEFAULT_UNIT_CODE"
+          "$env": "METAERP_DEFAULT_UNIT_CODE",
+          "required": true
         },
         "organizationCode": {
-          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE",
+          "required": true
         },
         "departmentCode": {
-          "$env": "METAERP_PBP_DEPARTMENT_CODE"
+          "$env": "METAERP_PBP_DEPARTMENT_CODE",
+          "required": true
         },
         "documentType": {
-          "$env": "METAERP_PBP_DOCUMENT_TYPE"
+          "$env": "METAERP_PBP_DOCUMENT_TYPE",
+          "required": true
         },
         "documentSubType": {
-          "$env": "METAERP_PBP_DOCUMENT_SUB_TYPE"
+          "$env": "METAERP_PBP_DOCUMENT_SUB_TYPE",
+          "required": true
         },
         "businessType": {
-          "$env": "METAERP_PBP_BUSINESS_TYPE"
+          "$env": "METAERP_PBP_BUSINESS_TYPE",
+          "required": true
         },
         "currencyCode": "CNY",
         "operationType": "created",
         "submitFlag": {
-          "$env": "METAERP_PBP_SUBMIT_FLAG"
+          "$env": "METAERP_PBP_SUBMIT_FLAG",
+          "required": true
         },
         "preparerId": {
-          "$env": "METAERP_PBP_REQUESTOR_ID"
+          "$env": "METAERP_PBP_REQUESTOR_ID",
+          "required": true
         },
         "requestorId": {
-          "$env": "METAERP_PBP_REQUESTOR_ID"
+          "$env": "METAERP_PBP_REQUESTOR_ID",
+          "required": true
         },
         "pbpHeaderSequence": {
-          "$env": "METAERP_PBP_HEADER_SEQUENCE"
+          "$env": "METAERP_PBP_HEADER_SEQUENCE",
+          "required": true
         },
         "pbpHeaderId": "",
         "pbpNumber": "",
@@ -177,11 +187,13 @@
         "approverList": [
           {
             "approveNode": {
-              "$env": "METAERP_PBP_APPROVE_NODE"
+              "$env": "METAERP_PBP_APPROVE_NODE",
+              "required": true
             },
             "handlerList": [
               {
-                "$env": "METAERP_PBP_APPROVER"
+                "$env": "METAERP_PBP_APPROVER",
+                "required": true
               }
             ]
           }
@@ -212,26 +224,32 @@
       },
       "line_overrides": {
         "unitCode": {
-          "$env": "METAERP_DEFAULT_UNIT_CODE"
+          "$env": "METAERP_DEFAULT_UNIT_CODE",
+          "required": true
         },
         "companyCode": {
-          "$env": "METAERP_DEFAULT_UNIT_CODE"
+          "$env": "METAERP_DEFAULT_UNIT_CODE",
+          "required": true
         },
         "organizationCode": {
-          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE",
+          "required": true
         },
         "departmentCode": {
-          "$env": "METAERP_PBP_DEPARTMENT_CODE"
+          "$env": "METAERP_PBP_DEPARTMENT_CODE",
+          "required": true
         },
         "operationType": "created",
         "currencyCode": "CNY",
         "inclusiveTaxFlag": "Y",
         "matchingBasis": "QUANTITY",
         "purchasingBasis": {
-          "$env": "METAERP_PBP_BUSINESS_TYPE"
+          "$env": "METAERP_PBP_BUSINESS_TYPE",
+          "required": true
         },
         "pbpLineTypeCode": {
-          "$env": "METAERP_PBP_LINE_TYPE_CODE"
+          "$env": "METAERP_PBP_LINE_TYPE_CODE",
+          "required": true
         },
         "itemCode": {
           "$env": "METAERP_PBP_ITEM_CODE"
@@ -241,48 +259,62 @@
         },
         "itemVersion": "",
         "categoryId": {
-          "$env": "METAERP_PBP_CATEGORY_ID"
+          "$env": "METAERP_PBP_CATEGORY_ID",
+          "required": true
         },
         "categoryConcatSections": {
-          "$env": "METAERP_PBP_CATEGORY_SECTIONS"
+          "$env": "METAERP_PBP_CATEGORY_SECTIONS",
+          "required": true
         },
         "requestorId": {
-          "$env": "METAERP_PBP_REQUESTOR_ID"
+          "$env": "METAERP_PBP_REQUESTOR_ID",
+          "required": true
         },
         "requestorEmployeeNumber": {
-          "$env": "METAERP_PBP_REQUESTOR_NUMBER"
+          "$env": "METAERP_PBP_REQUESTOR_NUMBER",
+          "required": true
         },
         "requestorName": {
-          "$env": "METAERP_PBP_REQUESTOR_NAME"
+          "$env": "METAERP_PBP_REQUESTOR_NAME",
+          "required": true
         },
         "primaryUomCode": {
-          "$env": "METAERP_PBP_UOM_CODE"
+          "$env": "METAERP_PBP_UOM_CODE",
+          "required": true
         },
         "uomCode": {
-          "$env": "METAERP_PBP_UOM_CODE"
+          "$env": "METAERP_PBP_UOM_CODE",
+          "required": true
         },
         "primaryUomName": {
-          "$env": "METAERP_PBP_UOM_NAME"
+          "$env": "METAERP_PBP_UOM_NAME",
+          "required": true
         },
         "uomName": {
-          "$env": "METAERP_PBP_UOM_NAME"
+          "$env": "METAERP_PBP_UOM_NAME",
+          "required": true
         },
         "uomConversionRate": "1",
         "projectNumber": "",
         "sourceObjectType": {
-          "$env": "METAERP_PBP_SOURCE_OBJECT_TYPE"
+          "$env": "METAERP_PBP_SOURCE_OBJECT_TYPE",
+          "required": true
         },
         "organizationName": {
-          "$env": "METAERP_PBP_ORGANIZATION_NAME"
+          "$env": "METAERP_PBP_ORGANIZATION_NAME",
+          "required": true
         },
         "categoryDescription": {
-          "$env": "METAERP_PBP_CATEGORY_DESCRIPTION"
+          "$env": "METAERP_PBP_CATEGORY_DESCRIPTION",
+          "required": true
         },
         "configItemValue": {
-          "$env": "METAERP_PBP_CATEGORY_CONFIG_ITEM"
+          "$env": "METAERP_PBP_CATEGORY_CONFIG_ITEM",
+          "required": true
         },
         "currencyName": {
-          "$env": "METAERP_PBP_CURRENCY_NAME"
+          "$env": "METAERP_PBP_CURRENCY_NAME",
+          "required": true
         }
       },
       "write_receipt": {
