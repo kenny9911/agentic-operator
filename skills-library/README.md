@@ -7,6 +7,15 @@ and [the source research](../docs/research/2026-09-09-official-skills-library.md
 This folder is the platform collection. The repository's `.agents/skills/` folder
 continues to serve development assistants working on this repository.
 
+This is a **shared source collection**, checked into Git; tenant-authored skills
+are never written here. The API materializes the managed library under
+`data/shared/skills/<skill-id>/` and tenant skills under
+`data/tenants/<tenant-slug>/skills/<skill-id>/`. These runtime roots follow
+`AGENTIC_DATA_ROOT` and `AGENTIC_TENANTS_DIR` when configured. Each skill has
+`current.json` with its owner, current draft, and publication references, plus
+the complete files under `bundles/<content-digest>/`. Stable IDs keep a renamed
+skill in the same owner directory. Runtime copies remain outside Git.
+
 ## Collection layout
 
 | Path | Purpose |
@@ -42,6 +51,7 @@ pnpm skills:discover          # Read current source inventories; changes no file
 pnpm skills:sync              # Fetch exactly the reviewed pins; run no downloaded scripts
 pnpm skills:import            # Preview shared imports; no database changes
 pnpm skills:import --apply    # Import and publish compatible bundles
+pnpm skills:reconcile         # Rebuild shared/tenant directories from the running API
 ```
 
 The API URL defaults to `http://127.0.0.1:3540`. Override it with
@@ -80,6 +90,15 @@ for Codex, Claude Code, a browser, or a third-party connector may require host
 capabilities that the selected agent does not have. Inspect their prerequisites
 and verify a representative task before relying on the result. Script execution
 uses the platform's existing capability and execution policy.
+
+Blank creation, imports, and AI authoring all use the same owner-based directory
+writer. Saving, publishing, restoring, and archiving refresh its manifest.
+Only platform superadmins can run cross-tenant reconciliation; the API also
+reconciles existing records at startup. File write failures roll back the edit;
+SQL commit failures restore the previous directory manifest. The database stays
+authoritative for access checks, immutable versions, and captured run resources.
+Directly editing a projected bundle does not change an agent's instructions and
+causes integrity verification to fail; make edits through the Skills editor.
 
 The platform creator is published separately as `agentic-skill-creator`; the
 upstream creator examples remain available for comparison. The built-in authoring

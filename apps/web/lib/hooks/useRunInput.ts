@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   RUN_INPUT_MAX_ATTACHMENTS,
+  RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS,
   RUN_INPUT_MAX_FILE_BYTES,
+  RUN_INPUT_MAX_TEXT_CHARS,
+  RUN_INPUT_MAX_TOTAL_CHARS,
   type RunInputAttachment,
 } from "@agentic/contracts";
 import { useI18n } from "@/app/portal/lib/preferences-context";
@@ -65,7 +68,7 @@ export function useRunInput(options: RunInputParseOptions = {}) {
         return;
       }
       if (!file.size || file.size > RUN_INPUT_MAX_FILE_BYTES) {
-        setError(t("runInput.invalidSize", { name: file.name }));
+        setError(t("runInput.invalidSize", { name: file.name, sizeMiB: RUN_INPUT_MAX_FILE_BYTES / (1024 * 1024) }));
         return;
       }
     }
@@ -94,7 +97,11 @@ export function useRunInput(options: RunInputParseOptions = {}) {
     value = buildRunInputContext(prompt, context, contextKey,
       files.flatMap((file) => file.parsed ? [file.parsed] : []));
   } catch {
-    validationError = t("runInput.tooMuchText");
+    validationError = t("runInput.tooMuchText", {
+      textChars: RUN_INPUT_MAX_TEXT_CHARS.toLocaleString("en-US"),
+      attachmentChars: RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS.toLocaleString("en-US"),
+      totalChars: RUN_INPUT_MAX_TOTAL_CHARS.toLocaleString("en-US"),
+    });
   }
   const pending = files.some((file) => !file.parsed && !file.error);
   const blocked = files.some((file) => !file.parsed) || Boolean(validationError);

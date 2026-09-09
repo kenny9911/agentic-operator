@@ -54,6 +54,10 @@ const nextConfig = {
   typedRoutes: true,
   reactStrictMode: true,
   experimental: {
+    // A 32 MiB run-input file expands to roughly 43 MiB of base64 JSON.
+    // Rewrites clone request bodies too; Next's 10 MiB default truncates them
+    // before the API's upload-specific body limit can validate the file.
+    proxyClientMaxBodySize: 48 * 1024 * 1024,
     /**
      * The rewrite proxy in front of apps/api defaults to a 30 s timeout
      * (`proxyTimeout || 30000`, next/dist/server/lib/router-utils/proxy-request.js:37).

@@ -1,7 +1,13 @@
 "use client";
 
 import { useId, type CSSProperties } from "react";
-import { RUN_INPUT_MAX_ATTACHMENTS, RUN_INPUT_MAX_TEXT_CHARS } from "@agentic/contracts";
+import {
+  RUN_INPUT_MAX_ATTACHMENTS,
+  RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS,
+  RUN_INPUT_MAX_FILE_BYTES,
+  RUN_INPUT_MAX_TEXT_CHARS,
+  RUN_INPUT_MAX_TOTAL_CHARS,
+} from "@agentic/contracts";
 import { Button } from "./button";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import type { RunInputEditor } from "@/lib/hooks/useRunInput";
@@ -37,7 +43,12 @@ export function RunInputPanel({
       ) : null}
       <div style={{ display: "grid", gap: 7 }}>
         <label htmlFor={`${id}-files`} style={labelStyle}>{t("runInput.files")}</label>
-        <p id={`${id}-files-help`} style={hintStyle}>{t("runInput.filesHint")}</p>
+        <p id={`${id}-files-help`} style={hintStyle}>{t("runInput.filesHint", {
+          count: RUN_INPUT_MAX_ATTACHMENTS,
+          sizeMiB: RUN_INPUT_MAX_FILE_BYTES / (1024 * 1024),
+          attachmentChars: RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS.toLocaleString("en-US"),
+          totalChars: RUN_INPUT_MAX_TOTAL_CHARS.toLocaleString("en-US"),
+        })}</p>
         <input
           id={`${id}-files`}
           type="file"
@@ -66,7 +77,7 @@ export function RunInputPanel({
                 <textarea
                   value={file.parsed.text}
                   onChange={(event) => editor.editFile(file.key, event.target.value)}
-                  maxLength={RUN_INPUT_MAX_TEXT_CHARS}
+                  maxLength={RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS}
                   rows={5}
                   disabled={disabled}
                   style={controlStyle}

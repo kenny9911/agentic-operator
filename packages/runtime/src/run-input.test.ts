@@ -93,6 +93,29 @@ describe("operator input and durable context memory", () => {
     expect(renderRunInputMessage(undefined)).toBeUndefined();
   });
 
+  it("renders all 200,000 characters of a reviewed Markdown attachment including the ending", () => {
+    const ending = "\n## Final finding\nEvidence from the end must reach the model.";
+    const text = "# Reviewed source\n\n- Reference material with \"quotes\" and 中文.\n"
+      .repeat(4_000)
+      .slice(0, 200_000 - ending.length) + ending;
+    const input = readRunInputContext({
+      prompt: "Summarize the reviewed attachment",
+      attachments: [{
+        id: "file-large-markdown",
+        name: "research-evidence.md",
+        mimeType: "text/markdown",
+        size: Buffer.byteLength(text),
+        text,
+      }],
+    });
+
+    expect(text).toHaveLength(200_000);
+    const message = renderRunInputMessage(input);
+    expect(message).toContain(JSON.stringify(text));
+    expect(message).toContain("Evidence from the end must reach the model.");
+    expect(message).not.toContain("[truncated]");
+  });
+
   it("opts code-agent semantic recall into the exact context without changing legacy scope", async () => {
     const scopes: unknown[] = [];
     setMemoryDriver({ search: async (_query, _count, scope) => { scopes.push(scope); return []; } });

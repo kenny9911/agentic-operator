@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import {
   PROVIDER_IDS,
   RUN_INPUT_MAX_FILE_BYTES,
-  RUN_INPUT_MAX_TEXT_CHARS,
+  RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS,
   RunInputAttachmentSchema,
   type ParseRunInputBody,
   type ProviderId,
@@ -54,6 +54,7 @@ export function decodeRunInputFile(body: ParseRunInputBody): {
   bytes: Buffer;
   mimeType: string;
   content: ChatContentBlock;
+  text?: string;
 } {
   if (/[\x00-\x1f]/.test(body.name) || /[/\\]/.test(body.name))
     fail("Use a filename without paths or control characters.");
@@ -70,7 +71,7 @@ export function decodeRunInputFile(body: ParseRunInputBody): {
   if (bytes.length > RUN_INPUT_MAX_FILE_BYTES)
     throw new RunInputParseError(
       "file_too_large",
-      "Each file must be 8 MiB or smaller.",
+      `Each file must be ${RUN_INPUT_MAX_FILE_BYTES / (1024 * 1024)} MiB or smaller.`,
       413,
     );
   if (bytes.toString("base64") !== body.base64)
@@ -108,15 +109,16 @@ export function decodeRunInputFile(body: ParseRunInputBody): {
         "The file contains binary data; upload a supported document or image instead.",
       );
     if (!text.trim()) fail("The text file is empty.");
-    if (text.length > 128_000)
+    if (text.length > RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS)
       throw new RunInputParseError(
         "file_text_too_large",
-        "Text files must contain at most 128,000 characters. Split this file before uploading.",
+        `Text files must contain at most ${RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS.toLocaleString("en-US")} characters. Split this file before uploading.`,
         413,
       );
     return {
       bytes,
       mimeType,
+      text,
       content: {
         type: "text",
         text: `Source file ${JSON.stringify(body.name)}:\n${text}`,
@@ -167,6 +169,18 @@ export async function parseRunInputFile(
   gateway: { chat(request: ChatRequest): Promise<ChatResponse> },
 ): Promise<RunInputAttachment> {
   const file = decodeRunInputFile(body);
+  const attachment = {
+    id: `attachment-${createHash("sha256").update(file.bytes).digest("hex")}`,
+    name: body.name,
+    mimeType: file.mimeType,
+    size: file.bytes.length,
+  };
+  // UTF-8 files already contain the reviewable source. Sending them through a
+  // model introduced output-token limits and could rewrite or abridge content.
+  // Preserve whitespace and document instructions as user-supplied data.
+  if (file.text !== undefined) {
+    return RunInputAttachmentSchema.parse({ ...attachment, text: file.text });
+  }
   if (
     body.provider &&
     !(PROVIDER_IDS as readonly string[]).includes(body.provider)
@@ -227,17 +241,14 @@ export async function parseRunInputFile(
       "The model did not extract readable content. Try a clearer image or a smaller document.",
       422,
     );
-  if (text.length > RUN_INPUT_MAX_TEXT_CHARS)
+  if (text.length > RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS)
     throw new RunInputParseError(
       "parse_output_too_large",
-      "The parsed text exceeds 32,000 characters. Split the file and retry.",
+      `The parsed text exceeds ${RUN_INPUT_MAX_ATTACHMENT_TEXT_CHARS.toLocaleString("en-US")} characters. Split the file and retry.`,
       422,
     );
   return RunInputAttachmentSchema.parse({
-    id: `attachment-${createHash("sha256").update(file.bytes).digest("hex")}`,
-    name: body.name,
-    mimeType: file.mimeType,
-    size: file.bytes.length,
+    ...attachment,
     text,
   });
 }

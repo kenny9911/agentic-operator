@@ -47,6 +47,7 @@ import {
   type SkillCreatorHost,
 } from "../../services/skill-creator";
 import { SkillEvaluationService } from "../../services/skill-evaluation";
+import { SkillLibraryFileError } from "../../services/skill-library-files";
 
 // Worst-case JSON escaping for an admitted 20 MiB text bundle remains bounded.
 export const SKILL_LIBRARY_BODY_LIMIT = 128 * 1024 * 1024;
@@ -124,6 +125,14 @@ export async function skillLibraryRoutes(
         undefined,
         { ...error.details, ...evaluationDetails },
       );
+    if (error instanceof SkillLibraryFileError) {
+      app.log.error({ err: error }, "Skill directory synchronization failed");
+      return reply.fail(
+        "skill_storage_unavailable",
+        "Skill directories could not be synchronized. The edit was not saved; check storage and retry.",
+        503,
+      );
+    }
     if (error instanceof SkillBundleError)
       return reply.fail("invalid_skill", error.message, 400, undefined, {
         diagnostics: error.diagnostics,
@@ -164,6 +173,16 @@ export async function skillLibraryRoutes(
       ),
     ),
   );
+  app.post("/skills/storage/reconcile", async (req, reply) => {
+    const ctx = requirePermission(req, "skills.write");
+    if (ctx.platformRole !== "superadmin")
+      throw new SkillLibraryError(
+        "forbidden",
+        "Only a platform superadmin can reconcile Skill directories.",
+        403,
+      );
+    return reply.ok(store().reconcileFiles());
+  });
   app.post(
     "/skills",
     { bodyLimit: SKILL_LIBRARY_BODY_LIMIT },
