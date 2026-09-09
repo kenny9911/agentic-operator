@@ -61,6 +61,20 @@ import {
 import { useRuns } from "@/lib/hooks/useRuns";
 import { NodeTaskPanel } from "./NodeTaskPanel";
 
+/** 连线末端到节点边框的留白，给箭头尖用。 */
+const ARROW_GAP = 5;
+/** 每种描边一个箭头 marker——连线只有这三种颜色。 */
+const EDGE_ARROWS = [
+  { id: "edge-arrow-signal", stroke: "var(--signal)", fill: "var(--signal)" },
+  { id: "edge-arrow-green", stroke: "var(--green)", fill: "var(--green)" },
+  { id: "edge-arrow-muted", stroke: "var(--border-2)", fill: "var(--border-2)" },
+] as const;
+function arrowIdFor(stroke: string): string {
+  return (
+    EDGE_ARROWS.find((arrow) => arrow.stroke === stroke)?.id ?? "edge-arrow-muted"
+  );
+}
+
 const FEED_W = 400;
 /** Collapsed width: wide enough for the reopen affordance, narrow enough that
  *  the canvas gets the space back. */
@@ -897,6 +911,24 @@ function EdgeLayer({
       style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
       aria-hidden
     >
+      {/* 箭头。三种描边各一个 marker：`context-stroke` 并非各处都稳，而连线本来就
+          只有这三种颜色，逐色定义比依赖它可靠。 */}
+      <defs>
+        {EDGE_ARROWS.map((arrow) => (
+          <marker
+            key={arrow.id}
+            id={arrow.id}
+            viewBox="0 0 8 8"
+            refX="7"
+            refY="4"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 1 L 7 4 L 0 7 z" fill={arrow.fill} />
+          </marker>
+        ))}
+      </defs>
       {edges.map((edge, index) => {
         const from = positions.get(edge.fromAgent);
         const to = positions.get(edge.toAgent);
@@ -905,7 +937,8 @@ function EdgeLayer({
         }
         const x1 = from.x + NODE_W;
         const y1 = from.y + NODE_H / 2;
-        const x2 = to.x;
+        // 收在节点边框前一点，让箭头尖正好抵住边框而不是压进去。
+        const x2 = to.x - ARROW_GAP;
         const y2 = to.y + NODE_H / 2;
         const mid = x1 + Math.max(24, (x2 - x1) / 2);
         const visual = edgeVisual({
@@ -923,6 +956,7 @@ function EdgeLayer({
             stroke={visual.stroke}
             strokeWidth={visual.width}
             opacity={visual.opacity}
+            markerEnd={`url(#${arrowIdFor(visual.stroke)})`}
           />
         );
       })}

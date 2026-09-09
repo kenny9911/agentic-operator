@@ -374,8 +374,8 @@
       "fields": {
         "demand_plan_line": "原样透传上游计划行列表。",
         "audit_opinion": "审核意见：{audit_opinion_id, plan_id, audited_at, audit_passed:boolean, summary:string}。",
-        "audit_finding": "违规明细：[{audit_finding_id, audit_opinion_id, finding_label, plan_line_id, finding_type:'集采未标注'|'价格偏离超限'|'必填项缺失', expected:string, actual:string, explanation:string}]。全部通过时为空数组。\n【finding_label（硬性）】给人看的短名，**不超过 20 字、不带标点**，一眼说清这一条是哪个计划行的什么问题，例如「0101-01 行集采未标注」——**含标识符时只取尾段**，整串计划行号加上问题描述会超过 20 字而被判为描述、不被采纳。**同一批里每条必须不同**——退回整改的待办把这些明细渲染成单选项，标题取的就是能区分它们的那个字段。实跑中两条明细只有 plan_line_id 不同，其余字段完全一样，面板只能退而取 actual（值恰好是「未标识」），计划员看到的是两张一模一样、像占位符的卡片。\n【plan_line_id（硬性）】这一条违规发生在哪个计划行，取自上游透传的原值。",
-        "audit_passed": "**必填布尔值**。三项校验全部通过才填 true；任意一条违规填 false。工作流据此决定放行组包还是退回整改。",
+        "audit_finding": "违规明细：[{audit_finding_id, audit_opinion_id, finding_label, plan_line_id, finding_type:'集采未标注'|'价格偏离超限'|'必填项缺失', expected:string, actual:string, explanation:string}]。全部通过时为空数组。\n【finding_label（硬性）】给人看的短名，**不超过 20 字、不带标点**，一眼说清这一条是哪个计划行的什么问题，例如「0101-01 行集采未标注」——**含标识符时只取尾段**，整串计划行号加上问题描述会超过 20 字而被判为描述、不被采纳。**同一批里每条必须不同**——退回整改的待办把这些明细渲染成单选项，标题取的就是能区分它们的那个字段。实跑中两条明细只有 plan_line_id 不同，其余字段完全一样，面板只能退而取 actual（值恰好是「未标识」），计划员看到的是两张一模一样、像占位符的卡片。\n【plan_line_id（硬性）】这一条违规发生在哪个计划行，取自上游透传的原值。\n【复审时】只列**新发现**的违规；入参里已有的那一批属于已整改条目，不要重复列出。",
+        "audit_passed": "**必填布尔值**。三项校验全部通过才填 true；任意一条违规填 false。工作流据此决定放行组包还是退回整改。\n【硬性·整改后的复审只做一次】入参里**已经带有非空 `audit_finding[]`** 时，说明这是退回整改之后的复审：\n那一批条目已经过计划员整改并在待办里确认，**一律视为已关闭，不得再次提出**——你只判有没有出现\n**新的**违规（不在入参 audit_finding[] 里的 audit_finding_id / plan_line_id 组合）。没有新违规就填 true。\n【为什么是硬性】退回整改事件把拦截时的原始载荷原样送回，ERP 里的计划数据没有变化，所以「按原数据再审一遍」必然得出一模一样的结论。实跑中审核与整改来回循环了六轮停不下来。人工闸口是这批条目已整改的权威判据，数字员工不能反复推翻它。",
         "thresholds_used": "本次采用的阈值：{price_deviation_ratio:number, threshold_ids:[string]}，必须取自 queryAuditThresholdConfig。",
         "scan_date": "原样透传上游 scan_date。"
       }
