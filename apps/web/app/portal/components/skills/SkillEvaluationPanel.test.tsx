@@ -50,6 +50,7 @@ const detail: SkillDetail = {
     latestVersionId: null,
     latestVersionNo: null,
     archivedAt: null,
+    enabled: true,
     createdAt: 1,
     updatedAt: 1,
     canEdit: true,
@@ -125,6 +126,19 @@ beforeEach(() => {
   state.records = [];
 });
 describe("Skill comparison review panel", () => {
+  it("explains why a disabled skill cannot run new comparisons while preserving history", () => {
+    const html = renderToStaticMarkup(
+      <SkillEvaluationPanel
+        detail={{ ...detail, skill: { ...detail.skill, enabled: false } }}
+      />,
+    );
+    expect(html).toContain("Enable this skill before running a comparison");
+    expect(html).toContain("Existing comparison history remains available");
+    expect(html).toMatch(
+      /<button[^>]*disabled=""[^>]*>Run comparison<\/button>/,
+    );
+    expect(html).toContain("Refresh history");
+  });
   it("shows saved-revision guidance and selectable unexecuted suggestions without invented outcomes", () => {
     const html = renderToStaticMarkup(
       <SkillEvaluationPanel detail={detail} disabled />,

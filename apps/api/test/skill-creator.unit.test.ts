@@ -26,6 +26,13 @@ function setup(...responses: Array<ChatResponse | Error | ((request: ChatRequest
 }
 
 describe("provider-neutral Skill Creator service", () => {
+  it("checks the trusted policy authorizer before a model call without loading database state", async () => {
+    const { calls, host } = setup(response());
+    const denied = new Error("Creator is disabled");
+    await expect(generateSkill(ctx, request, { ...host, authorizePolicy: () => { throw denied; } })).rejects.toBe(denied);
+    expect(calls).toHaveLength(0);
+  });
+
   it("sends trusted tenant/actor/route context and maintained policy, returning editable content with honest usage provenance", async () => {
     const { calls, host } = setup(response());
     const result = await generateSkill(ctx, request, { ...host, attribution: { interactionId: "interaction-7", requestId: "request-7" } });

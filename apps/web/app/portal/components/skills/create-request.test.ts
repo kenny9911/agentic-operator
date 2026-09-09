@@ -22,6 +22,7 @@ const saved: SkillDetail = {
     latestVersionId: null,
     latestVersionNo: null,
     archivedAt: null,
+    enabled: true,
     createdAt: 1,
     updatedAt: 1,
     canEdit: true,

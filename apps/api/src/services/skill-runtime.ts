@@ -100,15 +100,17 @@ export class ManagedSkillRuntime implements RuntimeSkillHost {
       return source.ownerTenantId === tenantId && Boolean(this.db.select({ id: skillLegacyBundles.id }).from(skillLegacyBundles).where(and(eq(skillLegacyBundles.id, source.versionId), eq(skillLegacyBundles.tenantId, tenantId), eq(skillLegacyBundles.contentDigest, source.contentDigest))).get());
     }
     const systemId = this.systemTenantId();
-    const row = this.db.select({ owner: managedSkills.tenantId, visibility: managedSkills.visibility, digest: skillVersions.contentDigest, name: skillVersions.name, description: skillVersions.description, versionOwner: skillVersions.tenantId }).from(managedSkills)
+    const row = this.db.select({ owner: managedSkills.tenantId, enabled: managedSkills.enabled, visibility: managedSkills.visibility, digest: skillVersions.contentDigest, name: skillVersions.name, description: skillVersions.description, versionOwner: skillVersions.tenantId }).from(managedSkills)
       .innerJoin(skillVersions, and(eq(skillVersions.skillId, managedSkills.id), eq(skillVersions.id, source.versionId)))
       .where(eq(managedSkills.id, source.id)).get();
-    return Boolean(row && row.owner === source.ownerTenantId && row.versionOwner === row.owner && row.digest === source.contentDigest && row.name === source.name && row.description === source.description && (row.owner === tenantId || (row.owner === systemId && row.visibility === "shared")));
+    // Availability is live authority, not part of immutable publication/run
+    // identity. Revocation also applies to previously captured and active skills.
+    return Boolean(row && row.enabled && row.owner === source.ownerTenantId && row.versionOwner === row.owner && row.digest === source.contentDigest && row.name === source.name && row.description === source.description && (row.owner === tenantId || (row.owner === systemId && row.visibility === "shared")));
   }
 
   private managedCatalog(tenantId: string, pins: Map<string, string>): Source[] {
     const systemId = this.systemTenantId();
-    const visible = this.db.select({ id: managedSkills.id, ownerTenantId: managedSkills.tenantId, latest: managedSkills.latestVersionId }).from(managedSkills).where(and(isNull(managedSkills.archivedAt), isNotNull(managedSkills.latestVersionId), systemId ? or(eq(managedSkills.tenantId, tenantId), and(eq(managedSkills.tenantId, systemId), eq(managedSkills.visibility, "shared"))) : eq(managedSkills.tenantId, tenantId))).limit(1001).all();
+    const visible = this.db.select({ id: managedSkills.id, ownerTenantId: managedSkills.tenantId, latest: managedSkills.latestVersionId }).from(managedSkills).where(and(eq(managedSkills.enabled, true), isNull(managedSkills.archivedAt), isNotNull(managedSkills.latestVersionId), systemId ? or(eq(managedSkills.tenantId, tenantId), and(eq(managedSkills.tenantId, systemId), eq(managedSkills.visibility, "shared"))) : eq(managedSkills.tenantId, tenantId))).limit(1001).all();
     if (visible.length > 1000) fail("Published Skill catalog exceeds 1000 entries");
     const result: Source[] = [];
     for (const skill of visible) {

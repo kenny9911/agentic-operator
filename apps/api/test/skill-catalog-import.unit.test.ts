@@ -112,6 +112,15 @@ beforeEach(() => {
       "utf8",
     ),
   );
+  getRawSqlite().exec(
+    readFileSync(
+      new URL(
+        "../../../packages/db/drizzle/0083_managed_skill_enabled.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   store = new SkillLibraryStore(getDb(), { dataRoot: join(root, "managed") });
 });
 afterEach(() => {

@@ -11,6 +11,7 @@ import { useCan } from "@/lib/hooks/useMe";
 import { useSkills, skillKeys } from "@/lib/hooks/useSkills";
 import { formatApiError } from "@/lib/api-response";
 import { CreateSkillDialog, type SkillCreateMode } from "./CreateSkillDialog";
+import { SkillAvailabilityControl } from "./SkillAvailabilityControl";
 import styles from "./skills.module.css";
 
 export function SkillsPage() {
@@ -40,6 +41,7 @@ export function SkillsPage() {
           <p className={styles.hint}>
             {t("skills.workspaceScope", { tenant })}
           </p>
+          <p className={styles.hint}>{t("skills.availabilityHint")}</p>
         </div>
         <div className={styles.actions}>
           <Button
@@ -144,43 +146,45 @@ export function SkillsPage() {
       ) : (
         <div className={styles.skillList}>
           {filtered.map((skill) => (
-            <Link
-              key={skill.id}
-              className={styles.skillRow}
-              href={`/portal/${tenant}/skills/${skill.id}` as never}
-            >
-              <div className={styles.skillIdentity}>
-                <span className={styles.skillGlyph} aria-hidden="true">
-                  SK
-                </span>
-                <div>
-                  <h2>{skill.name}</h2>
-                  <p>{skill.description}</p>
+            <div key={skill.id} className={styles.skillRow}>
+              <Link
+                className={styles.skillLink}
+                href={`/portal/${tenant}/skills/${skill.id}` as never}
+              >
+                <div className={styles.skillIdentity}>
+                  <span className={styles.skillGlyph} aria-hidden="true">
+                    SK
+                  </span>
+                  <div>
+                    <h2>{skill.name}</h2>
+                    <p>{skill.description}</p>
+                  </div>
                 </div>
-              </div>
-              <div className={styles.skillMeta}>
-                <div className={styles.actions}>
-                  {skill.visibility === "shared" && (
-                    <Badge>{t("skills.shared")}</Badge>
-                  )}
-                  {skill.archivedAt ? (
-                    <Badge tone="muted">{t("skills.archived")}</Badge>
-                  ) : skill.latestVersionNo ? (
-                    <Badge tone="green">
-                      {t("skills.version", { number: skill.latestVersionNo })}
-                    </Badge>
-                  ) : (
-                    <Badge tone="amber">{t("skills.draft")}</Badge>
-                  )}
+                <div className={styles.skillMeta}>
+                  <div className={styles.actions}>
+                    {skill.visibility === "shared" && (
+                      <Badge>{t("skills.shared")}</Badge>
+                    )}
+                    {skill.archivedAt ? (
+                      <Badge tone="muted">{t("skills.archived")}</Badge>
+                    ) : skill.latestVersionNo ? (
+                      <Badge tone="green">
+                        {t("skills.version", { number: skill.latestVersionNo })}
+                      </Badge>
+                    ) : (
+                      <Badge tone="amber">{t("skills.draft")}</Badge>
+                    )}
+                  </div>
+                  <time dateTime={new Date(skill.updatedAt).toISOString()}>
+                    {new Date(skill.updatedAt).toLocaleDateString(language)}
+                  </time>
+                  <span>
+                    {t(skill.canEdit ? "skills.edit" : "skills.read")} →
+                  </span>
                 </div>
-                <time dateTime={new Date(skill.updatedAt).toISOString()}>
-                  {new Date(skill.updatedAt).toLocaleDateString(language)}
-                </time>
-                <span>
-                  {t(skill.canEdit ? "skills.edit" : "skills.read")} →
-                </span>
-              </div>
-            </Link>
+              </Link>
+              <SkillAvailabilityControl skill={skill} compact />
+            </div>
           ))}
         </div>
       )}

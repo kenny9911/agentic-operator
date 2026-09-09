@@ -3,6 +3,7 @@ import {
   SKILL_BUNDLE_LIMITS,
   type SkillBundle,
   type SkillDetail,
+  type SetSkillEnabledBody,
 } from "@agentic/contracts";
 
 // These interaction tests never write to the live library or call a model.
@@ -24,6 +25,7 @@ const initialDetail: SkillDetail = {
     latestVersionId: null,
     latestVersionNo: null,
     archivedAt: null,
+    enabled: true,
     createdAt: 1,
     updatedAt: 1,
     canEdit: true,
@@ -42,7 +44,16 @@ const initialDetail: SkillDetail = {
   versions: [],
 };
 
-async function prepare(page: Page) {
+async function prepare(
+  page: Page,
+  options: {
+    onToggle?: (
+      body: SetSkillEnabledBody,
+      tenant: string | undefined,
+    ) => Promise<void>;
+    toggleError?: boolean;
+  } = {},
+) {
   const saves: SkillBundle[] = [];
   let detail = structuredClone(initialDetail);
   await page.addInitScript(() => {
@@ -99,6 +110,27 @@ async function prepare(page: Page) {
           bundle: body.bundle,
           revision: detail.draft!.revision + 1,
         },
+      };
+      data = detail;
+    } else if (
+      url.pathname.endsWith("/enabled") &&
+      request.method() === "PATCH"
+    ) {
+      const body = request.postDataJSON() as SetSkillEnabledBody;
+      await options.onToggle?.(body, request.headers()["x-agentic-tenant"]);
+      if (options.toggleError) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            ok: false,
+            error: { code: "revision_conflict", message: "Skill changed" },
+          },
+        });
+        return;
+      }
+      detail = {
+        ...detail,
+        skill: { ...detail.skill, enabled: body.enabled, updatedAt: 2 },
       };
       data = detail;
     } else if (url.pathname.endsWith("/evaluations")) {
@@ -222,6 +254,12 @@ test("a long skill catalog scrolls to later pages without mixing tenant and shar
   );
   const loadMore = page.getByRole("button", { name: "Load more", exact: true });
   await expect(sharedRows).toHaveCount(50);
+  await expect(
+    page.getByRole("switch", {
+      name: "Available to agents: catalog-skill-001",
+      exact: true,
+    }),
+  ).toBeDisabled();
   await expect(sharedRows.first()).toBeInViewport();
   await expect(sharedRows.last()).not.toBeInViewport();
   await expect(loadMore).not.toBeInViewport();
@@ -238,7 +276,11 @@ test("a long skill catalog scrolls to later pages without mixing tenant and shar
   await page.mouse.wheel(0, 12_000);
   await expect(tenantRow).toBeInViewport({ ratio: 0.9 });
   await expect(sharedRows.last()).toContainText("catalog-skill-053");
-  expect(requests).toContainEqual({ scope: "available", offset: 50, tenant: "raas" });
+  expect(requests).toContainEqual({
+    scope: "available",
+    offset: 50,
+    tenant: "raas",
+  });
 
   await page.getByRole("button", { name: "This tenant", exact: true }).click();
   await expect(sharedRows).toHaveCount(0);
@@ -246,7 +288,9 @@ test("a long skill catalog scrolls to later pages without mixing tenant and shar
   await expect(tenantRow).toBeInViewport();
   await expect(loadMore).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Shared library", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Shared library", exact: true })
+    .click();
   await expect(sharedRows).toHaveCount(50);
   await expect(tenantRow).toHaveCount(0);
   await sharedRows.first().hover();
@@ -257,7 +301,9 @@ test("a long skill catalog scrolls to later pages without mixing tenant and shar
   await expect(tenantRow).toHaveCount(0);
   await expect(loadMore).toHaveCount(0);
   const loadedPageRequests = () =>
-    requests.filter((request) => request.scope === "shared" && request.offset === 50).length;
+    requests.filter(
+      (request) => request.scope === "shared" && request.offset === 50,
+    ).length;
   const beforeRefresh = loadedPageRequests();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(loadedPageRequests).toBeGreaterThan(beforeRefresh);
@@ -266,9 +312,135 @@ test("a long skill catalog scrolls to later pages without mixing tenant and shar
   await expect(
     page.getByRole("button", { name: "Shared library", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  expect(requests).toContainEqual({ scope: "owned", offset: 0, tenant: "raas" });
-  expect(requests).toContainEqual({ scope: "shared", offset: 50, tenant: "raas" });
+  expect(requests).toContainEqual({
+    scope: "owned",
+    offset: 0,
+    tenant: "raas",
+  });
+  expect(requests).toContainEqual({
+    scope: "shared",
+    offset: 50,
+    tenant: "raas",
+  });
   expect(requests.every((request) => request.tenant === "raas")).toBe(true);
+});
+
+test("skill availability toggles by keyboard without navigation and disabled entries remain manageable", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const requests: Array<{
+    body: SetSkillEnabledBody;
+    tenant: string | undefined;
+  }> = [];
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await prepare(page, {
+    onToggle: async (body, tenant) => {
+      requests.push({ body, tenant });
+      if (requests.length === 1) await pending;
+    },
+  });
+  await page.goto("/portal/raas/skills");
+  const toggle = page.getByRole("switch", {
+    name: "Available to agents: interaction-test",
+    exact: true,
+  });
+  await expect(toggle).toBeChecked();
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute("aria-busy", "true");
+  await expect(toggle).toBeChecked();
+  release();
+  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toBeEnabled();
+  await expect(page).toHaveURL(/\/portal\/raas\/skills$/);
+  await expect(
+    page.getByRole("link", { name: /interaction-test/ }),
+  ).toBeVisible();
+  expect(requests).toEqual([
+    {
+      body: {
+        enabled: false,
+        expectedEnabled: true,
+        expectedRevision: 1,
+        expectedLatestVersionId: null,
+      },
+      tenant: "raas",
+    },
+  ]);
+  await page.reload();
+  await expect(toggle).not.toBeChecked();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  expect(requests[1]!.body).toMatchObject({
+    enabled: true,
+    expectedEnabled: false,
+  });
+  expect(pageErrors).toEqual([]);
+});
+
+test("availability updates preserve unsaved skill files and do not save the draft", async ({
+  page,
+}) => {
+  const saves = await prepare(page);
+  await page.goto("/portal/raas/skills/skl-interactions");
+  await page
+    .getByRole("button", { name: "Add text file", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Add text file",
+    exact: true,
+  });
+  await dialog
+    .getByRole("textbox", { name: "Relative file path" })
+    .fill("references/unsaved.md");
+  await dialog.getByRole("button", { name: "Add file", exact: true }).click();
+  const toggle = page.getByRole("switch", {
+    name: "Available to agents: interaction-test",
+    exact: true,
+  });
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await expect(
+    page.getByRole("button", { name: /references\/unsaved.md/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Unsaved changes", { exact: true }),
+  ).toBeVisible();
+  expect(saves).toHaveLength(0);
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect.poll(() => saves.length).toBe(1);
+  expect(
+    saves[0]!.files.some((file) => file.path === "references/unsaved.md"),
+  ).toBe(true);
+  await expect(toggle).not.toBeChecked();
+});
+
+test("a failed availability update keeps the saved state and shows a recoverable error", async ({
+  page,
+}) => {
+  await prepare(page, { toggleError: true });
+  await page.goto("/portal/raas/skills");
+  const toggle = page.getByRole("switch", {
+    name: "Available to agents: interaction-test",
+    exact: true,
+  });
+  await toggle.click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "This skill changed before the update was saved" }),
+  ).toBeVisible();
+  await expect(toggle).toBeChecked();
+  await expect(toggle).toBeEnabled();
+  await expect(
+    page.getByRole("link", { name: /interaction-test/ }),
+  ).toBeVisible();
 });
 
 test("Escape and Tab stay inside the inner file dialog without discarding an import", async ({

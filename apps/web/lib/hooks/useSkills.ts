@@ -1,6 +1,12 @@
 "use client";
 
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
 import { z } from "zod";
 import {
@@ -16,6 +22,8 @@ import {
   type SkillBundle,
   type GenerateSkillBody,
   type SkillVisibilitySchema,
+  type ManagedSkillSummary,
+  type SetSkillEnabledBody,
 } from "@agentic/contracts";
 import {
   fetchApiData,
@@ -101,6 +109,15 @@ export const skillApi = {
       expectedLatestVersionId: string | null;
     },
   ) => request(`${pathFor(id)}/archive`, SkillDetailSchema, body),
+  setEnabled: (id: string, body: SetSkillEnabledBody, tenant: string) =>
+    request(
+      `${pathFor(id)}/enabled`,
+      SkillDetailSchema,
+      body,
+      undefined,
+      "PATCH",
+      tenant,
+    ),
   revisions: (id: string, offset = 0, tenant?: string) =>
     request(
       `${pathFor(id)}/revisions?offset=${offset}&limit=50`,
@@ -240,6 +257,68 @@ export const skillApi = {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   },
 };
+
+export function useSetSkillEnabled(tenant: string) {
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      skill,
+      enabled,
+    }: {
+      skill: ManagedSkillSummary;
+      enabled: boolean;
+    }) => {
+      if (skill.draftRevision === null)
+        throw new Error(
+          "Skill availability requires an editable library entry.",
+        );
+      return skillApi.setEnabled(
+        skill.id,
+        {
+          enabled,
+          expectedEnabled: skill.enabled,
+          expectedRevision: skill.draftRevision,
+          expectedLatestVersionId: skill.latestVersionId,
+        },
+        tenant,
+      );
+    },
+    onSuccess: async (detail, { skill }) => {
+      const queryKey =
+        skill.visibility === "shared"
+          ? skillKeys.root
+          : skillKeys.tenant(tenant);
+      await cache.cancelQueries({ queryKey });
+      cache.setQueryData(skillKeys.detail(tenant, detail.skill.id), detail);
+      cache.setQueriesData<
+        InfiniteData<z.output<typeof SkillListResponseSchema>>
+      >(
+        { queryKey: [...skillKeys.tenant(tenant), "list"] },
+        (current) =>
+          current && {
+            ...current,
+            pages: current.pages.map((page) => ({
+              ...page,
+              skills: page.skills.map((row) =>
+                row.id === detail.skill.id ? detail.skill : row,
+              ),
+            })),
+          },
+      );
+      // Shared availability changes apply across tenants. Refetch their own
+      // responses; never copy another tenant's canEdit or draft metadata.
+      await cache.invalidateQueries({ queryKey });
+    },
+    onError: async (_error, { skill }) => {
+      await cache.invalidateQueries({
+        queryKey:
+          skill.visibility === "shared"
+            ? skillKeys.root
+            : skillKeys.tenant(tenant),
+      });
+    },
+  });
+}
 
 export function useSkills(
   options: {

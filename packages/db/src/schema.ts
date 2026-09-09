@@ -4499,6 +4499,7 @@ export const managedSkills = sqliteTable("managed_skills", {
   tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "restrict" }),
   name: text("name").notNull(), description: text("description").notNull(),
   visibility: text("visibility", { enum: ["tenant", "shared"] }).notNull().default("tenant"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   latestVersionId: text("latest_version_id").references((): AnySQLiteColumn => skillVersions.id, { onDelete: "restrict" }),
   createdBy: text("created_by"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),

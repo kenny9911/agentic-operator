@@ -6,6 +6,8 @@ export const skillEvaluationEn = {
     "Two real model calls. No business tools, scripts, external services, or bundled resource reads run. This does not test automatic skill activation.",
   savedOnly:
     "Save your edits or finish the current operation before starting a comparison.",
+  skillDisabled:
+    "Enable this skill before running a comparison. Existing comparison history remains available.",
   permission:
     "A tenant administrator can run comparisons and record human reviews.",
   source: "Saved instructions",
@@ -71,6 +73,7 @@ export const skillEvaluationZh: typeof skillEvaluationEn = {
   limits:
     "执行两次真实模型调用。不会运行业务工具、脚本、外部服务或读取技能资源文件，也不会测试技能是否自动触发。",
   savedOnly: "请先保存编辑内容或完成当前操作，再开始对比。",
+  skillDisabled: "请先启用此技能，再运行对比。已有对比历史仍可查看。",
   permission: "租户管理员可以运行对比并记录人工评审。",
   source: "已保存的指引",
   draft: "草稿修订",

@@ -206,6 +206,7 @@ export class SkillEvaluationService {
     allowed(ctx, true);
     host.signal?.throwIfAborted();
     const input = CreateSkillEvaluationBodySchema.parse(request);
+    this.library.assertEnabled(ctx, skillId);
     const source =
       input.expectedRevision !== undefined
         ? this.library.draftForGeneration(ctx, skillId, input.expectedRevision)
@@ -311,6 +312,8 @@ export class SkillEvaluationService {
       ] as const) {
         arm = pair[0];
         host.signal?.throwIfAborted();
+        // A switch changed during the baseline must also stop the guided arm.
+        this.library.assertEnabled(ctx, skillId);
         const response = await gateway.chat({
           tenantId: ctx.tenantId,
           tenantSlug: ctx.tenantSlug,

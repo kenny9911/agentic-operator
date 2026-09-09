@@ -80,6 +80,7 @@ type Manifest = {
   };
   metadata: {
     name: string;
+    enabled: boolean;
     latestVersionId: string | null;
     archivedAt: string | null;
   };
@@ -156,7 +157,11 @@ beforeEach(() => {
     CREATE TABLE steps (id TEXT PRIMARY KEY, run_id TEXT NOT NULL);
     CREATE TABLE event_store (id TEXT PRIMARY KEY, tenant_id TEXT, name TEXT, source_run_id TEXT);
   `);
-  for (const migration of ["0080_managed_skills", "0081_run_skill_snapshots"]) {
+  for (const migration of [
+    "0080_managed_skills",
+    "0081_run_skill_snapshots",
+    "0083_managed_skill_enabled",
+  ]) {
     getRawSqlite().exec(
       readFileSync(
         new URL(
@@ -179,6 +184,36 @@ afterEach(() => {
 });
 
 describe("managed Skill database and directory integration", () => {
+  it("projects enable/disable metadata without changing retained bundle bytes", () => {
+    const created = store.create(raas, {
+      bundle: bundle(),
+      visibility: "tenant",
+    });
+    const published = store.publish(raas, created.skill.id, 1);
+    const directory = join(tenantsRoot, "raas", "skills", created.skill.id);
+    const before = current(directory);
+    expect(before.metadata.enabled).toBe(true);
+    const input = {
+      enabled: false,
+      expectedEnabled: true,
+      expectedRevision: 1,
+      expectedLatestVersionId: published.latestVersion!.id,
+    };
+    store.setEnabled(raas, created.skill.id, input);
+    const disabled = current(directory);
+    expect(disabled.metadata.enabled).toBe(false);
+    expect(disabled.draft).toEqual(before.draft);
+    expect(disabled.versions).toEqual(before.versions);
+    expect(disabled.revisions).toEqual(before.revisions);
+    assertBundle(directory, disabled.draft, bundle());
+    store.setEnabled(raas, created.skill.id, {
+      ...input,
+      enabled: true,
+      expectedEnabled: false,
+    });
+    expect(current(directory).metadata.enabled).toBe(true);
+  });
+
   it("uses the database tenant slug and keeps same-named tenant skills in separate folders", () => {
     const first = store.create(
       { ...raas, tenantSlug: "wrong-request-slug" },
@@ -376,7 +411,7 @@ describe("managed Skill database and directory integration", () => {
     expect(readFileSync(blocked, "utf8")).toBe("retain this existing file");
   });
 
-  it.each(["save", "publish", "archive"] as const)(
+  it.each(["save", "publish", "archive", "disable"] as const)(
     "rolls back %s when disk projection fails",
     (operation) => {
       const created = store.create(raas, {
@@ -396,6 +431,13 @@ describe("managed Skill database and directory integration", () => {
         if (operation === "save")
           return store.save(raas, id, 1, bundle("changed-review"));
         if (operation === "publish") return store.publish(raas, id, 1);
+        if (operation === "disable")
+          return store.setEnabled(raas, id, {
+            enabled: false,
+            expectedEnabled: true,
+            expectedRevision: 1,
+            expectedLatestVersionId: published.latestVersion!.id,
+          });
         return store.archive(raas, id, {
           archived: true,
           expectedRevision: 1,
