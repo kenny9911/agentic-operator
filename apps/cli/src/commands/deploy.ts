@@ -22,6 +22,7 @@
  */
 import { readFile, access } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import type { RunContext } from "../cli.js";
 import { createTenantCodeArchive } from "../tenant-code-archive.js";
@@ -193,13 +194,61 @@ async function readWorkflow(repoRoot: string, manifestPath: string): Promise<{
   return { workflow, actions };
 }
 
-async function runTsc(tenantRoot: string): Promise<{ ok: boolean; output: string }> {
+/**
+ * Locate a real TypeScript compiler: the tenant's own first, then the one this
+ * CLI ships with. Returns null when neither exists.
+ *
+ * Not `npx tsc`. In a scaffolded tenant — which has no node_modules of its own
+ * until `pnpm install` runs at the repo root — npx fetches the unrelated `tsc`
+ * package from the registry, which prints "This is not the tsc command you are
+ * looking for" and **exits 0**. `runTsc` read that as a pass, so every
+ * `agentic deploy` reported "typecheck ok" for code no compiler had looked at.
+ * That is how a starter template whose prompt did not satisfy `definePrompt`
+ * reached users.
+ */
+export function resolveTscBin(tenantRoot: string): string | null {
+  const candidates = [
+    // The tenant's own dependency wins: it pins the version its code targets.
+    createRequire(path.join(tenantRoot, "package.json")),
+    // Fall back to the compiler this CLI was installed with.
+    createRequire(import.meta.url),
+  ];
+  for (const require of candidates) {
+    try {
+      return require.resolve("typescript/bin/tsc");
+    } catch {
+      // Try the next resolver.
+    }
+  }
+  return null;
+}
+
+/**
+ * `ran` distinguishes "the compiler looked at this code and was happy" from
+ * "no compiler ran". Both used to print `typecheck: ok`, which is how a deploy
+ * could claim a clean typecheck for code nothing had read.
+ */
+async function runTsc(
+  tenantRoot: string,
+): Promise<{ ok: boolean; ran: boolean; output: string }> {
   const tsconfig = path.join(tenantRoot, "tsconfig.json");
   if (!(await exists(tsconfig))) {
-    return { ok: true, output: "(no tsconfig.json; skipping typecheck)" };
+    return { ok: true, ran: false, output: "no tsconfig.json in the tenant" };
+  }
+  const tsc = resolveTscBin(tenantRoot);
+  if (!tsc) {
+    // Say that nothing was checked. Reporting this as a pass is what let a
+    // broken scaffold ship; the operator can still opt out with --no-typecheck.
+    return {
+      ok: true,
+      ran: false,
+      output:
+        "typescript is not installed for this tenant or alongside the CLI — " +
+        "install it to have deploys type-checked",
+    };
   }
   return new Promise((resolve) => {
-    const child = spawn("npx", ["tsc", "--noEmit", "-p", tsconfig], {
+    const child = spawn(process.execPath, [tsc, "--noEmit", "-p", tsconfig], {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: tenantRoot,
     });
@@ -211,10 +260,10 @@ async function runTsc(tenantRoot: string): Promise<{ ok: boolean; output: string
       buf += b.toString();
     });
     child.on("close", (code) => {
-      resolve({ ok: code === 0, output: buf.trim() });
+      resolve({ ok: code === 0, ran: true, output: buf.trim() });
     });
     child.on("error", (err) => {
-      resolve({ ok: false, output: `tsc failed to launch: ${err.message}` });
+      resolve({ ok: false, ran: false, output: `tsc failed to launch: ${err.message}` });
     });
   });
 }
@@ -416,7 +465,8 @@ export async function runDeploy(ctx: RunContext): Promise<number> {
       );
       return 1;
     }
-    ctx.stdout.write("ok\n");
+    // Never report a check that did not happen as a passing one.
+    ctx.stdout.write(tsc.ran ? "ok\n" : `skipped — ${tsc.output}\n`);
   } else {
     ctx.stdout.write("  typecheck: skipped (--no-typecheck)\n");
   }

@@ -17,6 +17,9 @@
  *   -h, --help       print this help
  *   -v, --version    print package version
  */
+import path from "node:path";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { runInit } from "./commands/init.js";
 import { runDeploy } from "./commands/deploy.js";
 import { runLogs } from "./commands/logs.js";
@@ -171,15 +174,44 @@ export async function run(argv: string[]): Promise<number> {
   }
 }
 
+/**
+ * True when this module is the process entry point — i.e. the CLI should
+ * actually run rather than merely be imported (tests import it).
+ *
+ * Compares real filesystem paths, NOT text. `import.meta.url` is a URL, so it
+ * percent-encodes characters that are legal in a path: the previous
+ * `import.meta.url.endsWith(argv[1])` check silently returned false for any
+ * checkout whose path contains a space (`%20` vs " "), a `#`, or non-ASCII —
+ * and a false answer here makes the whole CLI exit 0 having done nothing,
+ * which looks like success to every caller, including CI. A relative
+ * `process.argv[1]` (`node ./src/cli.ts`) failed the same way.
+ *
+ * Exported so the comparison itself is testable without spawning a process.
+ */
+export function isMainEntry(
+  importMetaUrl: string,
+  argv1: string | undefined,
+): boolean {
+  if (typeof argv1 !== "string" || argv1 === "") return false;
+  let self: string;
+  try {
+    self = fileURLToPath(importMetaUrl);
+  } catch {
+    return false; // not a file: URL (bundled/embedded) — never the entry
+  }
+  const entry = path.resolve(argv1);
+  if (self === entry) return true;
+  // A symlinked bin (node_modules/.bin/agentic) resolves to the same file.
+  try {
+    return realpathSync(entry) === realpathSync(self);
+  } catch {
+    return false; // entry does not exist on disk: not this module
+  }
+}
+
 // Run only when invoked as the main script — tests import the module without
 // triggering the CLI shell exit.
-const isMain = (() => {
-  // ESM-safe: import.meta.url is a file: URL, process.argv[1] is a path.
-  if (typeof process.argv[1] !== "string") return false;
-  // tsx wraps the original entry path in argv[1] directly.
-  const entry = process.argv[1].replace(/\\/g, "/");
-  return import.meta.url.endsWith(entry);
-})();
+const isMain = isMainEntry(import.meta.url, process.argv[1]);
 
 if (isMain) {
   run(process.argv.slice(2)).then((code) => {
