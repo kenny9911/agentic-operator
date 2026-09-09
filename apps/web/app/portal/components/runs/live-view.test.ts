@@ -11,6 +11,7 @@ import {
   fmtTokens,
   linkRunAgent,
   nextFollowState,
+  executionStateFromRuns,
   nodeFreshness,
   nodeVisual,
   toFeedEntry,
@@ -551,5 +552,74 @@ describe("agentSubtitle", () => {
     expect(agentSubtitle("")).toBeNull();
     expect(agentSubtitle("   ")).toBeNull();
     expect(agentSubtitle("【查】")).toBeNull();
+  });
+});
+
+describe("固定在一次执行上时，高亮不随时间褪去", () => {
+  const HOUR_AGO = Date.now() - 60 * 60_000;
+
+  it("keeps a finished node coloured however long ago it ran", () => {
+    // 未固定：五分钟窗口之外就褪成灰色——这正是历史流程整张图全灰的原因
+    expect(nodeFreshness("ok", HOUR_AGO, Date.now())).toBe("stale");
+    expect(nodeFreshness("ok", HOUR_AGO, Date.now(), true)).toBe("recent");
+    expect(nodeFreshness("failed", HOUR_AGO, Date.now(), true)).toBe("recent");
+    expect(nodeVisual("ok", nodeFreshness("ok", HOUR_AGO, Date.now(), true)).accent)
+      .toBe("var(--green)");
+  });
+
+  it("still says nothing ran when nothing ran", () => {
+    // 固定不等于给没跑过的节点上色：本次执行没走到的分支仍然是灰的
+    expect(nodeFreshness("idle", null, Date.now(), true)).toBe("stale");
+    expect(nodeFreshness("skipped", HOUR_AGO, Date.now(), true)).toBe("stale");
+    expect(nodeFreshness(undefined, null, Date.now(), true)).toBe("stale");
+  });
+
+  it("leaves live states alone", () => {
+    expect(nodeFreshness("running", HOUR_AGO, Date.now(), true)).toBe("live");
+    expect(nodeFreshness("waiting_human", HOUR_AGO, Date.now(), true)).toBe("live");
+  });
+});
+
+describe("从持久化运行重建历史画布", () => {
+  const SUBJECT = "WFT-EE7877";
+  const base = Date.parse("2026-09-08T10:00:00Z");
+  const rows = [
+    { id: "run-1", status: "ok", agentName: "collectChainExecutionData", startedAt: base, endedAt: base + 1_000 },
+    { id: "run-2", status: "ok", agentName: "calculateExecutionDeviation", startedAt: base + 2_000, endedAt: base + 3_000 },
+    { id: "run-3", status: "failed", agentName: "createStockTransferRequest", startedAt: base + 4_000, endedAt: base + 5_000 },
+    { id: "run-4", status: "waiting", agentName: "approveAdjustmentOption", startedAt: base + 6_000, endedAt: null },
+  ];
+
+  it("colours every node the execution touched, and nothing else", () => {
+    const state = executionStateFromRuns(rows, SUBJECT);
+    expect(state.agents.collectChainExecutionData?.state).toBe("ok");
+    expect(state.agents.createStockTransferRequest?.state).toBe("failed");
+    expect(state.agents.approveAdjustmentOption?.state).toBe("waiting_human");
+    // A node the execution never reached has no entry — the canvas leaves it grey.
+    expect(state.agents.recycleFalseAlarm).toBeUndefined();
+    expect(state.latestSubject).toBe(SUBJECT);
+  });
+
+  it("pins every node to the execution, so age cannot grey the path out", () => {
+    const state = executionStateFromRuns(rows, SUBJECT);
+    const node = state.agents.collectChainExecutionData!;
+    // An hour later the live rule would call this stale; pinned it stays green.
+    expect(nodeFreshness(node.state, node.lastEventAt, base + 60 * 60_000)).toBe("stale");
+    expect(nodeFreshness(node.state, node.lastEventAt, base + 60 * 60_000, true)).toBe("recent");
+  });
+
+  it("keeps the worst outcome when an agent ran more than once", () => {
+    // 整改回环会把同一个 agent 再跑一遍；跑过一次失败，这次执行里它就是失败过。
+    const retried = [
+      { id: "r1", status: "failed", agentName: "auditAnnualPlanCompliance", startedAt: base, endedAt: base + 1_000 },
+      { id: "r2", status: "ok", agentName: "auditAnnualPlanCompliance", startedAt: base + 9_000, endedAt: base + 9_500 },
+    ];
+    expect(executionStateFromRuns(retried, SUBJECT).agents.auditAnnualPlanCompliance?.state).toBe("failed");
+  });
+
+  it("carries no task badges — history shows the path, not work to do", () => {
+    const state = executionStateFromRuns(rows, SUBJECT);
+    expect(state.agents.approveAdjustmentOption?.waitingTaskIds).toEqual([]);
+    expect(state.pulses).toEqual([]);
   });
 });

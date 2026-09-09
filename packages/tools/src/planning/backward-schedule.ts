@@ -100,6 +100,15 @@ export interface BackwardScheduleResult {
   total_cycle_days: number;
   earliest_start_date: string;
   planned_dates: BackwardScheduleStage[];
+  /**
+   * Set when the caller passed `reference_date` (the scan's business date):
+   * `slack_days` = earliest_start_date − reference_date. Negative means the
+   * chain cannot fit — it should already have started. `time_conflict` is
+   * that same comparison as a boolean so the caller copies rather than judges.
+   */
+  reference_date: string | null;
+  slack_days: number | null;
+  time_conflict: boolean | null;
 }
 
 export function computeBackwardSchedule(input: unknown): BackwardScheduleResult {
@@ -205,14 +214,29 @@ export function computeBackwardSchedule(input: unknown): BackwardScheduleResult 
   }
 
   const totalCycleDays = stages.reduce((sum, stage) => sum + stage.standard_cycle_days, 0);
+  const earliestStartMs = arrivalMs - totalCycleDays * DAY_MS;
+
+  // 「工期够不够」在提示词里曾是「当前日期 + 总周期 − 需求到货日 > 0」这样一句让
+  // 模型自己算的话。给了参考日期就在这里算完，模型只负责照抄结论。
+  const referenceRaw = pick(args, ["reference_date", "scan_date", "REFERENCE_DATE"]);
+  const referenceMs =
+    referenceRaw === undefined || referenceRaw === null || referenceRaw === ""
+      ? null
+      : parseDate(referenceRaw, "reference_date");
+  const slackDays =
+    referenceMs === null ? null : Math.round((earliestStartMs - referenceMs) / DAY_MS);
+
   return {
     required_arrival_date: formatDate(arrivalMs),
     business_type: businessType,
     business_type_filtered: businessType != null && !preFiltered,
     stage_count: planned.length,
     total_cycle_days: totalCycleDays,
-    earliest_start_date: formatDate(arrivalMs - totalCycleDays * DAY_MS),
+    earliest_start_date: formatDate(earliestStartMs),
     planned_dates: planned,
+    reference_date: referenceMs === null ? null : formatDate(referenceMs),
+    slack_days: slackDays,
+    time_conflict: slackDays === null ? null : slackDays < 0,
   };
 }
 
@@ -223,6 +247,9 @@ export const backwardScheduleOutputSchema = z.object({
   stage_count: z.number(),
   total_cycle_days: z.number(),
   earliest_start_date: z.string(),
+  reference_date: z.string().nullable(),
+  slack_days: z.number().nullable(),
+  time_conflict: z.boolean().nullable(),
   planned_dates: z.array(
     z.object({
       stage_node: z.string(),

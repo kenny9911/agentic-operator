@@ -61,6 +61,44 @@ async function startServer(
   };
 }
 
+const PBP_DEPLOYMENT_KEYS = [
+  "METAERP_PBP_APPROVER",
+  "METAERP_PBP_APPROVE_NODE",
+  "METAERP_PBP_BUSINESS_TYPE",
+  "METAERP_PBP_CATEGORY_CONFIG_ITEM",
+  "METAERP_PBP_CATEGORY_DESCRIPTION",
+  "METAERP_PBP_CATEGORY_ID",
+  "METAERP_PBP_CATEGORY_SECTIONS",
+  "METAERP_PBP_CURRENCY_NAME",
+  "METAERP_PBP_DEFAULT_NAME",
+  "METAERP_PBP_DEPARTMENT_CODE",
+  "METAERP_PBP_DOCUMENT_SUB_TYPE",
+  "METAERP_PBP_DOCUMENT_TYPE",
+  "METAERP_PBP_HEADER_SEQUENCE",
+  "METAERP_PBP_ITEM_CODE",
+  "METAERP_PBP_ITEM_DESC",
+  "METAERP_PBP_LINE_TYPE_CODE",
+  "METAERP_PBP_ORGANIZATION_NAME",
+  "METAERP_PBP_REQUESTOR_ID",
+  "METAERP_PBP_REQUESTOR_NAME",
+  "METAERP_PBP_REQUESTOR_NUMBER",
+  "METAERP_PBP_SOURCE_OBJECT_TYPE",
+  "METAERP_PBP_SUBMIT_FLAG",
+  "METAERP_PBP_UOM_CODE",
+  "METAERP_PBP_UOM_NAME",
+] as const;
+
+/**
+ * createPbp 的路由把部署级编码声明为 required，解析成真实通道时缺一个就当场报错。
+ * 需要真实解析它的用例先喂上——下面几个 describe 是文件顶层的兄弟，拿不到
+ * `metaerp real transports` 那个 beforeEach。
+ */
+function seedDeployment(): void {
+  process.env.METAERP_DEFAULT_UNIT_CODE = "1000";
+  process.env.METAERP_DEFAULT_ORGANIZATION_CODE = "YF1";
+  for (const key of PBP_DEPLOYMENT_KEYS) process.env[key] = `test-${key}`;
+}
+
 const ENV_KEYS = [
   "METAERP_ENV",
   "METAERP_ACCOUNT",
@@ -79,6 +117,7 @@ const ENV_KEYS = [
   "METAERP_CONFIG_FILE",
   "METAERP_DEFAULT_UNIT_CODE",
   "METAERP_DEFAULT_ORGANIZATION_CODE",
+  ...PBP_DEPLOYMENT_KEYS,
 ];
 
 describe("metaerp real transports", () => {
@@ -95,6 +134,11 @@ describe("metaerp real transports", () => {
     process.env.METAERP_RENTER_ID = "1780520994662254112";
     delete process.env.METAERP_DEFAULT_UNIT_CODE;
     delete process.env.METAERP_DEFAULT_ORGANIZATION_CODE;
+    // createPbp 的部署级编码：路由把它们声明为 required，缺一个 resolveRoute 就当场
+    // 报错（这正是它的用途——见「$env 展开」那组用例）。这里统一喂假值，个别用例再删
+    // 掉其中一个来验证报错。范围键（unitCode/organizationCode）不在这里喂：有用例逐字
+    // 断言请求体，多两个键就红。需要真实 createPbp 路由的 describe 各自 seedDeployment()。
+    for (const key of PBP_DEPLOYMENT_KEYS) process.env[key] = `test-${key}`;
     _clearMetaerpConfigCacheForTests();
     _clearMetaerpTokenCacheForTests();
     _clearMetaerpSessionCacheForTests();
@@ -227,6 +271,7 @@ describe("metaerp real transports", () => {
     it("releases writes only when that is said out loud too", () => {
       process.env.METAERP_TRANSPORT_MODE = "real";
       process.env.METAERP_ALLOW_REAL_WRITES = "true";
+      seedDeployment(); // 真实解析 createPbp 需要它的部署级编码齐备
       expect(resolveRoute("createPbp", "write").transport).toBe("openapi");
     });
 
@@ -765,5 +810,261 @@ describe("租户级路由覆盖", () => {
     expect(resolveRoute("updateTransactionOrder", "write").transport).toBe("openapi");
     expect(resolveRoute("updateTransactionOrder", "write", "hc-procurement").transport)
       .toBe("stub");
+  });
+});
+
+describe("租户级默认通道", () => {
+  beforeEach(() => {
+    seedDeployment();
+    _clearMetaerpRoutesCacheForTests();
+  });
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  it("pins a whole tenant to the mock while the same operations stay real for everyone else", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_ALLOW_REAL_WRITES = "true";
+    _clearMetaerpRoutesCacheForTests();
+    // 场景一与场景二共用这些操作名；场景一切到真实 ERP 后，场景二曾跟着一起指向 v15。
+    for (const op of ["queryPbpHeader", "queryPr", "createProcPackageLines", "createTransactionOrder"]) {
+      const kind = op.startsWith("query") ? "query" : "write";
+      expect(resolveRoute(op, kind, "hc-digital-worker").transport, op).toBe("mock");
+      expect(resolveRoute(op, kind, "hc-procurement").transport, op).not.toBe("mock");
+    }
+    // createPbp 是这条钉子唯一的例外，靠操作级 tenant_overrides 单独开口——见下一个 describe。
+    expect(resolveRoute("createPbp", "write", "hc-digital-worker").transport).toBe("openapi");
+    // 不在表里的操作对该租户依旧是 mock，不会因为租户默认而出错。
+    expect(resolveRoute("queryAuditThresholdConfig", "query", "hc-digital-worker").transport).toBe("mock");
+  });
+
+  it("lets an operation-level tenant override beat the tenant default", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    _clearMetaerpRoutesCacheForTests();
+    // hc-procurement 没有租户默认，但 updateTransactionOrder 有操作级覆盖 → stub
+    expect(resolveRoute("updateTransactionOrder", "write", "hc-procurement").transport).toBe("stub");
+  });
+});
+
+describe("createPbp：请求体是数组，回执也是数组", () => {
+  // 2026-09-09 v15 实跑 PBP202609090001 的原始回执，逐字保留。整单结论在
+  // headerProcessedStatus——affectedRows 成功时也是 0，拿它当判据会把每次成功判成失败。
+  const receipt = {
+    affectedRows: 0,
+    pbpHeaderId: "2038537256255558642",
+    pbpHeaderSequence: "2038537256255427570",
+    pbpNumber: "PBP202609090001",
+    headerProcessedStatus: "SUCCESS",
+    pbpResponseLineList: [
+      {
+        pbpLineId: "2038537256255689714",
+        pbpLineNumber: "2038537256255624178",
+        sourceObjectId: "PBP-2027-0102",
+        sourceObjectLineId: "PBPL-2027-0102-01",
+        lineProcessedStatus: "SUCCESS",
+        lineMessageList: [],
+      },
+    ],
+    headerMessageList: [],
+  };
+
+  beforeEach(() => _clearMetaerpRoutesCacheForTests());
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  beforeEach(seedDeployment);
+
+  const route = () => resolveRoute("createPbp", "write", "hc-digital-worker");
+
+  it("declares the array body envelope the swagger requires", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(route().body_envelope).toBe("array");
+  });
+
+  it("opens the one authorised write while the tenant stays pinned to the mock", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    delete process.env.METAERP_ALLOW_REAL_WRITES;
+    // 顶层 tenants.hc-digital-worker = mock；操作级 tenant_overrides 更具体，只放开这一个。
+    expect(route().transport).toBe("openapi");
+    expect(resolveRoute("createProcPackageLines", "write", "hc-digital-worker").transport).toBe("mock");
+    expect(resolveRoute("createTransactionOrder", "write", "hc-digital-worker").transport).toBe("mock");
+  });
+
+  it("accepts the receipt of the plan that really landed", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [receipt]),
+    ).not.toThrow();
+  });
+
+  it("fails a header the ERP did not process, even with the numbers filled in", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        { ...receipt, headerProcessedStatus: "ERROR" },
+      ]),
+    ).toThrow(/headerProcessedStatus="ERROR"[\s\S]*需为 SUCCESS/);
+  });
+
+  it("fails on a non-empty message list — the ERP's own wording, not a status code", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        { ...receipt, headerMessageList: [{ message: "物料编码不存在" }] },
+      ]),
+    ).toThrow(/物料编码不存在/);
+  });
+
+  it("reads lines from the receipt's own array name, not the request's", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    // 请求发 pbpCreateLineDTOList，回执回 pbpResponseLineList——两侧不同名。
+    expect(route().line_field).toBe("pbpCreateLineDTOList");
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        {
+          ...receipt,
+          pbpResponseLineList: [
+            { lineProcessedStatus: "ERROR", lineMessageList: ["需求日期早于当前日期"] },
+          ],
+        },
+      ]),
+    ).toThrow(/第 1 行状态 ERROR[\s\S]*需求日期早于当前日期/);
+  });
+
+  // BR2-MERGE-04（合并计划必须有来源行映射）的落库证据就在行回执里：v15 把
+  // sourceObjectLineId 原样回带（PBP202609090002 实测），缺了就是映射没写进去
+  // ——而整单 headerProcessedStatus 照样是 SUCCESS。
+  it("fails a plan whose lines came back without their source mapping", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(route().write_receipt?.line_require_fields).toEqual(["sourceObjectLineId"]);
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        {
+          ...receipt,
+          pbpResponseLineList: [
+            { pbpLineId: "2038537256255689714", lineProcessedStatus: "SUCCESS", lineMessageList: [] },
+          ],
+        },
+      ]),
+    ).toThrow(/第 1 行缺少 sourceObjectLineId/);
+  });
+
+  it("accepts the same plan once the source line id is echoed back", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        {
+          ...receipt,
+          pbpResponseLineList: [
+            {
+              pbpLineId: "2038539268691137525",
+              sourceObjectId: "PBP-2027-0102",
+              sourceObjectLineId: "PBPL-2027-0102-01",
+              lineProcessedStatus: "SUCCESS",
+              lineMessageList: [],
+            },
+          ],
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("names the failing header when only one of several landed", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    expect(() =>
+      _assertWriteReceiptForTests("createPbp", route(), [
+        receipt,
+        { ...receipt, pbpNumber: "", headerProcessedStatus: "ERROR" },
+      ]),
+    ).toThrow(/第 2 张单/);
+  });
+
+  it("stamps every receipt in the array, keeping the array shape", () => {
+    expect(_markAppliedForTests("write", [receipt])).toEqual([
+      { ...receipt, applied: true },
+    ]);
+  });
+});
+
+describe("调拨单：发出存储库与发出货位是一对", () => {
+  beforeEach(() => {
+    seedDeployment();
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_TRANSFER_FROM_STOREHOUSE_CODE = "300000";
+    process.env.METAERP_TRANSFER_FROM_LOCATOR_CODE = "LC001";
+    _clearMetaerpRoutesCacheForTests();
+  });
+  afterEach(() => {
+    delete process.env.METAERP_TRANSFER_FROM_STOREHOUSE_CODE;
+    delete process.env.METAERP_TRANSFER_FROM_LOCATOR_CODE;
+    _clearMetaerpRoutesCacheForTests();
+  });
+
+  // 2026-09-09 实测：模型把 storehouseCode 选成 100000，而路由填的 LC001 是
+  // 300000（成品库）里的货位，四行全部 FAILED「locator code is invalid」。
+  // 此前两次成功只是模型碰巧选中了 300000——钉了一半的配对迟早会炸。
+  it("overrides the model's source storehouse so the pinned locator stays valid", () => {
+    const route = resolveRoute("createTransactionOrder", "write", "hc-procurement");
+    const scoped = _applyLineScopeForTests(
+      "createTransactionOrder",
+      route,
+      { lineList: [{ itemCode: "10000008", storehouseCode: "100000", transactionQuantity: "10" }] },
+      null,
+    );
+    const line = (scoped.lineList as Record<string, unknown>[])[0]!;
+    expect(line.storehouseCode).toBe("300000");
+    expect(line.locatorCode).toBe("LC001");
+  });
+
+  it("drops the whole pair when both are unset — back to the model choosing", () => {
+    delete process.env.METAERP_TRANSFER_FROM_STOREHOUSE_CODE;
+    delete process.env.METAERP_TRANSFER_FROM_LOCATOR_CODE;
+    _clearMetaerpRoutesCacheForTests();
+    const route = resolveRoute("createTransactionOrder", "write", "hc-procurement");
+    const scoped = _applyLineScopeForTests(
+      "createTransactionOrder",
+      route,
+      { lineList: [{ itemCode: "10000008", storehouseCode: "100000" }] },
+      null,
+    );
+    const line = (scoped.lineList as Record<string, unknown>[])[0]!;
+    expect(line.storehouseCode).toBe("100000");
+    expect("locatorCode" in line).toBe(false);
+  });
+});
+
+describe("$env 展开会下钻到数组和嵌套对象里", () => {
+  beforeEach(() => {
+    seedDeployment();
+    _clearMetaerpRoutesCacheForTests();
+  });
+  afterEach(() => _clearMetaerpRoutesCacheForTests());
+
+  it("resolves the approver node nested inside approverList", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    process.env.METAERP_PBP_APPROVE_NODE = "__userManual_7_handler";
+    process.env.METAERP_PBP_APPROVER = "wubin";
+    const overrides = resolveRoute("createPbp", "write", "hc-digital-worker").overrides ?? {};
+    expect(overrides.approverList).toEqual([
+      { approveNode: "__userManual_7_handler", handlerList: ["wubin"] },
+    ]);
+  });
+
+  it("drops an optional key whose env var is unset, rather than shipping {$env}", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    // 演示锚点：留空即回到「模型按需求行给物料」，所以它是可选的。
+    delete process.env.METAERP_PBP_ITEM_CODE;
+    const lineOverrides =
+      resolveRoute("createPbp", "write", "hc-digital-worker").line_overrides ?? {};
+    expect("itemCode" in lineOverrides).toBe(false);
+    expect(JSON.stringify(lineOverrides)).not.toContain("$env");
+  });
+
+  // 静默丢字段是 2026-09-09 那次实跑的真正病根：dev 栈父进程持有启动时的 env 快照，
+  // node --watch 重启子进程不重读 .env，当天新加的变量一个都没进去，报文少了十几个
+  // 字段，ERP 只回「字段:不能为空」且不说是哪个字段。声明 required 的当场报变量名。
+  it("throws with the variable's name when a required deployment code is unset", () => {
+    process.env.METAERP_TRANSPORT_MODE = "real";
+    delete process.env.METAERP_PBP_APPROVE_NODE;
+    expect(() => resolveRoute("createPbp", "write", "hc-digital-worker")).toThrow(
+      /METAERP_PBP_APPROVE_NODE[\s\S]*字段:不能为空/,
+    );
   });
 });

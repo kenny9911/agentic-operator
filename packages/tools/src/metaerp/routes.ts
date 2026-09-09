@@ -96,13 +96,43 @@ export interface MetaerpRoute {
   write_receipt?: {
     /** 这些字段必须存在且非空，否则判失败。 */
     require_fields?: string[];
-    /** 行状态字段名（行数组取 line_field）。 */
+    /**
+     * 这些字段必须取到列出的值之一，否则判失败。
+     *
+     * createPbp 的回执把整单结论放在 headerProcessedStatus 里，值不是
+     * SUCCESS 就是没落库——而字段本身照样存在且非空，`require_fields` 看不出来。
+     */
+    require_values?: Record<string, string[]>;
+    /** 这些字段是错误清单：数组非空即判失败，内容原样带进报错。 */
+    error_list_fields?: string[];
+    /**
+     * 回执里行数组的字段名。缺省沿用 `line_field`（请求侧的名字）——但两侧未必
+     * 同名：createPbp 请求发 pbpCreateLineDTOList，回执回 pbpResponseLineList。
+     */
+    line_field?: string;
+    /** 行状态字段名（行数组取 write_receipt.line_field ?? line_field）。 */
     line_status_field?: string;
     /** 行状态取到这些值即判失败。 */
     line_failed_values?: string[];
-    /** 这些行字段非空即判失败，其内容原样带进报错。 */
+    /**
+     * 每一行都必须带上这些字段且非空，否则判失败。
+     *
+     * 「来源可溯」这类规则的证据就在行回执里：createPbp 把 sourceObjectLineId 原样
+     * 回带，缺了就说明来源映射没写进去——而整单 headerProcessedStatus 照样是 SUCCESS。
+     */
+    line_require_fields?: string[];
+    /** 这些行字段非空（字符串非空 / 数组非空）即判失败，其内容原样带进报错。 */
     line_error_fields?: string[];
   };
+  /**
+   * 请求体的外层形状。
+   *
+   * 绝大多数 metaERP 接口收一个对象，但 createPbp 的 requestBody 是
+   * `array of PbpCreateHeaderDTO`——直接发对象会被网关按类型不匹配退回。
+   * 声明 `"array"` 后，合并好的单据头在发出前包成单元素数组；defaults /
+   * overrides / line_* 全部照常作用在**头对象**上，不受影响。
+   */
+  body_envelope?: "array";
   allow_real_write?: boolean;
   /**
    * 让运行时把稳定的幂等键写进这个字段。
@@ -117,7 +147,58 @@ export interface MetaerpRoute {
 
 const DEFAULT_ROUTES_FILE = path.join("config", "metaerp-routes.json");
 
-let cache: { path: string; routes: Map<string, MetaerpRoute> } | null = null;
+let cache: {
+  path: string;
+  routes: Map<string, MetaerpRoute>;
+  tenants: Map<string, TenantRouteDefault>;
+} | null = null;
+
+/**
+ * 租户级默认通道。
+ *
+ * 路由表按操作名归属，而操作名是跨租户共用的：场景二的 queryPbpHeader / createPbp /
+ * createTransactionOrder 与场景一同名。场景一切到真实 ERP 后，场景二的 13 个操作
+ * 跟着一起指向了 v15——其中两个是真实写入，还会带上场景一钉死的 pbpNumberList 过滤。
+ * 「先在 mock 上把整条链路跑通」需要一句话就能把一个租户整体钉住，而不是给 35 个
+ * 操作各写一段 tenant_overrides。操作级 tenant_overrides 仍然更具体，可以覆盖它。
+ */
+export interface TenantRouteDefault {
+  transport: MetaerpTransport;
+  reason?: string;
+}
+
+function normalizeTenantDefaults(raw: unknown): Map<string, TenantRouteDefault> {
+  const out = new Map<string, TenantRouteDefault>();
+  if (raw === undefined) return out;
+  if (!isRecord(raw)) {
+    throw new Error("metaerp routes: top-level 'tenants' must be an object keyed by tenant slug");
+  }
+  for (const [slug, value] of Object.entries(raw)) {
+    if (!isRecord(value)) {
+      throw new Error(`metaerp routes: tenants.${slug} must be an object`);
+    }
+    const transport = value.transport;
+    if (transport !== "mock" && transport !== "stub") {
+      // A tenant default may only point AWAY from the real estate. Pointing a
+      // whole tenant at a real transport by default would let one line in a
+      // config file switch every write it makes to live documents.
+      throw new Error(
+        `metaerp routes: tenants.${slug}.transport must be mock | stub (got '${String(transport)}')`,
+      );
+    }
+    out.set(slug, {
+      transport,
+      ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+    });
+  }
+  return out;
+}
+
+export function metaerpTenantDefault(tenantSlug: string | undefined): TenantRouteDefault | undefined {
+  if (!tenantSlug) return undefined;
+  loadMetaerpRoutes();
+  return cache?.tenants.get(tenantSlug);
+}
 
 export function _clearMetaerpRoutesCacheForTests(): void {
   cache = null;
@@ -208,6 +289,21 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
       `metaerp routes: entry '${operation}' declares line_defaults/line_overrides without line_field`,
     );
   }
+  const bodyEnvelopeRaw = (raw as { body_envelope?: unknown }).body_envelope;
+  if (bodyEnvelopeRaw !== undefined && bodyEnvelopeRaw !== "array") {
+    throw new Error(
+      `metaerp routes: entry '${operation}' body_envelope must be "array" when present`,
+    );
+  }
+  if (bodyEnvelopeRaw === "array" && transport !== "openapi") {
+    // Only the openapi transport builds its body by merging; wrapping anywhere
+    // else would produce a body the other transport never unwraps.
+    throw new Error(
+      `metaerp routes: entry '${operation}' body_envelope is only supported on the openapi transport (got '${transport}')`,
+    );
+  }
+  const bodyEnvelope = bodyEnvelopeRaw as "array" | undefined;
+
   return {
     transport,
     ...(routePath ? { path: routePath } : {}),
@@ -239,6 +335,7 @@ function normalizeRoute(operation: string, raw: unknown): MetaerpRoute {
     ...((raw as { write_receipt?: unknown }).write_receipt
       ? { write_receipt: (raw as { write_receipt: MetaerpRoute["write_receipt"] }).write_receipt }
       : {}),
+    ...(bodyEnvelope ? { body_envelope: bodyEnvelope } : {}),
     ...((raw as { allow_real_write?: unknown }).allow_real_write === true
       ? { allow_real_write: true }
       : {}),
@@ -255,6 +352,7 @@ export function loadMetaerpRoutes(): Map<string, MetaerpRoute> {
   const file = metaerpRoutesFilePath();
   if (cache?.path === file) return cache.routes;
   const routes = new Map<string, MetaerpRoute>();
+  let parsedTenants: unknown;
   if (fs.existsSync(file)) {
     let parsed: unknown;
     try {
@@ -268,11 +366,12 @@ export function loadMetaerpRoutes(): Map<string, MetaerpRoute> {
     if (!table) {
       throw new Error(`metaerp routes: ${file} must be { "routes": { ... } }`);
     }
+    parsedTenants = isRecord(parsed) ? parsed.tenants : undefined;
     for (const [operation, raw] of Object.entries(table)) {
       routes.set(operation, normalizeRoute(operation, raw));
     }
   }
-  cache = { path: file, routes };
+  cache = { path: file, routes, tenants: normalizeTenantDefaults(parsedTenants) };
   return routes;
 }
 
@@ -341,25 +440,61 @@ function erpTimestamp(spec: unknown): string {
   );
 }
 
+/**
+ * One `{"$env"}` / `{"$now"}` node, or `MISSING` when an unset env var means the
+ * whole key should be omitted (that is how a route says "leave this field out
+ * entirely" — see METAERP_TRANSFER_AUTO_SUBMIT).
+ */
+const MISSING = Symbol("metaerp:missing");
+
+function expandNode(value: unknown, enforceRequired: boolean): unknown | typeof MISSING {
+  if (Array.isArray(value)) {
+    // Nested, because deployment codes also live inside arrays of objects:
+    // createPbp's approverList is `[{approveNode, handlerList}]`, and a
+    // top-level-only expansion would ship the literal {"$env":…} to the ERP.
+    const out: unknown[] = [];
+    for (const entry of value) {
+      const expanded = expandNode(entry, enforceRequired);
+      if (expanded !== MISSING) out.push(expanded);
+    }
+    return out;
+  }
+  if (!value || typeof value !== "object") return value;
+  if ("$env" in value) {
+    const name = (value as { $env?: unknown }).$env;
+    const resolved = typeof name === "string" ? process.env[name]?.trim() : undefined;
+    if (resolved) return resolved;
+    // 「没设就整字段省略」是有意的（METAERP_TRANSFER_AUTO_SUBMIT 靠它关掉），但对部署级
+    // 身份编码就成了灾难：字段静默消失，ERP 回一句「字段:不能为空」而且不说是哪个字段。
+    // 2026-09-09 实测踩到的是更隐蔽的一种——dev 栈父进程持有的是启动那一刻的 env 快照，
+    // node --watch 重启子进程并不会重读 .env，于是当天新加的变量一个都没生效，
+    // 报文少了十几个字段却毫无提示。声明 required 的字段缺了就当场报出变量名。
+    if (enforceRequired && (value as { required?: unknown }).required === true) {
+      throw new Error(
+        `metaerp routes: 环境变量 ${String(name)} 未设置或为空，而路由把它声明为必需——` +
+          `该字段会整个从报文里消失，ERP 只会回一句「字段:不能为空」且不说是哪个字段。` +
+          `请在 .env 里补上它；注意改完 .env 必须重启整个 dev 栈（node --watch 只重载代码，不重读 env）。`,
+      );
+    }
+    return MISSING;
+  }
+  if ("$now" in value) return erpTimestamp((value as { $now?: unknown }).$now);
+  const out: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === "required") continue; // the marker itself never reaches the ERP
+    const expanded = expandNode(nested, enforceRequired);
+    if (expanded !== MISSING) out[key] = expanded;
+  }
+  return out;
+}
+
 function expandDefaults(
   defaults: Record<string, unknown> | undefined,
+  enforceRequired: boolean,
 ): Record<string, unknown> | undefined {
   if (!defaults) return undefined;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(defaults)) {
-    if (value && typeof value === "object" && !Array.isArray(value) && "$env" in value) {
-      const name = (value as { $env?: unknown }).$env;
-      const resolved =
-        typeof name === "string" ? process.env[name]?.trim() : undefined;
-      if (resolved) out[key] = resolved;
-      continue;
-    }
-    if (value && typeof value === "object" && !Array.isArray(value) && "$now" in value) {
-      out[key] = erpTimestamp((value as { $now?: unknown }).$now);
-      continue;
-    }
-    out[key] = value;
-  }
+  const expanded = expandNode(defaults, enforceRequired);
+  const out = (expanded === MISSING ? {} : expanded) as Record<string, unknown>;
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -370,19 +505,34 @@ export function resolveRoute(
 ): ResolvedRoute {
   const base = loadMetaerpRoutes().get(operation);
   const override = tenantSlug ? base?.tenant_overrides?.[tenantSlug] : undefined;
-  // 浅合并：覆盖块只需写它要改的字段，其余沿用主声明。
-  const stored = base && override ? { ...base, ...override } : base;
+  const tenantDefault = override ? undefined : metaerpTenantDefault(tenantSlug);
+  // 优先级：操作级 tenant_overrides > 租户级默认 > 主声明。浅合并，覆盖块只写要改的字段。
+  // `override` 只可能来自 `base.tenant_overrides`，所以它存在时 base 必然存在。
+  const stored: MetaerpRoute | undefined =
+    base && override
+      ? ({ ...base, ...override } as MetaerpRoute)
+      : tenantDefault
+        ? { ...(base ?? { transport: "mock" as const }), transport: tenantDefault.transport }
+        : base;
+  // `required` is enforced only for a call that will actually reach the real ERP.
+  // A route the gates are about to downgrade to the mock has no business
+  // demanding v15's deployment codes, and neither has a lookup that only asks
+  // where an operation lives.
+  const willBeReal =
+    stored !== undefined &&
+    stored.transport !== "mock" &&
+    stored.transport !== "stub" &&
+    metaerpTransportMode() === "real" &&
+    (kind !== "write" || metaerpRealWritesEnabled() || stored.allow_real_write === true);
+  const expand = (value: Record<string, unknown> | undefined) =>
+    expandDefaults(value, willBeReal);
   const declared: MetaerpRoute = stored
     ? {
         ...stored,
-        ...(stored.defaults ? { defaults: expandDefaults(stored.defaults) } : {}),
-        ...(stored.overrides ? { overrides: expandDefaults(stored.overrides) } : {}),
-        ...(stored.line_defaults
-          ? { line_defaults: expandDefaults(stored.line_defaults) }
-          : {}),
-        ...(stored.line_overrides
-          ? { line_overrides: expandDefaults(stored.line_overrides) }
-          : {}),
+        ...(stored.defaults ? { defaults: expand(stored.defaults) } : {}),
+        ...(stored.overrides ? { overrides: expand(stored.overrides) } : {}),
+        ...(stored.line_defaults ? { line_defaults: expand(stored.line_defaults) } : {}),
+        ...(stored.line_overrides ? { line_overrides: expand(stored.line_overrides) } : {}),
       }
     : { transport: "mock" as const };
   // A stub reaches no system at all, so neither gate applies to it: there is

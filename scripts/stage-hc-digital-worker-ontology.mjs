@@ -182,6 +182,14 @@ const EXTRA_QUERY_OPS = {
     entity: "po_line_t",
     label: "订单行台账（历史价格曲线的样本）",
   },
+  // 采购业务计划关系表：执行计划行 ↔ 来源需求行。本体没把它建成 Data Object，
+  // 但 generateExecutionPlanDraft 的 side_effects 明写「回写来源行映射落库结果」
+  // （relation_record_id / source_mapping_written），BR2-MERGE-04 要的正是这份证据。
+  // 没有这张表，createPbp 写不出映射，规则永远无法被满足。
+  queryPbpRelations: {
+    entity: "ss_pbp_rel_t",
+    label: "采购业务计划关系表（执行计划行 ↔ 来源需求行）",
+  },
 };
 
 // ── stub tables for apps/mock-erp ────────────────────────────────────────────
@@ -191,6 +199,9 @@ const EXTRA_QUERY_OPS = {
 // 另有一条 M-CAB-240 电缆需求，需求日期相差 74 天（>60 天 → 需拆分），
 // 走人工确认的拆分分支。
 const STUB_TABLES = {
+  // 映射由 createPbp 在运行时写入，种子为空——空表和「表不存在」是两回事：
+  // 后者会让写入直接 500，规则连失败原因都说不清。
+  ss_pbp_rel_t: [],
   ss_pbp_header_t: [
     {
       PBP_HEADER_ID: "PBP-2027-0101",

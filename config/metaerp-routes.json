@@ -1,10 +1,28 @@
 {
   "_readme": "Meta ERP 操作路由表。transport: mock | openapi | uiapi；未列出的操作一律走 mock。两道闸口：METAERP_TRANSPORT_MODE=real 本表才生效；写操作还需 METAERP_ALLOW_REAL_WRITES=true。path 不带环境前缀，运行时按 METAERP_ENV 归一到 /v15 或 /beta。",
+  "tenants": {
+    "hc-digital-worker": {
+      "transport": "mock",
+      "reason": "场景二先在本地 mock（:3621）上把整条链路跑通。它与场景一共用 queryPbpHeader / queryPr / createPbp / createTransactionOrder 等 13 个操作名，不钉住会跟着场景一一起打到真实 v15，其中两个是真实写入。切真实 ERP 时删掉这一段即可。"
+    }
+  },
   "routes": {
     "queryPbpHeader": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/queryPbpHeader",
-      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值"
+      "note": "不支持全量列举（不带单号返回 PBP-ServiceLogic-401069）；数据信息.xlsx 里的编号是采购需求(PR)号，不是 PBP 号，不要拿来当这里的默认值",
+      "tenant_overrides": {
+        "hc-digital-worker": {
+          "transport": "mock",
+          "overrides": {
+            "pbpHeaderIdList": [
+              "PBP-2027-0101",
+              "PBP-2027-0102"
+            ]
+          },
+          "note": "演示锚点：只处理这两份已审批的采购计划。放 overrides 而不是 defaults——defaults 只在调用方没给时才补，挡不住模型自己编一个过滤条件；场景一实测里它编过一个不存在的单号，整条链路建立在虚构数据上。第三份 PBP-2027-0199 是草稿，本就不该进扫描范围，锚点一并把它挡在外面（它没有 APPROVED_AT，会让逐行投影整批失败）。"
+        }
+      }
     },
     "queryOpenPbpHeader": {
       "transport": "openapi",
@@ -13,7 +31,19 @@
     },
     "queryPbpLine": {
       "transport": "openapi",
-      "path": "/hsrm/srm/openapi/v1/queryPbpLine"
+      "path": "/hsrm/srm/openapi/v1/queryPbpLine",
+      "tenant_overrides": {
+        "hc-digital-worker": {
+          "transport": "mock",
+          "overrides": {
+            "pbpHeaderIdList": [
+              "PBP-2027-0101",
+              "PBP-2027-0102"
+            ]
+          },
+          "note": "演示锚点：只处理这两份已审批的采购计划。放 overrides 而不是 defaults——defaults 只在调用方没给时才补，挡不住模型自己编一个过滤条件；场景一实测里它编过一个不存在的单号，整条链路建立在虚构数据上。第三份 PBP-2027-0199 是草稿，本就不该进扫描范围，锚点一并把它挡在外面（它没有 APPROVED_AT，会让逐行投影整批失败）。"
+        }
+      }
     },
     "queryOpenPbpLine": {
       "transport": "openapi",
@@ -95,7 +125,233 @@
     "createPbp": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/createPbp",
-      "note": "请求体是数组，不是对象"
+      "body_envelope": "array",
+      "note": "采购业务计划（执行计划）。2026-09-09 在 v15 实跑建出 PBP202609090001 并用 queryPbpHeader 回查确认（status=APPROVED，creationDate 2026-09-09 15:31:29），请求体形状取自页面手工建单的抓包 + PbpCreateOpenAPI_7c311b.yaml。三件事和别的写操作不一样：①**请求体是数组**（swagger 的 requestBody 是 array of PbpCreateHeaderDTO），由 body_envelope 包；②**回执也是数组**，每张单一条，整单结论在 headerProcessedStatus 而不是 affectedRows——实测成功时 affectedRows 就是 0，拿它当判据会把每一次成功都判成失败；③没有 uniqueSequenceNumber 之类的幂等字段，重复调用会建出第二张单。Inngest 的 step.run 记忆化挡住了重放，但不要在同一个 step 里循环调用它。模型只负责业务值：pbpName、备注、以及行上的 quantity / needByDate / unitPrice / budgetAmount；部署级编码与演示锚点由下面的 overrides / line_overrides 打进去。 BR2-MERGE-04（合并计划必须有来源行映射）由这条 write_receipt 兜底——本体把它绑成了本动作自己的 precondition，动作被自己写入的结果卡住，所以覆盖层把它声明为 receipt 策略。真实 v15 的回执里没有 relation_record_id 这种东西（那是 mock 的字段），落库证据是 pbpNumber + headerProcessedStatus=SUCCESS + 每一行 lineProcessedStatus=SUCCESS。来源映射是真的：2026-09-09 第二次实跑（PBP202609090002）验证 v15 原样收下行上的 sourceObjectId / sourceObjectLineId 并在回执里回带，所以 line_require_fields 直接要求每行回执带 sourceObjectLineId——缺了即判整步失败，而那时 headerProcessedStatus 照样是 SUCCESS。sourceObjectType 钉成 MANUAL：演示里的来源行号是 mock 造的，v15 侧没有对应单据，这个字段说的是「谁建的」而不是「关联到哪张单」。 行上还有 16 个页面报文逐字带着的字段（allowItemDescUpdateFlag / auto_createPrCxCx / versionList / suggestedBuyer* / manufacturer* / disabledCategory 等），少了就报 PBP-ServiceLogic-401048「字段:不能为空」而且**不说是哪个字段**——2026-09-09 首次实跑就栽在这里。整组照抄抓包放进 line_defaults / line_overrides，不要按「看起来没用」删。",
+      "defaults": {
+        "pbpName": {
+          "$env": "METAERP_PBP_DEFAULT_NAME"
+        },
+        "remark": ""
+      },
+      "overrides": {
+        "unitCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE",
+          "required": true
+        },
+        "organizationCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE",
+          "required": true
+        },
+        "departmentCode": {
+          "$env": "METAERP_PBP_DEPARTMENT_CODE",
+          "required": true
+        },
+        "documentType": {
+          "$env": "METAERP_PBP_DOCUMENT_TYPE",
+          "required": true
+        },
+        "documentSubType": {
+          "$env": "METAERP_PBP_DOCUMENT_SUB_TYPE",
+          "required": true
+        },
+        "businessType": {
+          "$env": "METAERP_PBP_BUSINESS_TYPE",
+          "required": true
+        },
+        "currencyCode": "CNY",
+        "operationType": "created",
+        "submitFlag": {
+          "$env": "METAERP_PBP_SUBMIT_FLAG",
+          "required": true
+        },
+        "preparerId": {
+          "$env": "METAERP_PBP_REQUESTOR_ID",
+          "required": true
+        },
+        "requestorId": {
+          "$env": "METAERP_PBP_REQUESTOR_ID",
+          "required": true
+        },
+        "pbpHeaderSequence": {
+          "$env": "METAERP_PBP_HEADER_SEQUENCE",
+          "required": true
+        },
+        "pbpHeaderId": "",
+        "pbpNumber": "",
+        "status": "",
+        "periodType": "",
+        "startDate": "",
+        "endDate": "",
+        "projectNumber": "",
+        "attList": [],
+        "approverList": [
+          {
+            "approveNode": {
+              "$env": "METAERP_PBP_APPROVE_NODE",
+              "required": true
+            },
+            "handlerList": [
+              {
+                "$env": "METAERP_PBP_APPROVER",
+                "required": true
+              }
+            ]
+          }
+        ]
+      },
+      "line_field": "pbpCreateLineDTOList",
+      "line_defaults": {
+        "pbpLineNumber": 10,
+        "pbpLineSequence": 10,
+        "remark": null,
+        "allowItemDescUpdateFlag": "Y",
+        "auto_createPrCxCx": "是",
+        "disabledAllocationTypeCode": false,
+        "disabledCategory": true,
+        "manufacturerName": "",
+        "manufacturerPartNumber": "",
+        "suggestedBuyerEmployeeNumber": "",
+        "suggestedBuyerId": "",
+        "suggestedBuyerName": "",
+        "pfsStructNumber": null,
+        "serviceDate": null,
+        "versionList": [
+          {
+            "label": "0",
+            "value": "0"
+          }
+        ]
+      },
+      "line_overrides": {
+        "unitCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE",
+          "required": true
+        },
+        "companyCode": {
+          "$env": "METAERP_DEFAULT_UNIT_CODE",
+          "required": true
+        },
+        "organizationCode": {
+          "$env": "METAERP_DEFAULT_ORGANIZATION_CODE",
+          "required": true
+        },
+        "departmentCode": {
+          "$env": "METAERP_PBP_DEPARTMENT_CODE",
+          "required": true
+        },
+        "operationType": "created",
+        "currencyCode": "CNY",
+        "inclusiveTaxFlag": "Y",
+        "matchingBasis": "QUANTITY",
+        "purchasingBasis": {
+          "$env": "METAERP_PBP_BUSINESS_TYPE",
+          "required": true
+        },
+        "pbpLineTypeCode": {
+          "$env": "METAERP_PBP_LINE_TYPE_CODE",
+          "required": true
+        },
+        "itemCode": {
+          "$env": "METAERP_PBP_ITEM_CODE"
+        },
+        "itemDesc": {
+          "$env": "METAERP_PBP_ITEM_DESC"
+        },
+        "itemVersion": "",
+        "categoryId": {
+          "$env": "METAERP_PBP_CATEGORY_ID",
+          "required": true
+        },
+        "categoryConcatSections": {
+          "$env": "METAERP_PBP_CATEGORY_SECTIONS",
+          "required": true
+        },
+        "requestorId": {
+          "$env": "METAERP_PBP_REQUESTOR_ID",
+          "required": true
+        },
+        "requestorEmployeeNumber": {
+          "$env": "METAERP_PBP_REQUESTOR_NUMBER",
+          "required": true
+        },
+        "requestorName": {
+          "$env": "METAERP_PBP_REQUESTOR_NAME",
+          "required": true
+        },
+        "primaryUomCode": {
+          "$env": "METAERP_PBP_UOM_CODE",
+          "required": true
+        },
+        "uomCode": {
+          "$env": "METAERP_PBP_UOM_CODE",
+          "required": true
+        },
+        "primaryUomName": {
+          "$env": "METAERP_PBP_UOM_NAME",
+          "required": true
+        },
+        "uomName": {
+          "$env": "METAERP_PBP_UOM_NAME",
+          "required": true
+        },
+        "uomConversionRate": "1",
+        "projectNumber": "",
+        "sourceObjectType": {
+          "$env": "METAERP_PBP_SOURCE_OBJECT_TYPE",
+          "required": true
+        },
+        "organizationName": {
+          "$env": "METAERP_PBP_ORGANIZATION_NAME",
+          "required": true
+        },
+        "categoryDescription": {
+          "$env": "METAERP_PBP_CATEGORY_DESCRIPTION",
+          "required": true
+        },
+        "configItemValue": {
+          "$env": "METAERP_PBP_CATEGORY_CONFIG_ITEM",
+          "required": true
+        },
+        "currencyName": {
+          "$env": "METAERP_PBP_CURRENCY_NAME",
+          "required": true
+        }
+      },
+      "write_receipt": {
+        "require_fields": [
+          "pbpNumber",
+          "pbpHeaderId"
+        ],
+        "require_values": {
+          "headerProcessedStatus": [
+            "SUCCESS"
+          ]
+        },
+        "error_list_fields": [
+          "headerMessageList"
+        ],
+        "line_field": "pbpResponseLineList",
+        "line_status_field": "lineProcessedStatus",
+        "line_failed_values": [
+          "ERROR",
+          "FAIL",
+          "FAILED"
+        ],
+        "line_error_fields": [
+          "lineMessageList"
+        ],
+        "line_require_fields": [
+          "sourceObjectLineId"
+        ]
+      },
+      "tenant_overrides": {
+        "hc-digital-worker": {
+          "transport": "openapi",
+          "path": "/hsrm/srm/openapi/v1/createPbp",
+          "allow_real_write": true,
+          "note": "场景二唯一切到真实 v15 的写操作（用户 2026-09-09 明确授权「只放开 createPbp」）。顶层 tenants.hc-digital-worker 把整个租户钉在 mock 上；操作级 tenant_overrides 优先级更高，在这里单独开一个口子。别删掉那段租户钉子来代替这里——场景二的阶段周期、集采目录、审核阈值、采购包四张配置表在 v15 没有对应端点，整租户切真实后这些查询会返回空、链路直接断。"
+        }
+      }
     },
     "createProcPackageLines": {
       "transport": "openapi",
@@ -111,7 +367,7 @@
           "$env": "METAERP_TRANSFER_AUTO_SUBMIT"
         }
       },
-      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。payload 必须是带 lineList 的完整单据头，不是单独一行；部署级编码与时间戳由 overrides / line_overrides 打进去，模型只负责物料、数量、发出存储库、来源单据这些业务值。演示期把每行数量钉死在 METAERP_TRANSFER_FIXED_QUANTITY（当前 5）：可调库存够、可以反复重跑，模型把数量算错也不会让整单被 ERP 退回。该变量留空即整字段不注入，恢复由模型按「min(需求量, 可调量)」给数的真实逻辑。",
+      "note": "跨组织转库单，已在 v15 实跑建出并与界面建单形态一致（INOT20260908YF100008：申请人 10000422、申请时间为当前时刻、状态草稿）。**不要传 autoSubmit**——传 Y 会让单据落成「关闭」，UI 提交报文里没有该字段，环境变量留空即整字段省略。同样不要传 costMethodCode / inventoryStatusControl，那是界面审批流接口专有，openapi 带上会报 'querying account period'。payload 必须是带 lineList 的完整单据头，不是单独一行；部署级编码与时间戳由 overrides / line_overrides 打进去，模型只负责物料、数量、发出存储库、来源单据这些业务值。演示期把每行数量钉死在 METAERP_TRANSFER_FIXED_QUANTITY（当前 5）：可调库存够、可以反复重跑，模型把数量算错也不会让整单被 ERP 退回。该变量留空即整字段不注入，恢复由模型按「min(需求量, 可调量)」给数的真实逻辑。 发出存储库与发出货位是**一对**，必须一起钉：2026-09-09 实测模型把 storehouseCode 选成 100000，而路由填的 locatorCode=LC001 属于 300000（成品库），四行全部 FAILED「locator code is invalid」；此前两次成功只是模型碰巧选中了 300000。两者一并移到 line_overrides，由 METAERP_TRANSFER_FROM_STOREHOUSE_CODE / METAERP_TRANSFER_FROM_LOCATOR_CODE 提供；两个都留空即整对省略，回到「模型按可调库存自己选发出库位」的真实逻辑——但要么都留空，要么都填，不要只填一个。",
       "overrides": {
         "sourceSystemCode": {
           "$env": "METAERP_SOURCE_SYSTEM_CODE"
@@ -145,9 +401,6 @@
         "operationType": "ADD",
         "itemVersion": "",
         "lotNumber": "",
-        "locatorCode": {
-          "$env": "METAERP_TRANSFER_FROM_LOCATOR_CODE"
-        },
         "transferStorehouseCode": {
           "$env": "METAERP_TRANSFER_TO_STOREHOUSE_CODE"
         },
@@ -165,6 +418,12 @@
         },
         "organizationCode": {
           "$env": "METAERP_DEFAULT_ORGANIZATION_CODE"
+        },
+        "storehouseCode": {
+          "$env": "METAERP_TRANSFER_FROM_STOREHOUSE_CODE"
+        },
+        "locatorCode": {
+          "$env": "METAERP_TRANSFER_FROM_LOCATOR_CODE"
         },
         "transferOrganizationCode": {
           "$env": "METAERP_TRANSFER_TO_ORGANIZATION_CODE"

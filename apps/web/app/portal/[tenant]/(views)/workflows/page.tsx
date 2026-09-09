@@ -111,6 +111,7 @@ import {
   toManifest,
   tryReadSerializedDraft,
   type CompleteAgentDefinition,
+  type WorkflowDagAgent,
   type WorkflowDraft,
 } from "@/app/portal/components/workflows/draft";
 import {
@@ -145,7 +146,11 @@ import {
   type MonitorInspectorTab,
 } from "@/app/portal/components/workflow-monitor";
 import { useDag } from "@/lib/hooks/useAgents";
-import { agentDisplayTitle } from "@/lib/agent-title";
+import {
+  agentDisplayTitle,
+  agentNodeTooltip,
+  agentSubtitle,
+} from "@/lib/agent-title";
 import { ErpIntegrationBanner } from "@/app/portal/components/workflows/ErpIntegrationBanner";
 import { useAgentEditor } from "@/lib/hooks/useAgentStudio";
 import { useEvents } from "@/lib/hooks/useEvents";
@@ -2499,8 +2504,18 @@ export default function WorkflowsPage() {
                   const p = renderedPositions.get(a.kebabId) ?? { x: 0, y: 0 };
                   const isSel = selectedAgent === a.kebabId;
                   const displayTitle = agentDisplayTitle(a, language);
+                  // The same one-line gloss the Runs canvas puts under a node —
+                  // compiled manifests name agents in English camelCase, which
+                  // says what an agent is called, not what it does.
+                  // `a.description` is the draft's live projection, so an
+                  // in-progress edit shows on the card; the definition is the
+                  // published source behind it.
+                  const description =
+                    (a as WorkflowDagAgent).description ??
+                    a.definition?.description;
+                  const subtitle = agentSubtitle(description);
                   // CJK glyphs are ~2× as wide as latin ones at this size; a title
-                  // that needs two lines leaves no room for the id row inside
+                  // that needs two lines leaves no room for a second row inside
                   // NODE_H, so the id then lives only in the tooltip/aria label.
                   const titleUnits = Array.from(displayTitle).reduce(
                     (units, ch) =>
@@ -2508,7 +2523,9 @@ export default function WorkflowsPage() {
                       (/[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(ch) ? 2 : 1),
                     0,
                   );
-                  const showIdRow = titleUnits <= 24;
+                  // Only one row fits below the title. The gloss wins it when
+                  // there is one: a room reads what a step does, not its slug.
+                  const showIdRow = !subtitle && titleUnits <= 24;
                   const isConnectSource = connectFrom === a.kebabId;
                   const isDropTarget = linkDrag?.targetId === a.kebabId;
                   const isDragging = nodeDrag?.id === a.kebabId;
@@ -2591,15 +2608,19 @@ export default function WorkflowsPage() {
                           event.stopPropagation();
                           expandAgentPanel(a.kebabId);
                         }}
-                        title={
-                          editing
+                        // The card clips the name and the gloss; the tooltip is
+                        // where an operator reads either one in full.
+                        title={agentNodeTooltip({
+                          identity: [displayTitle, a.name, a.kebabId],
+                          description,
+                          hint: editing
                             ? t("workflowPage.nodeEditTitle", {
                                 title: displayTitle,
                               })
                             : t("workflowPage.nodeViewTitle", {
                                 title: displayTitle,
-                              })
-                        }
+                              }),
+                        })}
                         style={{
                           background:
                             a.actor === "Agent"
@@ -2646,19 +2667,23 @@ export default function WorkflowsPage() {
                             </Badge>
                           )}
                         </div>
-                        {/* The human-readable name is what a room reads; the
-                            technical id becomes a subtitle instead of fighting
-                            the title for the same line. */}
+                        {/* Name, then one subtitle row: the gloss when the
+                            agent has a description, else the technical id.
+                            Neither row carries its own `title` — a child
+                            tooltip shadows the card's, which is the one
+                            carrying the full text. */}
                         <div
-                          className={styles.nodeTitle}
-                          title={`${displayTitle} · ${a.kebabId}`}
+                          className={`${styles.nodeTitle} ${
+                            subtitle ? styles.nodeTitleTight : ""
+                          }`}
                         >
                           {displayTitle}
                         </div>
+                        {subtitle && (
+                          <div className={styles.nodeDesc}>{subtitle}</div>
+                        )}
                         {showIdRow && (
-                          <div className={styles.nodeId} title={a.kebabId}>
-                            {a.kebabId}
-                          </div>
+                          <div className={styles.nodeId}>{a.kebabId}</div>
                         )}
                       </button>
                       {editing && (

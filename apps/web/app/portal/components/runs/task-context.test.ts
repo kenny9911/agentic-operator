@@ -401,3 +401,95 @@ describe("actorDefaults", () => {
     expect(actorDefaults(["decided_by"], "   ")).toEqual({});
   });
 });
+
+describe("智能体脚手架不占「采购概况」的位置", () => {
+  /** A manifest agent echoes its own inputs and instruction text back into the
+   *  emitted payload, ahead of anything it actually found. */
+  const payload = {
+    inputs: {
+      chain_id: "100020260902000003",
+      document_id: "HPO1000202609030004",
+      document_type: "采购订单",
+      new_status: "已审批",
+      organization_code: "YF1",
+      scan_batch_id: "DEV-20260907-001",
+      scan_date: "2026-09-08",
+      prompt: "审核传入事件、校验数据，并返回工作流预期结果。",
+    },
+    prompt: "审核传入事件、校验数据，并返回工作流预期结果。",
+    context: "审核传入事件、校验数据，并返回工作流预期结果。",
+    input: "审核传入事件、校验数据，并返回工作流预期结果。",
+    alert_context: {
+      alert_id: "ALT-1788878265752-1",
+      alert_level: "红色",
+      notified_role: "分管领导",
+    },
+  };
+
+  it("shows what the agent found, not what it was told", () => {
+    const keys = contextSummary(payload).map((fact) => fact.key);
+    // 实跑中这八个槽位全被 inputs 占满，预警等级一条都没露出来
+    expect(keys).toContain("alert_level");
+    expect(keys).toContain("notified_role");
+    for (const scaffolding of ["prompt", "document_id", "scan_batch_id", "new_status"]) {
+      expect(keys).not.toContain(scaffolding);
+    }
+  });
+
+  it("drops the API's own cap markers, including the dropped-key list", () => {
+    expect(
+      contextGroups({ _truncated: true, _bytes: 42268, _droppedKeys: ["last_result"] }),
+    ).toEqual([]);
+  });
+});
+
+describe("选项标题必须能把选项区分开", () => {
+  /** 实跑：退回整改的两条违规明细，只有 plan_line_id 不同。 */
+  const findings = {
+    audit_finding: [
+      {
+        audit_finding_id: "AF-20270105-001",
+        audit_opinion_id: "AO-20270105-001",
+        plan_line_id: "PBPL-2027-0101-01",
+        finding_type: "集采未标注",
+        expected: "集采层级应为一级或二级集采",
+        actual: "未标识",
+      },
+      {
+        audit_finding_id: "AF-20270105-003",
+        audit_opinion_id: "AO-20270105-001",
+        plan_line_id: "PBPL-2027-0102-01",
+        finding_type: "集采未标注",
+        expected: "集采层级应为一级或二级集采",
+        actual: "未标识",
+      },
+    ],
+  };
+  const FIELDS = ["decision", "audit_opinion_id", "rectification_note"];
+
+  it("never titles two options with the same word", () => {
+    // 兜底原本取「第一个可读字段」，取到了两条都相同的 actual —— 它的值恰好是
+    // 「未标识」，计划员看到两张一模一样、像占位符的卡片。
+    const options = decisionOptions(findings, FIELDS);
+    expect(options).toHaveLength(2);
+    expect(options[0]!.title).not.toBe(options[1]!.title);
+    // 取到的是第一个能区分它们的字段——是 audit_finding_id 还是 plan_line_id
+    // 不重要，重要的是两张卡片不再长得一模一样。
+    expect(options.map((option) => option.title)).toEqual(["AF-20270105-001", "AF-20270105-003"]);
+  });
+
+  it("prefers the agent's own short label when it carries one", () => {
+    const labelled = {
+      audit_finding: findings.audit_finding.map((finding, index) => ({
+        ...finding,
+        finding_label: `0${index + 1} 行集采未标注`,
+        audit_opinion_id: `AO-2027010${index + 1}`,
+      })),
+    };
+    // 智能体自己起的短名优先于任何标识符——前提是它真的短（≤20 字）且各条不同。
+    expect(decisionOptions(labelled, FIELDS).map((option) => option.title)).toEqual([
+      "01 行集采未标注",
+      "02 行集采未标注",
+    ]);
+  });
+});

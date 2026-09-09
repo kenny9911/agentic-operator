@@ -221,6 +221,14 @@ export const ListRunsQuery = z.object({
   /** Filter to a parent run's children (trace-tree lazy expand). */
   parentRunId: z.string().optional(),
   /**
+   * Filter to one workflow execution.
+   *
+   * Every agent in a chain carries the same subject, so this is what turns a
+   * flat list of agent runs back into "the run of the workflow" the operator
+   * actually watched.
+   */
+  subject: z.string().optional(),
+  /**
    * Pagination (opt-in). When `page` is present the list endpoint returns a
    * {@link PaginatedRuns} envelope instead of a bare array — 1-indexed page,
    * `pageSize` rows each (default 50, capped 200). Existing callers that omit
@@ -237,6 +245,48 @@ export const ListRunsQuery = z.object({
   deleted: z.enum(["1", "true", "0", "false"]).optional(),
 });
 export type ListRunsQuery = z.infer<typeof ListRunsQuery>;
+
+/**
+ * One workflow execution — every agent run that shares a subject, rolled up.
+ *
+ * The runs table is per-AGENT: a single chain of fifteen agents is fifteen
+ * rows, and the list view cannot answer "how did that execution go". Grouping
+ * on subject restores the unit the operator thinks in.
+ */
+export const RunExecutionRow = z.object({
+  subject: z.string(),
+  runCount: z.number(),
+  /** Distinct agents that ran under this subject. */
+  agentCount: z.number(),
+  /** Agent of the earliest run — the chain's entry point. */
+  firstAgentName: z.string().nullable(),
+  /** Agent of the most recent run — where the chain got to. */
+  lastAgentName: z.string().nullable(),
+  startedAt: z.number(),
+  lastActivityAt: z.number(),
+  failedCount: z.number(),
+  activeCount: z.number(),
+  waitingCount: z.number(),
+  /** Rollup: anything running/queued → running; any failure → failed; any
+   *  wait → waiting; otherwise ok. */
+  status: z.enum(["running", "waiting", "failed", "ok", "cancelled"]),
+});
+export type RunExecutionRow = z.infer<typeof RunExecutionRow>;
+
+export const ListRunExecutionsQuery = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().max(200).optional(),
+  q: z.string().optional(),
+});
+export type ListRunExecutionsQuery = z.infer<typeof ListRunExecutionsQuery>;
+
+export const PaginatedRunExecutions = z.object({
+  rows: z.array(RunExecutionRow),
+  total: z.number(),
+  page: z.number(),
+  pageSize: z.number(),
+});
+export type PaginatedRunExecutions = z.infer<typeof PaginatedRunExecutions>;
 
 /**
  * Server-side paginated runs envelope. Returned by `GET /v1/runs?page=…`.

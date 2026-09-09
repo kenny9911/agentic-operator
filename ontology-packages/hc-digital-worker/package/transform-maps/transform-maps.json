@@ -409,6 +409,15 @@
       },
       "object_id": "po_line_t",
       "object_name": "订单行台账（历史价格曲线的样本）"
+    },
+    {
+      "erp_entity": "ss_pbp_rel_t",
+      "fetch": {
+        "method": "POST",
+        "path": "/metaerp/openapi/v1/queryPbpRelations"
+      },
+      "object_id": "ss_pbp_rel_t",
+      "object_name": "采购业务计划关系表（执行计划行 ↔ 来源需求行）"
     }
   ]
 }

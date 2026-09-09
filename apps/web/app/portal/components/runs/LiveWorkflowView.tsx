@@ -43,11 +43,13 @@ import { Badge, Empty } from "@/app/portal/components";
 import { fmtAgo } from "@/app/portal/lib/format";
 import type { Language } from "@/lib/i18n/types";
 import { Icon } from "@/app/portal/components/Icon";
+import { agentNodeTooltip } from "@/lib/agent-title";
 import {
   agentSubtitle,
   appendFeed,
   countStates,
   edgeVisual,
+  executionStateFromRuns,
   linkRunAgent,
   nextFollowState,
   nodeFreshness,
@@ -57,11 +59,54 @@ import {
   type FeedEntry,
   type NodeFreshness,
 } from "./live-view";
+import { useRuns } from "@/lib/hooks/useRuns";
 import { NodeTaskPanel } from "./NodeTaskPanel";
 
-const FEED_W = 400;
+/** 连线末端到节点边框的留白，给箭头尖用。 */
+const ARROW_GAP = 5;
+/** 每种描边一个箭头 marker——连线只有这三种颜色。 */
+const EDGE_ARROWS = [
+  { id: "edge-arrow-signal", stroke: "var(--signal)", fill: "var(--signal)" },
+  { id: "edge-arrow-green", stroke: "var(--green)", fill: "var(--green)" },
+  { id: "edge-arrow-muted", stroke: "var(--border-2)", fill: "var(--border-2)" },
+] as const;
+function arrowIdFor(stroke: string): string {
+  return (
+    EDGE_ARROWS.find((arrow) => arrow.stroke === stroke)?.id ?? "edge-arrow-muted"
+  );
+}
 
-export function LiveWorkflowView() {
+const FEED_W = 400;
+/** Collapsed width: wide enough for the reopen affordance, narrow enough that
+ *  the canvas gets the space back. */
+const FEED_RAIL_W = 30;
+const FEED_OPEN_KEY = "agentic.runs.activityFeedOpen";
+
+/** Remember the choice — a pane you have to re-collapse on every visit is
+ *  worse than one that never collapsed. Storage can throw (private windows,
+ *  blocked site data), and a pane preference is never worth a broken view. */
+function readFeedOpen(): boolean {
+  try {
+    return window.localStorage.getItem(FEED_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The workflow canvas.
+ *
+ * Two sources, one canvas: live it is fed by the run stream; given a
+ * `historySubject` it is rebuilt from that execution's persisted runs. Keeping
+ * one component means the historical view cannot drift from the live one —
+ * the layout, the node states and the colours are the same code.
+ */
+export function LiveWorkflowView({
+  historySubject = null,
+}: {
+  /** Render a finished execution instead of following the stream. */
+  historySubject?: string | null;
+} = {}) {
   const { language } = useI18n();
   const tenant = useTenant();
   const copy = useCallback(
@@ -84,7 +129,19 @@ export function LiveWorkflowView() {
     },
     [copy],
   );
-  const live = useWorkflowLiveState(tenant, onFrame);
+  const streamed = useWorkflowLiveState(tenant, onFrame);
+  // History is a fixed set of rows; 500 covers a chain many times over, and the
+  // canvas only needs one row per agent to colour it.
+  const historyRuns = useRuns(
+    historySubject ? { subject: historySubject, limit: 500 } : undefined,
+  );
+  const live = useMemo(
+    () =>
+      historySubject
+        ? executionStateFromRuns(historyRuns.data ?? [], historySubject)
+        : streamed,
+    [historySubject, historyRuns.data, streamed],
+  );
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
   // DEBUG lines are real content but bury the business ones; off by default.
@@ -118,7 +175,11 @@ export function LiveWorkflowView() {
   // like it raced through — human gate and all — when in truth those greens
   // belong to the previous subject.
   const [scoped, setScoped] = useState(true);
-  const subject = scoped ? live.latestSubject : null;
+  // History is one execution by definition — unpinning it would mean showing a
+  // chain the reader did not open.
+  const subject = historySubject ?? (scoped ? live.latestSubject : null);
+  /** 画布是否固定在某一次执行上——固定时节点高亮不随时间褪去。 */
+  const pinnedToExecution = subject != null;
   const inScope = useCallback(
     (name: string) => {
       if (!subject) return true;
@@ -161,13 +222,32 @@ export function LiveWorkflowView() {
   // Freshness is a function of elapsed time, so it needs a clock. It ticks only
   // while a node can still decay, so an idle canvas costs nothing.
   const [now, setNow] = useState(() => Date.now());
-  const hasDecayable = agents.some((agent) => {
-    const state = live.agents[agent.name];
-    return (
-      state != null &&
-      nodeFreshness(state.state, state.lastEventAt, now) === "recent"
-    );
-  });
+  // Server render has no localStorage; hydrate the remembered choice after mount
+  // so the markup matches on both sides.
+  const [feedOpen, setFeedOpen] = useState(true);
+  useEffect(() => setFeedOpen(readFeedOpen()), []);
+  const toggleFeed = useCallback(() => {
+    setFeedOpen((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(FEED_OPEN_KEY, next ? "1" : "0");
+      } catch {
+        /* preference only — never fail the view over it */
+      }
+      return next;
+    });
+  }, []);
+  // Pinned to one execution, nothing decays — so the clock has nothing to do.
+  const hasDecayable =
+    !pinnedToExecution &&
+    agents.some((agent) => {
+      const state = live.agents[agent.name];
+      return (
+        state != null &&
+        nodeFreshness(state.state, state.lastEventAt, now, pinnedToExecution) ===
+          "recent"
+      );
+    });
   useEffect(() => {
     if (!hasDecayable) return;
     const timer = setInterval(() => setNow(Date.now()), 15_000);
@@ -209,7 +289,12 @@ export function LiveWorkflowView() {
       if (
         state &&
         inScope(agent.name) &&
-        nodeFreshness(state.state, state.lastEventAt, now) !== "stale"
+        nodeFreshness(
+          state.state,
+          state.lastEventAt,
+          now,
+          pinnedToExecution,
+        ) !== "stale"
       ) {
         names.add(agent.name);
       }
@@ -365,6 +450,7 @@ export function LiveWorkflowView() {
                   stateOf(agent.name)?.state,
                   stateOf(agent.name)?.lastEventAt,
                   now,
+                  pinnedToExecution,
                 )}
                 lastEventAt={stateOf(agent.name)?.lastEventAt ?? null}
                 waitingCount={
@@ -394,12 +480,49 @@ export function LiveWorkflowView() {
       </div>
 
       {/* ── activity feed ────────────────────────────────────────────────── */}
+      {!feedOpen && (
+        <button
+          type="button"
+          onClick={toggleFeed}
+          title={copy("展开处理动作流水线", "Show the activity feed")}
+          aria-expanded={false}
+          style={{
+            width: FEED_RAIL_W,
+            flexShrink: 0,
+            borderLeft: "1px solid var(--border)",
+            border: "none",
+            borderLeftWidth: 1,
+            borderLeftStyle: "solid",
+            borderLeftColor: "var(--border)",
+            background: "var(--panel)",
+            color: "var(--text-3)",
+            cursor: "pointer",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 0",
+          }}
+        >
+          <Icon name="chevron-left" size={13} />
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              writingMode: "vertical-rl",
+              letterSpacing: 1,
+            }}
+          >
+            {copy("处理动作流水线", "Activity")}
+          </span>
+        </button>
+      )}
       <div
         style={{
+          display: feedOpen ? "flex" : "none",
           width: FEED_W,
           flexShrink: 0,
           borderLeft: "1px solid var(--border)",
-          display: "flex",
           flexDirection: "column",
           background: "var(--panel)",
         }}
@@ -438,6 +561,23 @@ export function LiveWorkflowView() {
             >
               {copy("跟随", "Follow")}
             </FeedToggle>
+            <button
+              type="button"
+              onClick={toggleFeed}
+              title={copy("收起处理动作流水线", "Hide the activity feed")}
+              aria-expanded
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "var(--text-3)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                padding: 2,
+              }}
+            >
+              <Icon name="chevron-right" size={13} />
+            </button>
           </span>
         </div>
 
@@ -663,11 +803,15 @@ export function LiveNode({
     <button
       type="button"
       onClick={onSelect}
-      title={
-        visual.actionable
+      // The card clips both the name and the gloss to one line each; the
+      // tooltip is where the full text lives.
+      title={agentNodeTooltip({
+        identity: [agent.title, agent.name],
+        description: agent.definition?.description,
+        hint: visual.actionable
           ? copy("点开处理人工任务", "Open the human task")
-          : copy("只看这个智能体的动作", "Show only this agent's activity")
-      }
+          : copy("只看这个智能体的动作", "Show only this agent's activity"),
+      })}
       style={{
         position: "absolute",
         left: position.x,
@@ -772,6 +916,24 @@ function EdgeLayer({
       style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
       aria-hidden
     >
+      {/* 箭头。三种描边各一个 marker：`context-stroke` 并非各处都稳，而连线本来就
+          只有这三种颜色，逐色定义比依赖它可靠。 */}
+      <defs>
+        {EDGE_ARROWS.map((arrow) => (
+          <marker
+            key={arrow.id}
+            id={arrow.id}
+            viewBox="0 0 8 8"
+            refX="7"
+            refY="4"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 1 L 7 4 L 0 7 z" fill={arrow.fill} />
+          </marker>
+        ))}
+      </defs>
       {edges.map((edge, index) => {
         const from = positions.get(edge.fromAgent);
         const to = positions.get(edge.toAgent);
@@ -780,7 +942,8 @@ function EdgeLayer({
         }
         const x1 = from.x + NODE_W;
         const y1 = from.y + NODE_H / 2;
-        const x2 = to.x;
+        // 收在节点边框前一点，让箭头尖正好抵住边框而不是压进去。
+        const x2 = to.x - ARROW_GAP;
         const y2 = to.y + NODE_H / 2;
         const mid = x1 + Math.max(24, (x2 - x1) / 2);
         const visual = edgeVisual({
@@ -798,6 +961,7 @@ function EdgeLayer({
             stroke={visual.stroke}
             strokeWidth={visual.width}
             opacity={visual.opacity}
+            markerEnd={`url(#${arrowIdFor(visual.stroke)})`}
           />
         );
       })}

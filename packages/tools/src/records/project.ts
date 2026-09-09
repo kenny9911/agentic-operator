@@ -62,6 +62,15 @@ export interface ProjectResult {
   rows: Record<string, unknown>[];
   row_count: number;
   source: string;
+  /**
+   * Mapped fields that were absent on SOME rows and came back null.
+   *
+   * A column absent on every row is a wrong mapping and still throws. A column
+   * absent on only some rows is ordinary data — a draft plan has no approval
+   * time — and killing the whole projection over it is what made a live run
+   * retry 37 times.
+   */
+  missing_fields: string[];
 }
 
 export function projectRecords(lastResult: unknown, input: unknown): ProjectResult {
@@ -70,6 +79,20 @@ export function projectRecords(lastResult: unknown, input: unknown): ProjectResu
     throw new Error(
       "records.project 读的是上一个工具的返回值（ctx.lastResult），本次没有上一个工具结果。" +
         "请紧接在取数调用之后调用它，不要隔轮。",
+    );
+  }
+  // 上一次调用失败时，它的错误信封就是这一次的 lastResult。原来的报错只说「顶层为
+  // [error]」，模型看不出该怎么办，于是原样重试了十一次。说清楚下一步做什么。
+  if (
+    typeof lastResult === "object" &&
+    !Array.isArray(lastResult) &&
+    Object.keys(lastResult as Record<string, unknown>).length <= 2 &&
+    "error" in (lastResult as Record<string, unknown>)
+  ) {
+    throw new Error(
+      "records.project: 上一个工具调用失败了（它的返回值只有 error），没有可投影的数据。" +
+        "重试本工具不会有任何变化——请先重新调用对应的 query 操作，在它成功返回之后" +
+        "紧接着调用本工具。",
     );
   }
 
@@ -104,6 +127,7 @@ export function projectRecords(lastResult: unknown, input: unknown): ProjectResu
     );
   }
 
+  const hitCount = new Map<string, number>();
   const rows = source.map((row, index) => {
     if (typeof row !== "object" || row === null || Array.isArray(row)) {
       throw new Error(`records.project: 第 ${index} 行不是对象`);
@@ -118,20 +142,50 @@ export function projectRecords(lastResult: unknown, input: unknown): ProjectResu
       // so a document number is projected too, never retyped.
       if (spec.startsWith(ROOT_PREFIX)) {
         out[target] = resolvePath(lastResult, spec.slice(ROOT_PREFIX.length)) ?? null;
+        hitCount.set(target, (hitCount.get(target) ?? 0) + 1);
         continue;
       }
-      if (!(spec in record)) {
-        throw new Error(
-          `records.project: 第 ${index} 行没有字段 "${spec}"（映射到 ${target}）；` +
-            `该行的字段为 [${Object.keys(record).slice(0, 40).join(", ")}]`,
-        );
+      if (spec in record) {
+        out[target] = record[spec];
+        hitCount.set(target, (hitCount.get(target) ?? 0) + 1);
+      } else {
+        out[target] = null;
       }
-      out[target] = record[spec];
     }
     return out;
   });
 
-  return { rows, row_count: rows.length, source: sourcePath || "(整个上一个结果)" };
+  // A column absent from EVERY row is a wrong mapping — that must still fail
+  // closed, or the projection quietly returns a table of nulls. Absent from
+  // only some rows is data (a draft plan has no approval time).
+  const targets = Object.keys(fieldSpec as Record<string, unknown>);
+  const neverHit = targets.filter((target) => (hitCount.get(target) ?? 0) === 0);
+  if (neverHit.length > 0) {
+    const columns = [
+      ...new Set(
+        source.flatMap((row) =>
+          typeof row === "object" && row !== null ? Object.keys(row as object) : [],
+        ),
+      ),
+    ];
+    throw new Error(
+      `records.project: 源里没有任何一行带这些字段 ${neverHit
+        .map((target) => `"${(fieldSpec as Record<string, string>)[target]}"（映射到 ${target}）`)
+        .join("、")}；源的字段为 [${columns.slice(0, 40).join(", ")}]。` +
+        `映射名要照返回里出现的写，不要猜。`,
+    );
+  }
+  const missingFields = targets.filter((target) => {
+    const hits = hitCount.get(target) ?? 0;
+    return hits > 0 && hits < rows.length;
+  });
+
+  return {
+    rows,
+    row_count: rows.length,
+    source: sourcePath || "(整个上一个结果)",
+    missing_fields: missingFields,
+  };
 }
 
 export const recordsProject = defineTool({
@@ -143,6 +197,7 @@ export const recordsProject = defineTool({
     rows: z.array(z.record(z.string(), z.unknown())),
     row_count: z.number(),
     source: z.string(),
+    missing_fields: z.array(z.string()),
   }),
   async handler(ctx) {
     const data = projectRecords(ctx.lastResult, ctx.event?.data);
