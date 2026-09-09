@@ -1088,6 +1088,11 @@ function compileExternalAgent(ctx: CompileContext, action: StudioAction): {
     const rule = ctx.rulesById.get(ruleId);
     if (!rule) fail(`action ${action.id} binds unknown rule ${ruleId}`);
     const gateOverlay = ctx.overlay.rule_gates?.[ruleId];
+    if (gateOverlay?.strategy === "receipt") {
+      // 证据由本动作自己的写入产生——见 OverlayRuleGate.strategy 的说明。
+      // 规则不是被放弃了，而是改由该写操作的 write_receipt 判据强制。
+      continue;
+    }
     const deterministic = gateOverlay?.strategy === "condition" && !!gateOverlay.condition;
     if (deterministic) {
       const gateKey = identifierKey(`rule-gate-${ruleId}`);

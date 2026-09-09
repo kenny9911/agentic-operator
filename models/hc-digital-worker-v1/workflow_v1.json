@@ -1213,32 +1213,8 @@
   {
     "actions": [
       {
-        "action_prompt": "你是规则闸口「rule-gate:BR2-MERGE-04」的审查器，对本次触发事件负载执行强制前置校验。\n\n规则 BR2-MERGE-04 · 未写入来源需求行映射则不得生成合并执行计划\n义务文：suggestion.source_mapping_written == true\n背景：如果合并组的来源需求行映射尚未写入采购业务计划关系表，则不得生成合并后的执行计划——一单一档、来源可溯是合并的前提，没有映射就查不回原始需求。\n\n仅输出一个 JSON 对象（不得输出任何其他文本）：\n{\"ruleId\":\"BR2-MERGE-04\",\"status\":\"pass\",\"reason\":\"<判定依据>\"}\n或 {\"ruleId\":\"BR2-MERGE-04\",\"status\":\"violation\",\"reason\":\"<判定依据>\"}\nstatus 只能取小写的 pass 或 violation（严格小写，不接受 PASS/Pass 等变体）；证据不足时判 violation（fail-closed）。",
-        "allowed_tools": [],
-        "description": "规则闸口（LLM 裁决）：未写入来源需求行映射则不得生成合并执行计划。输出严格 JSON 裁决 {ruleId,status,reason}。",
-        "name": "rule-gate:BR2-MERGE-04",
-        "on_error": "terminal",
-        "order": "1",
-        "result_key": "rule-gate-BR2-MERGE-04",
-        "type": "logic"
-      },
-      {
-        "condition": "results.rule-gate-BR2-MERGE-04.status == 'pass' || results.rule-gate-BR2-MERGE-04.status == 'PASS'",
-        "depends_on": [
-          "rule-gate-BR2-MERGE-04"
-        ],
-        "description": "裁决闸口：仅当 BR2-MERGE-04 判定 pass 时放行后续步骤。",
-        "name": "rule-verdict:BR2-MERGE-04",
-        "order": "2",
-        "result_key": "rule-verdict-BR2-MERGE-04",
-        "type": "condition"
-      },
-      {
         "allowed_tools": [
           "metaerp.invoke"
-        ],
-        "depends_on": [
-          "rule-verdict-BR2-MERGE-04"
         ],
         "description": "写回 Meta ERP：createPbp。",
         "name": "metaerp.invoke",
@@ -1255,7 +1231,7 @@
             "default": "retry"
           }
         ],
-        "order": "3",
+        "order": "1",
         "result_key": "generateExecutionPlanDraft",
         "tool_arguments": {
           "payload": {
@@ -1268,48 +1244,13 @@
         "depends_on": [
           "generateExecutionPlanDraft"
         ],
-        "description": "写入成功后发射事件 EXECUTION_PLAN_DRAFT_GENERATED。",
+        "description": "发射事件 EXECUTION_PLAN_DRAFT_GENERATED（无条件）。",
         "emit_event": "EXECUTION_PLAN_DRAFT_GENERATED",
-        "emit_payload_from": "lastResult",
+        "emit_payload_from": "event.data",
         "name": "emit:EXECUTION_PLAN_DRAFT_GENERATED",
-        "order": "4",
+        "order": "2",
         "result_key": "emit-EXECUTION_PLAN_DRAFT_GENERATED",
         "type": "emit"
-      },
-      {
-        "decision_table": {
-          "default": {
-            "outcome": "suppressed",
-            "payload": {
-              "_emits": []
-            }
-          },
-          "description": "无显式发射记录时写入空 _emits，阻断隐式首事件回退。",
-          "id": "suppress-implicit-emit",
-          "missing": {
-            "outcome": "suppressed",
-            "payload": {
-              "_emits": []
-            }
-          },
-          "rows": [
-            {
-              "all": [
-                {
-                  "op": "exists",
-                  "path": "lastResult._emits"
-                }
-              ],
-              "id": "explicit-emit-recorded",
-              "outcome": "explicit"
-            }
-          ]
-        },
-        "description": "规则拦截或条件未命中时抑制隐式 triggered_event[0] 发射（显式 emit 已记录则本步为空操作）。",
-        "name": "suppress-implicit-emit",
-        "order": "5",
-        "result_key": "suppress-implicit-emit",
-        "type": "decision"
       }
     ],
     "actor": [

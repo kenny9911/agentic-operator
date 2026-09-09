@@ -1736,6 +1736,51 @@ const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
       CREATED_AT: new Date().toISOString(),
     };
     store.rows("ss_pbp_header_t").push(row);
+
+    // 本体对这一步的描述是「调 createPbp 创建执行计划头行，**并把来源需求行与新行的
+    // 对应关系写入采购业务计划关系表**，落库成功后置 source_mapping_written」。
+    // 关系表此前从没被写过，于是 BR2-MERGE-04 要的证据永远不存在。来源行取自
+    // 上游带下来的 demand_plan_line / merge_suggestion.member_plan_line_ids。
+    const sourceLineIds = new Set<string>();
+    const collect = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        for (const entry of value) collect(entry);
+        return;
+      }
+      if (!isRecord(value)) return;
+      const direct = pick(value, "plan_line_id", "PBP_LINE_ID", "pbp_line_id");
+      if (direct !== undefined && direct !== "") sourceLineIds.add(String(direct));
+      const members = pick(value, "member_plan_line_ids", "source_plan_line_ids");
+      if (Array.isArray(members)) {
+        for (const member of members) if (member) sourceLineIds.add(String(member));
+      }
+    };
+    collect(pick(payload, "demand_plan_line"));
+    collect(pick(payload, "merge_suggestion"));
+    collect(pick(payload, "plan_line_id"));
+
+    const relationId = makeId("REL");
+    const relations: Row[] = [...sourceLineIds].map((sourceLineId, index) => {
+      const relation: Row = {
+        RELATION_RECORD_ID: `${relationId}-${String(index + 1).padStart(2, "0")}`,
+        PBP_HEADER_ID: id,
+        SOURCE_OBJECT_TYPE: "PBP_LINE",
+        SOURCE_OBJECT_LINE_ID: sourceLineId,
+        MERGE_GROUP_ID: String(pick(payload, "merge_group_id") ?? ""),
+        CREATED_AT: new Date().toISOString(),
+      };
+      store.rows("ss_pbp_rel_t").push(relation);
+      return relation;
+    });
+    if (relations.length === 0) {
+      // 没有来源行就写不出映射，而没有映射就不该有合并执行计划（BR2-MERGE-04）。
+      // 静默建一张查不回原始需求的计划，比直接失败糟得多。
+      throw new MockErpError(
+        400,
+        "createPbp: 载荷里没有任何来源计划行（demand_plan_line[].plan_line_id 或 merge_suggestion[].member_plan_line_ids），无法写入来源需求行映射——BR2-MERGE-04 要求一单一档、来源可溯",
+      );
+    }
+
     return {
       ok: true,
       id,
@@ -1744,6 +1789,10 @@ const DIGITAL_WORKER_EFFECTS: Record<string, Effect> = {
       plan_id: id,
       plan_no: id,
       status: row["STATUS"],
+      relation_record_id: relations[0]!["RELATION_RECORD_ID"],
+      relation_record_ids: relations.map((entry) => entry["RELATION_RECORD_ID"]),
+      source_plan_line_ids: [...sourceLineIds],
+      source_mapping_written: true,
     };
   },
 

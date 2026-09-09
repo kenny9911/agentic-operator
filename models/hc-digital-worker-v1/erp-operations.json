@@ -126,6 +126,13 @@
     "path": "/metaerp/openapi/v1/queryPbpLine"
   },
   {
+    "entity": "ss_pbp_rel_t",
+    "kind": "query",
+    "method": "POST",
+    "operation_id": "queryPbpRelations",
+    "path": "/metaerp/openapi/v1/queryPbpRelations"
+  },
+  {
     "entity": "dw_plan_audit_finding_t",
     "kind": "query",
     "method": "POST",

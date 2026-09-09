@@ -125,7 +125,13 @@
     "createPbp": {
       "transport": "openapi",
       "path": "/hsrm/srm/openapi/v1/createPbp",
-      "note": "请求体是数组，不是对象"
+      "note": "执行计划头 + 来源需求行映射。write_receipt 要求回执带 relation_record_id：BR2-MERGE-04（一单一档、来源可溯）的证据由这次写入本身产生，所以规则在覆盖层声明为 receipt 策略、由这条判据强制，而不是当前置闸口——本体把它绑成了同一个动作的 precondition，动作被自己写入的结果卡住，永远执行不了。",
+      "write_receipt": {
+        "require_fields": [
+          "plan_id",
+          "relation_record_id"
+        ]
+      }
     },
     "createProcPackageLines": {
       "transport": "openapi",

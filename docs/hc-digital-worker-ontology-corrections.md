@@ -290,3 +290,41 @@ plan_line_id 等标识。
   智能体确实以文本作答。
 - 合约补「取数纪律」：三个查询第一轮并发发出，每个查询紧跟一次投影，全程 6 轮以内；
   最终答复必须是且只是一个 JSON 对象。
+
+## D-17 `BR2-MERGE-04` 绑成了自锁闸口——它要的证据由被它拦住的那个动作产生
+
+**实跑**（run-1abb0ab1b305）：`generateExecutionPlanDraft` 的 `rule-gate:BR2-MERGE-04`
+判 violation，理由是
+
+> 「事件负载中 merge_suggestion 为空数组，且不存在 suggestion.source_mapping_written
+> 字段……依据 fail-closed 原则，无法证明来源需求行映射已写入，故判定违规」
+
+ERP 回写与事件发射一并跳过，运行状态仍是 ok，链路静默停在这一步。
+
+**现状**：规则义务文是 `suggestion.source_mapping_written == true`，绑定相位
+`precondition`。而 `generateExecutionPlanDraft` 自己的 `side_effects` 第三条写着
+「**回写来源行映射落库结果**」，影响属性正是 `relation_record_id` /
+`source_mapping_written`；`action_steps[3]` 也写着「调 createPbp 创建执行计划头行，
+并把来源需求行与新行的对应关系写入采购业务计划关系表，**落库成功后置**
+source_mapping_written(BR2-MERGE-04)」。
+
+**问题**：动作被自己写入的结果卡住，永远执行不了——与 D-01 同型。且整个域里没有
+任何操作真的写过那张关系表（`ss_pbp_rel_t` 在场景一的包里有，场景二的包里没有），
+所以这份证据在前置时点上不可能存在，在后置时点上也从来没被产生过。
+
+**建议修正**：把 `BR2-MERGE-04` 的绑定相位改为 `postcondition`；并明确关系表写入
+属于 `createPbp` 的职责（本体已在动作描述里这么说了，只是没落到操作契约上）。
+
+**平台侧现状**：
+- 覆盖层 `rule_gates` 新增 `strategy: "receipt"`：声明该规则的证据由本动作自己的写入
+  产生，编译器据此**不生成前置闸口**。规则不是被放弃了——
+- `createPbp` 的路由加 `write_receipt: { require_fields: ["plan_id", "relation_record_id"] }`：
+  回执缺映射记录即整步失败。检查落在证据真正存在的时点上。
+- mock 的 `createPbp` 按本体自己的描述补齐：写 `ss_pbp_rel_t`（来源计划行 ↔ 新计划头），
+  回执带 `relation_record_id` / `source_mapping_written`；载荷里一条来源行都没有时直接
+  400——静默建一张查不回原始需求的计划，比失败糟得多。
+- staging 脚本登记 `ss_pbp_rel_t`（空种子）与只读操作 `queryPbpRelations`。
+  空表与「表不存在」是两回事：后者让写入直接 500，规则连失败原因都说不清。
+- 顺带补上 `generateExecutionPlanDraft` 的显式发射。闸口移除后 `gateKeys` 为空，
+  编译器不再生成显式 emit 步骤而依赖运行时的隐式 `triggered_event[0]` 回退——
+  能发，但行为不声明；与本覆盖层其他写动作保持一致。

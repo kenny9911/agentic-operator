@@ -55,6 +55,13 @@
         "when": "lastResult.time_conflict == true"
       }
     ],
+    "generateExecutionPlanDraft": [
+      {
+        "event": "EXECUTION_PLAN_DRAFT_GENERATED",
+        "payload_from": "event.data",
+        "when": "always"
+      }
+    ],
     "auditAnnualPlanCompliance": [
       {
         "event": "ANNUAL_PLAN_AUDITED",
@@ -133,6 +140,10 @@
     "BR2-HITL-01": {
       "strategy": "condition",
       "condition": "input.confirmed_by"
+    },
+    "BR2-MERGE-04": {
+      "strategy": "receipt",
+      "note": "本体把该规则绑成 generateExecutionPlanDraft 的 precondition，而 source_mapping_written / relation_record_id 恰恰是这个动作自己 side_effects 里「回写来源行映射落库结果」写出来的——动作被自己的结果卡住。实跑中 LLM 裁决每次判 violation（理由：负载里不存在 source_mapping_written），ERP 回写与事件发射一并跳过，链路静默停在这一步。改由 createPbp 的 write_receipt 强制：回执缺 relation_record_id 即整步失败。"
     }
   },
   "tool_arguments": {
