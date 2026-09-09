@@ -112,7 +112,7 @@ async function exerciseSkills(raw: ReturnType<typeof getRawSqlite>) {
     platformRole: "none",
     via: "token",
   };
-  const store = new SkillLibraryStore(db);
+  const store = new SkillLibraryStore(db, null);
   const bundle = {
     files: [
       {

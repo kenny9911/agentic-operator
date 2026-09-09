@@ -151,7 +151,7 @@ beforeEach(async () => {
       "utf8",
     ),
   );
-  store = new SkillLibraryStore(getDb());
+  store = new SkillLibraryStore(getDb(), null);
 });
 afterEach(() => {
   closeDb();

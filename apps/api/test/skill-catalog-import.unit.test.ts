@@ -112,7 +112,7 @@ beforeEach(() => {
       "utf8",
     ),
   );
-  store = new SkillLibraryStore(getDb());
+  store = new SkillLibraryStore(getDb(), { dataRoot: join(root, "managed") });
 });
 afterEach(() => {
   closeDb();

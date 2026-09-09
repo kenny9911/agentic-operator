@@ -42,6 +42,10 @@ import {
 } from "@agentic/skills";
 import { makeId } from "@agentic/shared";
 import type { AuthedContext } from "../plugins/auth";
+import {
+  projectSkillLibraryFiles,
+  type SkillLibraryFileOptions,
+} from "./skill-library-files";
 
 export type SkillLibraryContext = AuthedContext;
 type StoreDb = Pick<DB, "select" | "insert" | "update">;
@@ -192,7 +196,138 @@ function versionDto(row: typeof skillVersions.$inferSelect, owner: boolean) {
 }
 
 export class SkillLibraryStore {
-  constructor(private readonly db: DB = getDb()) {}
+  constructor(
+    private readonly db: DB = getDb(),
+    private readonly files: SkillLibraryFileOptions | null = {},
+  ) {}
+
+  /** Publish disk bytes before committing SQL; a file failure rolls back the edit. */
+  private mutate(work: (db: StoreDb) => SkillDetail): SkillDetail {
+    let rollback: (() => void) | undefined;
+    try {
+      return this.db.transaction((db) => {
+        const detail = work(db);
+        if (this.files)
+          rollback = this.projectFiles(detail.skill.id, db).rollback;
+        return detail;
+      });
+    } catch (error) {
+      try {
+        rollback?.();
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Skill edit failed and directory rollback needs startup reconciliation.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  private projectFiles(id: string, db: StoreDb = this.db) {
+    const skill = db
+      .select()
+      .from(managedSkills)
+      .where(eq(managedSkills.id, id))
+      .get();
+    if (!skill) missing();
+    // Ownership comes from persisted identity, never the request's active slug.
+    const owner = db
+      .select({ slug: tenants.slug })
+      .from(tenants)
+      .where(eq(tenants.id, skill.tenantId))
+      .get();
+    if (!owner || (skill.visibility === "shared" && owner.slug !== "__system"))
+      throw new SkillLibraryError(
+        "skill_owner_invalid",
+        "Skill storage owner is unavailable.",
+        500,
+      );
+    const ctx = { tenantId: skill.tenantId };
+    const draft = db
+      .select()
+      .from(skillDrafts)
+      .where(tenantScope(ctx, skillDrafts)(eq(skillDrafts.skillId, id)))
+      .get();
+    if (!draft) missing();
+    const revisions = db
+      .select()
+      .from(skillDraftRevisions)
+      .where(
+        tenantScope(
+          ctx,
+          skillDraftRevisions,
+        )(eq(skillDraftRevisions.skillId, id)),
+      )
+      .orderBy(skillDraftRevisions.revision)
+      .all();
+    const versions = db
+      .select()
+      .from(skillVersions)
+      .where(tenantScope(ctx, skillVersions)(eq(skillVersions.skillId, id)))
+      .orderBy(skillVersions.versionNo)
+      .all();
+    return projectSkillLibraryFiles(
+      {
+        owner: {
+          visibility: skill.visibility,
+          tenantId: skill.tenantId,
+          tenantSlug: owner.slug,
+          skillId: id,
+        },
+        metadata: {
+          name: skill.name,
+          description: skill.description,
+          latestVersionId: skill.latestVersionId,
+          archivedAt: skill.archivedAt?.toISOString() ?? null,
+          createdAt: skill.createdAt.toISOString(),
+          updatedAt: skill.updatedAt.toISOString(),
+        },
+        draft: {
+          revision: draft.revision,
+          bundle: SkillBundleSchema.parse(draft.bundleJson),
+        },
+        revisions: revisions.map((revision) => ({
+          revision: revision.revision,
+          bundle: SkillBundleSchema.parse(revision.bundleJson),
+          metadata: {
+            source: revision.source,
+            updatedAt: revision.updatedAt.toISOString(),
+          },
+        })),
+        versions: versions.map((version) => ({
+          id: version.id,
+          versionNo: version.versionNo,
+          contentDigest: version.contentDigest,
+          bundle: SkillBundleSchema.parse(version.bundleJson),
+          metadata: {
+            name: version.name,
+            draftRevision: version.draftRevision,
+            createdAt: version.createdAt.toISOString(),
+          },
+        })),
+      },
+      this.files ?? {},
+    );
+  }
+
+  /** Operator-only reconciliation; DB identities and immutable versions remain authoritative. */
+  reconcileFiles() {
+    if (!this.files)
+      throw new Error("Skill directory storage is disabled for this store.");
+    let changed = 0;
+    // One consistent read transaction; no HTTP caller may supply paths or owners.
+    return this.db.transaction((db) => {
+      const rows = db
+        .select({ id: managedSkills.id })
+        .from(managedSkills)
+        .orderBy(managedSkills.id)
+        .all();
+      for (const row of rows)
+        if (this.projectFiles(row.id, db).changed) changed++;
+      return { skills: rows.length, changed };
+    });
+  }
 
   private row(
     ctx: SkillLibraryContext,
@@ -530,7 +665,7 @@ export class SkillLibraryStore {
     }
     const bundle = admitSkillDraft(input.bundle);
     const validation = assertValidSkillBundle(bundle);
-    return this.db.transaction((db) => {
+    return this.mutate((db) => {
       this.availableName(ctx, validation.metadata.name, undefined, db);
       const id = makeId("skl");
       const now = new Date();
@@ -589,7 +724,7 @@ export class SkillLibraryStore {
   ) {
     const bundle = admitSkillDraft(input);
     const validation = validateSkillBundle(bundle);
-    return this.db.transaction((db) => {
+    return this.mutate((db) => {
       const skill = this.writable(ctx, id, db);
       ctx = ownerContext(ctx, skill);
       const current = this.revision(ctx, id, expected, db);
@@ -654,7 +789,7 @@ export class SkillLibraryStore {
   }
   publish(ctx: SkillLibraryContext, id: string, expected: number) {
     permission(ctx, "skills.publish");
-    return this.db.transaction((db) => {
+    return this.mutate((db) => {
       const skill = this.writable(ctx, id, db);
       ctx = ownerContext(ctx, skill);
       const draft = this.revision(ctx, id, expected, db);
@@ -713,7 +848,7 @@ export class SkillLibraryStore {
       expectedLatestVersionId: string | null;
     },
   ) {
-    return this.db.transaction((db) => {
+    return this.mutate((db) => {
       const skill = this.writable(ctx, id, db, true);
       ctx = ownerContext(ctx, skill);
       const draft = this.revision(ctx, id, input.expectedRevision, db);
