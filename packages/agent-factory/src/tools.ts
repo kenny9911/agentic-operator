@@ -126,6 +126,10 @@ import {
   probeAgentModule,
 } from "./codegen";
 import {
+  CODEGEN_AGENT_MODULE_CONTRACT,
+  codegenAgentExpectedMetadata,
+} from "./codegen-module-contract";
+import {
   lintGeneratedToolCode,
   validateGeneratedToolAllowlist,
   validateGeneratedToolCoverage,
@@ -7146,11 +7150,11 @@ const codegen_agent: BrainTool = {
     advancesStage: true,
   },
   description:
-    "为一个已 design_agent 的 agent【亲手写完整 .ts 代码】（从 import 到导出），覆盖自动渲染的参考代码。会做 TS、危险 API、工具 allowlist 与加载探针。只有不调用 reason/tool/memory/invoke/spawn、也不读取 Date.now/new Date/Math.random/crypto/performance 等时间或熵源的纯确定性计算与 emit handler 可成为隔离 CodeAct owner；所需时间/ID必须由 durable host 通过 input 传入。其余代码仍保存供人工审查，真实运行由 declarative plan 的独立 durable steps 负责，绝不把两条路径同时执行。",
+    "为一个已 design_agent 的 agent【亲手写完整 .ts 代码】（从 import 到导出），覆盖自动渲染的参考代码。会做 TS、危险 API、工具 allowlist 与加载探针。只有不调用 reason/tool/memory/invoke/spawn、也不读取 Date.now/new Date/Math.random/crypto/performance 等时间或熵源的纯确定性计算与 emit handler 可成为隔离 CodeAct owner；所需时间/ID必须由 durable host 通过 input 传入。其余代码仍保存供人工审查，真实运行由 declarative plan 的独立 durable steps 负责，绝不把两条路径同时执行。\n\n" + CODEGEN_AGENT_MODULE_CONTRACT,
   parameters: params(
     {
       action: { type: "string" },
-      code: { type: "string", description: "完整 .ts 文件" },
+      code: { type: "string", description: "完整 .ts 模块：import { defineAgent } from \"@agentic/runtime\"；export const agent = defineAgent({ 与 read_spec 一致的元数据, async handler(input, ctx) { 源契约实现 } })。导出的是含 handler 方法的对象，不能只导出 handler 函数或将函数重命名为 defineAgent。详见工具说明中的模块契约。" },
     },
     ["action", "code"],
   ),
@@ -7197,8 +7201,12 @@ const codegen_agent: BrainTool = {
     if (!probe.loads)
       return {
         ok: false,
-        summary: `代码未过加载探针（编译+安全过了，但没有可调用 handler）：${probe.reason}——修正后重交。`,
-        output: { probeReason: probe.reason },
+        summary: `代码未过加载探针：${probe.reason}。请导出 defineAgent({ async handler(input, ctx) { ... } }) 返回的对象；不要导出裸 handler 函数或 defineAgent 函数别名。`,
+        output: {
+          probeReason: probe.reason,
+          moduleContract: CODEGEN_AGENT_MODULE_CONTRACT,
+          expectedMetadata: codegenAgentExpectedMetadata(spec),
+        },
       };
     const ownership = generatedSpecExecutionOwnership(spec, code);
     if (ownership.codeActEligible) {
@@ -9309,6 +9317,7 @@ const read_spec: BrainTool = {
       ok: true,
       summary: `「${spec.nameZh}」：工具 ${spec.tools.length} · 精修 ${(ctx.attemptHistory[name] ?? []).length} 次 · 代码 ${spec.codeSource ?? "无"}`,
       output: {
+        moduleMetadata: codegenAgentExpectedMetadata(spec),
         spec: {
           actionName: spec.actionName,
           slug: spec.slug,
