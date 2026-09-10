@@ -9493,7 +9493,7 @@ const review_agent: BrainTool = {
       const digest = ctx.specs
         .map(
           (s) =>
-            `## ${s.actionName}（${ruleAssessments.get(s)?.isRuleGate ? "规则闸口" : "普通"} · 工具:${s.tools.join(",") || "无"}）\nsystem_prompt:\n${(s.systemPrompt || "").slice(0, 1400)}\n决策逻辑: ${(s.decisionLogic || "").slice(0, 500)}`,
+            `## ${s.actionName}（${ruleAssessments.get(s)?.isRuleGate ? "规则闸口" : "普通"} · 工具:${s.tools.join(",") || "无"}）\n${designedAgentReviewMaterial(s)}`,
         )
         .join("\n\n");
       const sys =
@@ -9535,7 +9535,7 @@ const review_agent: BrainTool = {
       const digest = execSpecs
         .map(
           (s) =>
-            `## ${s.actionName}（期望 emit:${(s.emit ?? []).join(",") || "—"} · 工具:${s.tools.join(",") || "无"}）\n决策逻辑: ${(s.decisionLogic || "").slice(0, 300)}\n代码:\n${(s.generatedCode || "").slice(0, 1500)}`,
+            `## ${s.actionName}（期望 emit:${(s.emit ?? []).join(",") || "—"} · 工具:${s.tools.join(",") || "无"}）\n${designedAgentReviewMaterial(s)}`,
         )
         .join("\n\n");
       const sys =
@@ -9601,6 +9601,45 @@ const review_agent: BrainTool = {
     };
   },
 };
+
+/** Review the actual authored fields, not a short summary of their existence.
+ * Cutting prose or code mid-sentence creates false defects; omitting those
+ * fields makes a source contract look like an unimplemented requirement. Keep
+ * this projection local to the current spec and omit unrelated fleet/history
+ * data and runtime profile configuration. */
+function designedAgentReviewMaterial(spec: GeneratedAgentSpec): string {
+  const executionContract = {
+    actionName: spec.actionName,
+    trigger: spec.trigger ?? [],
+    emit: spec.emit ?? [],
+    tools: spec.tools ?? [],
+    inputSchema: spec.inputSchema ?? [],
+    inputBindings: spec.inputBindings ?? [],
+    outputSchema: spec.outputSchema ?? [],
+    decisionTables: spec.decisionTables ?? [],
+    plan: spec.plan ?? [],
+    steps: spec.steps ?? [],
+    stateBindings: spec.stateBindings ?? [],
+    ruleRefs: spec.ruleRefs ?? [],
+    ruleGates: spec.ruleGates ?? [],
+    ruleGateGaps: spec.ruleGateGaps ?? [],
+    retries: spec.retries,
+    hitl: spec.hitl,
+    hitlGate: spec.hitlGate,
+    codeSource: spec.codeSource,
+    codeExecuted: spec.codeExecuted === true,
+    probeReason: spec.probeReason,
+    ...(spec.isSubAgent ? { parentAction: spec.parentAction, parentTask: spec.parentTask } : {}),
+  };
+  return [
+    "【待审 Agent 完整设计（以下字段均为原文，未截断）】",
+    `执行契约:\n${JSON.stringify(executionContract, null, 2)}`,
+    `system_prompt:\n${spec.systemPrompt ?? ""}`,
+    `user_prompt:\n${spec.userPrompt ?? ""}`,
+    `决策逻辑:\n${spec.decisionLogic ?? ""}`,
+    `代码（codeExecuted=false 时仅为参考，不是执行证据）:\n${spec.generatedCode ?? ""}`,
+  ].join("\n\n");
+}
 
 function actionScopedReviewMaterial(ctx: BrainCtx, actionName: string): string {
   const ontology = ctx.ontology;
@@ -9711,7 +9750,7 @@ const review_context: BrainTool = {
         ctx.specs
           .map(
             (s) =>
-              `## ${s.actionName}\n${actionScopedReviewMaterial(ctx, s.actionName)}\n【待审 Agent】\n触发:${(s.trigger ?? []).join(",") || "—"} → 产出:${(s.emit ?? []).join(",") || "—"} · 工具:${s.tools.join(",") || "无"}\nsystem_prompt:${(s.systemPrompt || "").slice(0, 900)}`,
+              `## ${s.actionName}\n${actionScopedReviewMaterial(ctx, s.actionName)}\n${designedAgentReviewMaterial(s)}`,
           )
           .join("\n\n");
       const sys =
@@ -9885,7 +9924,7 @@ const review_completeness: BrainTool = {
         ctx.specs
           .map(
             (s) =>
-              `· ${s.actionName}: 触发 ${(s.trigger ?? []).join(",") || "—"} → ${(s.emit ?? []).join(",") || "—"} · plan ${s.plan?.length || 0} 步\n${actionScopedReviewMaterial(ctx, s.actionName)}`,
+              `· ${s.actionName}: 触发 ${(s.trigger ?? []).join(",") || "—"} → ${(s.emit ?? []).join(",") || "—"} · plan ${s.plan?.length || 0} 步\n${actionScopedReviewMaterial(ctx, s.actionName)}\n${designedAgentReviewMaterial(s)}`,
           )
           .join("\n");
       const sys =
