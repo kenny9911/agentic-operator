@@ -67,7 +67,8 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     pids_limit: 128
-    mem_limit: 256m
+    # Node + the TS launcher and concurrent health probe exceed 256 MiB.
+    mem_limit: "${FACTORY_SANDBOX_GATEWAY_MEMORY_LIMIT:-512m}"
     cpus: "0.5"
     expose: ["3562"]
     environment:
