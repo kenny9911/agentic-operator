@@ -19,7 +19,7 @@
  */
 
 import type { KeyboardEvent } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "@/lib/portal-navigation";
 import { ViewHeader } from "@/app/portal/components";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { OperationLogTab } from "@/app/portal/components/logs/OperationLogTab";

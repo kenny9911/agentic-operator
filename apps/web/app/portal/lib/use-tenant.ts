@@ -12,7 +12,7 @@
  * path intact — used by the TenantSwitcher dropdown.
  */
 
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "@/lib/portal-navigation";
 import { useCallback } from "react";
 import { useDirty } from "./dirty-context";
 import { useI18n } from "./preferences-context";
@@ -52,19 +52,8 @@ export function rewriteTenantInPath(
   if (!/^[a-z0-9_-]{1,64}$/i.test(nextTenant)) {
     throw new Error("Invalid tenant slug");
   }
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts[0] === "portal" && parts.length >= 2) {
-    parts[1] = nextTenant;
-    // Entity detail ids are tenant-scoped. Preserve the top-level view but
-    // drop stale ids when switching domains. Settings/usage is a view, not
-    // an entity detail, and is safe to preserve.
-    if (!(parts[2] === "settings" && parts[3] === "usage")) {
-      parts.splice(3);
-    }
-  } else {
-    parts.splice(0, parts.length, "portal", nextTenant, "dashboard");
-  }
-  return "/" + parts.join("/");
+  void pathname;
+  return `/portal/${nextTenant}/domains`;
 }
 
 export function useTenant(sessionTenant?: string): string {
@@ -74,6 +63,13 @@ export function useTenant(sessionTenant?: string): string {
     params?.tenant,
     sessionTenant ?? verifiedSession?.tenant,
   );
+}
+
+/** Selected execution Domain for display; the owner Tenant remains useTenant(). */
+export function useDomainSlug(): string {
+  const params = useParams<{ domain?: string }>();
+  const tenant = useTenant();
+  return params?.domain ?? tenant;
 }
 
 export function useTenantNavigate(): (nextTenant: string) => void {

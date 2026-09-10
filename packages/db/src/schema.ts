@@ -114,6 +114,50 @@ export const memberships = sqliteTable(
   }),
 );
 
+/**
+ * Product ownership is Tenant -> Domains. Each Domain has one exclusive
+ * execution namespace in the existing tenant-scoped runtime tables. Keeping
+ * that namespace stable preserves historical record ids and signed evidence.
+ */
+export const domains = sqliteTable(
+  "domains",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    runtimeTenantId: text("runtime_tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    runtimeEnabledBeforeArchive: integer("runtime_enabled_before_archive", { mode: "boolean" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+  },
+  (t) => ({
+    tenantSlugUq: uniqueIndex("domains_tenant_slug_uq").on(t.tenantId, t.slug),
+    runtimeTenantUq: uniqueIndex("domains_runtime_tenant_uq").on(t.runtimeTenantId),
+    defaultUq: uniqueIndex("domains_one_default_per_tenant_uq").on(t.tenantId).where(sql`${t.isDefault} = 1`),
+    tenantArchivedIdx: index("domains_tenant_archived_idx").on(t.tenantId, t.archivedAt),
+  }),
+);
+
+/** Domain grants never create a membership in the internal runtime namespace. */
+export const domainMemberships = sqliteTable(
+  "domain_memberships",
+  {
+    domainId: text("domain_id").notNull().references(() => domains.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["admin", "operator", "viewer"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.domainId, t.userId] }),
+    userIdx: index("domain_memberships_user_idx").on(t.userId),
+  }),
+);
+
 // ─── Workflow definitions ────────────────────────────────────────────────────
 
 export const workflows = sqliteTable(
@@ -2039,9 +2083,10 @@ export const runtimeProfileVersions = sqliteTable(
 );
 
 /**
- * Tenant = Business Domain; this registry contains the concrete Ontology
- * Domains that the Business Domain is allowed to use. Unlike the legacy
- * `factory_domain_bindings` default pointer, this is intentionally one-to-many.
+ * Source-qualified Ontology Registrations within one Domain's runtime
+ * namespace. The legacy tenant_id is the execution namespace, not the owning
+ * product Tenant. Unlike the legacy `factory_domain_bindings` default pointer,
+ * registrations are intentionally one-to-many; ownership lives in `domains`.
  */
 export const businessOntologyDomains = sqliteTable(
   "business_ontology_domains",
@@ -4597,6 +4642,8 @@ export const schema = {
   tenants,
   users,
   memberships,
+  domains,
+  domainMemberships,
   workflows,
   workflowVersions,
   deployments,

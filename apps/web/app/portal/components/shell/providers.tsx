@@ -19,17 +19,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DirtyProvider } from "../../lib/dirty-context";
 import { PreferencesProvider } from "../../lib/preferences-context";
 
-export function portalTenantScope(pathname: string | null): string {
-  const match = pathname?.match(/^\/portal\/([^/]+)(?:\/|$)/);
-  if (!match?.[1]) return "__portal__";
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    // A malformed URL must not crash the provider tree. It still receives a
-    // distinct cache scope so no previous tenant data can be reused.
-    return `__invalid__:${match[1]}`;
-  }
-}
+export { portalScopeKey as portalTenantScope } from "@/lib/portal-scope";
+import { portalScopeKey } from "@/lib/portal-scope";
 
 function createPortalQueryClient(): QueryClient {
   return new QueryClient({
@@ -44,8 +35,8 @@ function createPortalQueryClient(): QueryClient {
 
 export function PortalProviders({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const tenantScope = portalTenantScope(pathname);
-  // Most legacy query keys predate URL-scoped tenants. Give every tenant a
+  const tenantScope = portalScopeKey(pathname);
+  // Most legacy query keys predate URL-scoped tenants. Give every Tenant/Domain pair a
   // fresh QueryClient so a client-side tenant switch can never briefly render
   // another tenant's cached runs, events, agents, budgets or audit records.
   const client = useMemo(() => createPortalQueryClient(), [tenantScope]);
@@ -54,7 +45,7 @@ export function PortalProviders({ children }: { children: ReactNode }) {
 
   return (
     <PreferencesProvider>
-      <QueryClientProvider client={client}>
+      <QueryClientProvider key={tenantScope} client={client}>
         <DirtyProvider>{children}</DirtyProvider>
       </QueryClientProvider>
     </PreferencesProvider>

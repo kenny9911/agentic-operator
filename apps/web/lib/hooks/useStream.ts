@@ -21,6 +21,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
+import { scopedStreamPath } from "@/lib/portal-scope";
 import { useQueryClient } from "@tanstack/react-query";
 import { RunStreamEvent, type RunStreamEvent as StreamEvent } from "@agentic/contracts";
 
@@ -63,7 +65,8 @@ export function streamPathWithCursor(path: string, lastEventId: string): string 
 
 export function useStream(opts: UseStreamOptions = {}): void {
   const queryClient = useQueryClient();
-  const path = opts.path ?? "/v1/stream";
+  const pathname = usePathname();
+  const path = scopedStreamPath(opts.path ?? "/livefeed", pathname);
   const reconnect = opts.reconnect ?? true;
   const onEventRef = useRef(opts.onEvent);
   const onStatusChangeRef = useRef(opts.onStatusChange);
@@ -96,6 +99,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
       };
 
       es.onmessage = (msg) => {
+        if (cancelled) return;
         if (msg.lastEventId) lastEventId = msg.lastEventId;
         let payload: unknown;
         try {
@@ -206,34 +210,31 @@ import type { QueryClient } from "@tanstack/react-query";
  */
 const COALESCE_WINDOW_MS = 220;
 
-const pendingKeys = new Map<string, readonly unknown[]>();
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-function flushInvalidations(client: QueryClient): void {
-  flushTimer = null;
-  const keys = [...pendingKeys.values()];
-  pendingKeys.clear();
-  for (const queryKey of keys) void client.invalidateQueries({ queryKey });
+interface InvalidationQueue {
+  keys: Map<string, readonly unknown[]>;
+  timer: ReturnType<typeof setTimeout>;
 }
+// Each QueryClient belongs to one Tenant/Domain pair. A pending old-scope
+// flush must never absorb the new scope's events during navigation.
+const invalidationQueues = new Map<QueryClient, InvalidationQueue>();
 
-/** Queue a key for invalidation on the next flush. Exported for tests. */
-export function queueInvalidate(
-  client: QueryClient,
-  queryKey: readonly unknown[],
-): void {
-  pendingKeys.set(JSON.stringify(queryKey), queryKey);
-  if (flushTimer === null) {
-    flushTimer = setTimeout(() => flushInvalidations(client), COALESCE_WINDOW_MS);
+export function queueInvalidate(client: QueryClient, queryKey: readonly unknown[]): void {
+  let queue = invalidationQueues.get(client);
+  if (!queue) {
+    const keys = new Map<string, readonly unknown[]>();
+    const timer = setTimeout(() => {
+      invalidationQueues.delete(client);
+      for (const pending of keys.values()) void client.invalidateQueries({ queryKey: pending });
+    }, COALESCE_WINDOW_MS);
+    queue = { keys, timer };
+    invalidationQueues.set(client, queue);
   }
+  queue.keys.set(JSON.stringify(queryKey), queryKey);
 }
 
-/** For tests — drop anything queued and cancel the pending flush. */
 export function resetInvalidationQueue(): void {
-  pendingKeys.clear();
-  if (flushTimer !== null) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
+  for (const queue of invalidationQueues.values()) clearTimeout(queue.timer);
+  invalidationQueues.clear();
 }
 
 export function dispatch(event: StreamEvent, client: QueryClient): void {

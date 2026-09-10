@@ -14,7 +14,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/portal-navigation";
 import {
   ActorTag,
   Badge,

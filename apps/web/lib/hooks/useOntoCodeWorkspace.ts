@@ -1,4 +1,6 @@
 "use client";
+import { tenantHeaderFor } from "@/lib/hooks/tenant-header";
+
 
 import {
   useMutation,
@@ -341,7 +343,7 @@ function jsonHeaders(
   return {
     Accept: "application/json",
     "Content-Type": "application/json",
-    "x-agentic-tenant": tenant,
+    ...tenantHeaderFor(tenant),
     ...extra,
   };
 }
@@ -567,6 +569,7 @@ export function useOntoCodeSession(
       ),
     enabled: Boolean(tenant && sessionId),
     staleTime: 1_000,
+    retry: (failureCount, error) => !(error instanceof ApiResponseError && [401, 403, 404].includes(error.status)) && failureCount < 3,
   });
 }
 

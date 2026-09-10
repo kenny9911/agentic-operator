@@ -19,7 +19,7 @@
  *     ops must set, and whether the server can see it".
  */
 
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/portal-navigation";
 import { Button, Panel } from "@/app/portal/components";
 import {
   useOntoCodeConfigurationGaps,

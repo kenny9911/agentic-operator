@@ -8,7 +8,7 @@
  * Shares a small header with the Usage sub-route for visual consistency.
  */
 
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { Button, ViewHeader } from "@/app/portal/components";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { useTenant } from "@/app/portal/lib/use-tenant";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/portal-navigation";
 import { normalizeWorkflowManifest } from "@agentic/contracts";
 import type {
   WorkflowRunEntrypoint,

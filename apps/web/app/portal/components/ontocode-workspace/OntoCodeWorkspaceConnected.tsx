@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "@/lib/portal-navigation";
 import type {
   OntoCodeBuildSession,
   OntoCodeHarnessJob,
@@ -47,6 +47,7 @@ import {
   useBusinessOntologyDomains,
 } from "@/lib/hooks/useBusinessOntologyDomains";
 import { useTenants } from "@/lib/hooks/useTenants";
+import { useDomain } from "@/lib/hooks/useDomains";
 import {
   useOntoCodeSessionStream,
   type OntoCodeStreamState,
@@ -578,8 +579,9 @@ function DataBanner({
 
 export function OntoCodeWorkspaceHubConnected() {
   const { language, t } = useI18n();
-  const params = useParams<{ tenant: string }>();
+  const params = useParams<{ tenant: string; domain?: string }>();
   const tenant = params.tenant;
+  const selectedDomain = useDomain(tenant, params.domain ?? null);
   const router = useRouter();
   const projects = useOntoCodeProjects(tenant);
   const sessions = useOntoCodeSessions(tenant);
@@ -684,8 +686,8 @@ export function OntoCodeWorkspaceHubConnected() {
           t,
           language,
           {
-            tenantSlug: tenantRecord?.slug ?? tenant,
-            tenantName: tenantRecord?.name ?? tenant,
+            tenantSlug: params.domain ?? tenantRecord?.slug ?? tenant,
+            tenantName: selectedDomain.data?.domain.name ?? tenantRecord?.name ?? tenant,
             ontologySource: registration
               ? registration.status === "active"
                 ? registration.source === "allmeta" ||
@@ -704,6 +706,7 @@ export function OntoCodeWorkspaceHubConnected() {
       sessions.data?.items,
       t,
       tenant,
+      selectedDomain.data?.domain.name,
       tenantRecord?.name,
       tenantRecord?.slug,
     ],
@@ -797,9 +800,9 @@ export function OntoCodeWorkspaceHubConnected() {
       <WorkspaceSessionHub
         sessions={workspaceSessions}
         tenantIdentity={{
-          id: tenantRecord?.id ?? tenant,
-          slug: tenantRecord?.slug ?? tenant,
-          name: tenantRecord?.name ?? tenant,
+          id: selectedDomain.data?.domain.id ?? tenantRecord?.id ?? tenant,
+          slug: params.domain ?? tenantRecord?.slug ?? tenant,
+          name: selectedDomain.data?.domain.name ?? tenantRecord?.name ?? tenant,
         }}
         boundOntology={
           defaultRegistration
@@ -887,8 +890,9 @@ export function OntoCodeWorkspaceHubConnected() {
 
 export function OntoCodeWorkspaceSessionConnected() {
   const { language, t } = useI18n();
-  const params = useParams<{ tenant: string; sessionId: string }>();
+  const params = useParams<{ tenant: string; domain?: string; sessionId: string }>();
   const tenant = params.tenant;
+  const selectedDomain = useDomain(tenant, params.domain ?? null);
   const sessionId = params.sessionId;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -965,7 +969,8 @@ export function OntoCodeWorkspaceSessionConnected() {
     return (
       <SessionLoadErrorState
         tenantSlug={currentBusinessDomain?.slug ?? tenant}
-        tenantName={currentBusinessDomain?.name ?? tenant}
+        domainSlug={params.domain ?? tenant}
+        tenantName={selectedDomain.data?.domain.name ?? currentBusinessDomain?.name ?? tenant}
         unavailable={
           !sessionQuery.data?.session &&
           (!sessionQuery.error ||
@@ -1030,9 +1035,9 @@ export function OntoCodeWorkspaceSessionConnected() {
     t,
     language,
     {
-      tenantSlug: tenant,
+      tenantSlug: params.domain ?? tenant,
       tenantName:
-        (tenantsQuery.data?.items ?? []).find(
+        selectedDomain.data?.domain.name ?? (tenantsQuery.data?.items ?? []).find(
           (candidate) => candidate.slug === tenant || candidate.id === tenant,
         )?.name ?? tenant,
       ontologySource: projectRegistration

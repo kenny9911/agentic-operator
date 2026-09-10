@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { LiveWorkflowView } from "@/app/portal/components/runs/LiveWorkflowView";
 import { ExecutionHistory } from "@/app/portal/components/runs/ExecutionHistory";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import {
   Badge,
   Button,

@@ -1,3 +1,4 @@
+import { domainsEn } from "./domains";
 import { skillsEn } from "./skills";
 import type { Dict } from "./types";
 
@@ -8,6 +9,7 @@ import type { Dict } from "./types";
  * set exactly — enforced by `parity.test.ts`.
  */
 export const en = {
+  domains: domainsEn,
   skills: skillsEn,
   common: {
     notConnected: "Not connected yet",
@@ -21,9 +23,9 @@ export const en = {
     dialog: "Dialog",
     panelSplitter: "Panel splitter",
     switchTenantUnsaved:
-      "You have unsaved changes. Switch domains anyway? Your draft will be lost.",
+      "You have unsaved changes. Switch Tenants anyway? Your draft will be lost.",
     switchTenantUnsavedDetail:
-      "You have unsaved changes ({detail}). Switch domains anyway? Your draft will be lost.",
+      "You have unsaved changes ({detail}). Switch Tenants anyway? Your draft will be lost.",
   },
   protocol: {
     runStatus: {
@@ -64,7 +66,7 @@ export const en = {
     reasoning: "AI insights",
     deployments: "Deployments",
     tools: "Agentic Tools",
-    tenants: "Business Domains",
+    tenants: "Tenants",
     access: "Access & roles",
     settings: "Settings",
     factory: "Agent Factory",
@@ -2022,7 +2024,7 @@ export const en = {
       leftRail: {
         bindingTitle: "Ontology binding",
         bindingHelp:
-          "The run domain is the tenant boundary; the ontology is the factory's knowledge source. The two are linked only through the explicit binding saved here, never guessed by name or alias.",
+          "The run Domain belongs to the selected Tenant; the ontology is the factory's knowledge source. The two are linked only through the explicit binding saved here, never guessed by name or alias.",
         productionTarget: "Production target (run domain)",
         knowledgeSource: "Knowledge source (ontology)",
         bindingUnavailable: "Binding unavailable · {id}",
@@ -3418,17 +3420,17 @@ export const en = {
         "No Runtime Profile exists yet. Create one, then bind an exact version to each Ontology Domain registration above.",
     },
     subtitle:
-      "Business Domains are boundaries such as recruitment or energy. Each can manage multiple Ontology Domains that map exactly to AllmetaOntology.",
-    inngestPanelTitle: "Business Domain runtime deployment (compatibility)",
+      "Tenants own business Domains. Manage each Domain and its ontology sources from the Domains page.",
+    inngestPanelTitle: "Default Domain runtime",
     inngestPanelHint:
-      "This controls every manifest workflow in the internal tenant namespace; it does not add, move, or switch an Ontology Domain registration. Deploy registers this Business Domain's enabled functions; Stop removes them while preserving configuration, versions, and history.",
+      "These controls apply to each Tenant's default Domain. Open Domains to manage other Domains and their runtime.",
     inngestSelectedCount: "{selected} / {total} selected",
     inngestDeployConfirm:
       'Deploy the enabled workflow agents for "{name}" to Inngest now?',
     inngestStopConfirm:
       'Stop the Inngest workflow for "{name}"? New events will no longer start its agents.',
-    inngestDeployedToast: "Business Domain runtime deployed",
-    inngestStoppedToast: "Business Domain runtime stopped",
+    inngestDeployedToast: "Tenant runtime deployed",
+    inngestStoppedToast: "Tenant runtime stopped",
     inngestChangeFailedToast: "Inngest deployment change failed",
     inngestFunctionCount: "{count} functions verified on Inngest",
     inngestDeployed: "DEPLOYED",
@@ -3437,24 +3439,24 @@ export const en = {
     inngestDeploy: "Deploy",
     inngestStop: "Stop",
     inngestChanging: "Applying…",
-    countSingular: "BUSINESS DOMAIN",
-    countPlural: "BUSINESS DOMAINS",
+    countSingular: "TENANT",
+    countPlural: "TENANTS",
     showArchived: "Show deleted",
     refresh: "Refresh",
     createHint:
-      "Use the sidebar Domain switcher to create new business domains.",
-    loadingTitle: "Loading domains…",
+      "Use the sidebar Tenant switcher to create new tenants.",
+    loadingTitle: "Loading tenants…",
     loadingHint: "One moment.",
-    emptyTitle: "No domains visible",
+    emptyTitle: "No tenants visible",
     emptyHintAll:
-      "There are no domains yet. Use the sidebar switcher to create one.",
+      "There are no tenants yet. Use the sidebar switcher to create one.",
     emptyHintActive:
-      "All domains are deleted. Toggle 'Show deleted' to see them.",
-    toastRestored: "Domain restored",
+      "All tenants are deleted. Toggle 'Show deleted' to see them.",
+    toastRestored: "Tenant restored",
     toastRestoreFailed: "Restore failed",
-    toastUpdated: "Domain updated",
-    toastArchived: "Domain deleted",
-    colTenant: "Business Domain",
+    toastUpdated: "Tenant updated",
+    toastArchived: "Tenant deleted",
+    colTenant: "Tenant",
     colDescription: "Description",
     colAgents: "Agents",
     colRuns24h: "Runs/24h",
@@ -3465,19 +3467,19 @@ export const en = {
     edit: "Edit",
     archive: "Delete",
     restore: "Restore",
-    editTitle: "Edit domain",
+    editTitle: "Edit tenant",
     fieldName: "Display name",
     fieldSubtitle: "Subtitle",
     fieldAccent: "Accent color",
     colorError: "must be #rrggbb hex",
     slugImmutable:
-      "Slug is immutable. To rename, delete this domain and create a new one.",
+      "Slug is immutable. To rename, delete this tenant and create a new one.",
     cancel: "Cancel",
     save: "Save",
     saving: "Saving…",
-    archiveTitle: "Delete domain",
+    archiveTitle: "Delete tenant",
     archiveBody:
-      "Deleting \"{name}\" hides it from the Domain switcher and disables its API tokens, while preserving rows for audit. You can restore it from 'Show deleted'. Active runs and open tasks must be resolved first.",
+      "Deleting \"{name}\" hides it from the Tenant switcher and disables its API tokens, while preserving rows for audit. You can restore it from 'Show deleted'. Active runs and open tasks must be resolved first.",
     confirmLabel: 'Type "{slug}" to confirm',
     fieldReason: "Delete reason (optional)",
     archiving: "Deleting…",
@@ -4045,24 +4047,24 @@ export const en = {
   tenantCreateModal: {
     errColorHex: "Color must be a 6-digit hex like #d0ff00",
     errNetwork: "Network error",
-    ariaWizard: "New Business Domain · step {step} of 3",
-    headerTitle: "New Business Domain · Step {step} of 3",
+    ariaWizard: "New Tenant · step {step} of 3",
+    headerTitle: "New Tenant · Step {step} of 3",
     close: "Close",
     displayName: "Display name",
     displayNameHint:
-      "Shown in the sidebar Business Domain switcher and Business Domain lists.",
+      "Shown in the sidebar Tenant switcher and Tenant lists.",
     displayNamePlaceholder: "e.g. Acme Recruiting",
     slugPlaceholder: "acme",
     subtitlePlaceholder: "Recruitment-as-a-Service · Asia-Pac",
     tokenCapPlaceholder: "e.g. 50000000",
     usdCapPlaceholder: "e.g. 500.00",
-    slug: "Business Domain slug",
+    slug: "Tenant slug",
     slugHint:
       "Immutable. Used in URLs, log paths, and Inngest function IDs. [a-z][a-z0-9-]{1,31}",
     subtitle: "Subtitle",
     subtitleHint: "Optional short description shown under the name.",
     accentColor: "Accent color",
-    accentColorHint: "Used for the Business Domain avatar and accent strokes.",
+    accentColorHint: "Used for the Tenant avatar and accent strokes.",
     colorSwatchAria: "Color {color}",
     tokenCap: "Monthly token cap",
     tokenCapHint:
@@ -4086,7 +4088,7 @@ export const en = {
     back: "Back",
     next: "Next",
     provisioning: "Provisioning…",
-    createTenant: "Create Business Domain",
+    createTenant: "Create Tenant",
     slugIssue: {
       required:
         "enter a slug — couldn't auto-derive one from the name (e.g. acme)",
@@ -6071,14 +6073,14 @@ export const en = {
     templateDownloaded:
       "Edit it, then drop it back on Workflows \u2192 Import manifest. The _readme and _doc lines are the comments \u2014 delete them any time.",
     templateDownloadFailed: "Template download failed",
-    toastProvisionedTitle: "Business Domain provisioned",
+    toastProvisionedTitle: "Tenant provisioned",
     toastProvisionedDesc: "{name} ({slug}) is ready",
     agentCount: "{count} agents",
     runs24h: "{count} runs/24h",
-    newTenant: "New Business Domain",
-    switchAria: "{name} Business Domain. Switch Business Domain",
-    openAria: "{name} Business Domain. Open Business Domain switcher",
-    tooltip: "Business Domain: {name}",
+    newTenant: "New Tenant",
+    switchAria: "{name} Tenant. Switch Tenant",
+    openAria: "{name} Tenant. Open Tenant switcher",
+    tooltip: "Tenant: {name}",
   },
   importPreviewGraph: {
     title: "Workflow topology from the manifest",
@@ -6256,7 +6258,7 @@ export const en = {
     suspend: "Suspend",
     activate: "Activate",
     grantTenant: "Grant Domain access",
-    tenantLabel: "Domain",
+    tenantLabel: "Tenant",
     grant: "Grant",
     revoke: "Revoke",
     notMember: "No Domain access",
@@ -6487,7 +6489,7 @@ export const en = {
     editingDraftHint:
       " · Save creates an immutable draft version; Publish explicitly promotes it to live.",
     subtitle:
-      "Select a tenant workflow, inspect its immutable version, or open the full draft editor.",
+      "Select a Domain workflow, inspect its immutable version, or open the full draft editor.",
     workflow: "Workflow",
     workflowLower: "workflow",
     localDraft: "LOCAL DRAFT",
@@ -6624,7 +6626,7 @@ export const en = {
       liveDescription: "{version} was published to production.",
       publishError: {
         tenant_inngest_disabled:
-          "This Business Domain's workflow runtime is turned off. Turn it on in Business Domains → Inngest deployment, then publish again.",
+          "This Domain’s workflow runtime is stopped. Use Start runtime above the workflow selector, then publish again.",
         workflow_validation_failed:
           "The saved version has blocking validation issues.",
         workflow_publish_blocked:

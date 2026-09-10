@@ -23,7 +23,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/portal-navigation";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { Icon } from "../Icon";
 import { Kbd } from "../atoms";

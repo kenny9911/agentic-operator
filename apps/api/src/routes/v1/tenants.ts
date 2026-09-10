@@ -173,6 +173,7 @@ function canReadTenant(
   tenantId: string,
 ): boolean {
   if (auth.platformRole === "superadmin") return true;
+  if (auth.domainId && auth.tenantId === tenantId && auth.role) return true;
   if (!auth.userId) return auth.tenantId === tenantId;
   return !!getDb()
     .select({ userId: memberships.userId })

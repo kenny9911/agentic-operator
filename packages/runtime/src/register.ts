@@ -23,6 +23,7 @@ import type { SkillBindings } from "@agentic/contracts";
  */
 
 import { createHash } from "node:crypto";
+import { assertDomainRuntimeActive } from "./domain-scope";
 
 import { appIdForTenant, getTenantInngest } from "./client";
 import { runAction, type LlmTurnTrace, type StepOutput } from "./step-engine";
@@ -1358,6 +1359,9 @@ export function registerAgent(
       triggers,
     },
     async ({ event, step, logger, attempt }) => {
+      // A broker delivery may arrive after its app was removed, or a retry
+      // may still hold the old closure. Re-derive lifecycle before any work.
+      assertDomainRuntimeActive(ctx.tenantId);
       // #COMMS — rehydrate content-addressed blob refs so this run's handlers see REAL values (the
       // wire/storage stayed small; the active run resolves on demand). No-op when there are no refs.
       // Async resolution: local fs first, then the shared backend (#SCALE-BLOB) — so on a multi-
@@ -1499,6 +1503,10 @@ export function registerAgent(
         );
         if (!getRuntimeSkillHost() && (ctx.workflowSkills || agent.skills)) throw new Error("Authored Skill bindings require a configured runtime Skill host");
         const skillSnapshot = db.transaction(() => {
+        // Payload hydration and authorization can await after the delivery's
+        // first lifecycle check. Re-check under the Run insertion transaction
+        // so an archive completed during that work cannot start a new Run.
+        assertDomainRuntimeActive(ctx.tenantId);
         db.insert(runs)
           .values({
             id: rid,

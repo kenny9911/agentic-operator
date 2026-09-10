@@ -31,6 +31,8 @@ import { readsRoutes } from "./routes/v1/reads";
 import { llmRoutes } from "./routes/v1/llm";
 import { manifestImportRoutes } from "./routes/v1/manifest-import";
 import { tenantsRoutes } from "./routes/v1/tenants";
+import { domainRoutes } from "./routes/v1/domains";
+import { synchronizeDomainRuntime } from "./services/domain-runtime-integration";
 import { usageRoutes } from "./routes/v1/usage";
 import { observabilityRoutes } from "./routes/v1/observability";
 import { budgetsRoutes } from "./routes/v1/budgets";
@@ -329,6 +331,7 @@ export async function build() {
         await v1.register(llmRoutes);
         await v1.register(manifestImportRoutes);
         await v1.register(tenantsRoutes);
+        await v1.register(domainRoutes, { syncRuntime: synchronizeDomainRuntime });
         // Settings → Usage / Audit / Budgets surfaces. Previously dead-on-
         // arrival files (P0-LOG-D1 / 03-logging-audit.md).
         await v1.register(usageRoutes);

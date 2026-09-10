@@ -560,3 +560,8 @@ export { systemCronFns, __getCronFires, __resetCronFires } from "./system-cron";
 export * from "./skill-execution";
 
 export * from "./skill-host";
+export {
+  assertDomainRuntimeActive,
+  isDomainRuntimeActive,
+  isDomainRuntimeSlugActive,
+} from "./domain-scope";

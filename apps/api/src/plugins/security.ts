@@ -42,7 +42,7 @@ interface Bucket {
 const buckets = new Map<string, Bucket>();
 
 function rateLimitKey(req: FastifyRequest): string {
-  if (req.auth) return `tenant:${req.auth.tenantId}`;
+  if (req.auth) return `tenant:${req.auth.ownerTenantId ?? req.auth.tenantId}`;
   // Fastify derives `req.ip` from the socket and applies `trustProxy` when the
   // deployment explicitly enables it. Reading X-Forwarded-For directly here
   // would let any unauthenticated caller mint a fresh rate-limit bucket by

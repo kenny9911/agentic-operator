@@ -14,6 +14,7 @@ import { subscribeStreamEvents } from "@agentic/runtime";
 import { can, requirePermission } from "../../plugins/rbac";
 import { getRecentActivity } from "../../queries/activity";
 import { createSseDrainRegistry } from "../../plugins/sse-drain";
+import { createStreamAuthorization } from "../../plugins/stream-auth";
 
 const KEEPALIVE_MS = 15_000;
 const MAX_PENDING_FRAMES = 2_048;
@@ -143,11 +144,18 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           // Socket may already be gone.
         }
       };
+      const authorized = createStreamAuthorization(
+        req,
+        auth,
+        "events.read",
+        cleanup,
+      );
 
       function flush() {
-        if (closed || !blocked) return;
+        if (closed || !blocked || !authorized()) return;
         blocked = false;
         while (!closed && pendingFrames.length > 0) {
+          if (!authorized()) return;
           if (!raw.write(pendingFrames.shift()!)) {
             blocked = true;
             return;
@@ -156,7 +164,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const writeFrame = (frame: string): boolean => {
-        if (closed || raw.destroyed || raw.writableEnded) return false;
+        if (closed || raw.destroyed || raw.writableEnded || !authorized())
+          return false;
         if (blocked) {
           if (pendingFrames.length >= MAX_PENDING_FRAMES) {
             req.log.warn(
@@ -240,12 +249,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       req.raw.on("error", cleanup);
       unregisterDrain = registerStreamDrain(cleanup);
 
-      writeFrame(": stream open\n\nretry: 1000\n\n");
+      if (!writeFrame(": stream open\n\nretry: 1000\n\n")) return reply;
 
       // Subscribe before the durable read. Live events arriving during that
       // read are queued and de-duplicated against history when flushed.
       unsub = subscribeStreamEvents(auth.tenantId, (event) => {
-        if (closed) return;
+        if (closed || !authorized()) return;
         if (bootstrapping) {
           if (bootEvents.length >= MAX_BOOT_EVENTS) {
             bootOverflow = true;
@@ -305,12 +314,16 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       bootstrapping = false;
       for (const event of bootEvents) send(event);
       bootEvents.length = 0;
-      writeFrame(
-        `event: ready\ndata: ${JSON.stringify({ ok: true, tenantSlug: auth.tenantSlug, backfill, at: Date.now() })}\n\n`,
-      );
+      if (
+        !writeFrame(
+          `event: ready\ndata: ${JSON.stringify({ ok: true, tenantSlug: auth.tenantSlug, backfill, at: Date.now() })}\n\n`,
+        )
+      )
+        return reply;
 
       keepalive = setInterval(() => {
-        if (!closed && !blocked) writeFrame(`: keepalive ${Date.now()}\n\n`);
+        if (!closed && authorized() && !blocked)
+          writeFrame(`: keepalive ${Date.now()}\n\n`);
       }, KEEPALIVE_MS);
       keepalive.unref?.();
       return reply;

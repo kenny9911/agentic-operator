@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { skillBindingsCopy } from "@/lib/i18n/skill-bindings";
 
 import {

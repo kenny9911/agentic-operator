@@ -11,14 +11,12 @@ import {
   useOntoCodeProjects,
 } from "@/lib/hooks/useOntoCodeWorkspace";
 import { HelpTip } from "@/app/portal/components";
+import Link from "@/lib/portal-link";
+import { useI18n } from "@/app/portal/lib/preferences-context";
+import { useDomainSlug } from "@/app/portal/lib/use-tenant";
+import { domainPortalPath } from "@/lib/portal-scope";
 import styles from "./workbench.module.css";
-import { AUTONOMY_MODE_COPY } from "./autonomy-copy";
-
-const SOURCE_LABEL: Record<string, string> = {
-  allmeta: "Allmeta 实时源",
-  upload: "上传快照",
-  manifest_legacy: "历史绑定",
-};
+import { autonomyModeCopy } from "./autonomy-copy";
 
 export interface CreateSessionPanelProps {
   tenant: string;
@@ -30,6 +28,12 @@ export interface CreateSessionPanelProps {
 }
 
 export function CreateSessionPanel(props: CreateSessionPanelProps) {
+  const { t, language } = useI18n();
+  const domainSlug = useDomainSlug();
+  const modes = autonomyModeCopy(language);
+  const sourceLabels: Record<string, string> = {
+    allmeta: t("ontocode.hub.sourceAllmeta"), upload: t("ontocode.hub.sourceUpload"), manifest_legacy: t("domains.createSession.sourceLegacy"),
+  };
   const domainsQ = useBusinessOntologyDomains(props.tenant);
   const projectsQ = useOntoCodeProjects(props.tenant);
   const createProject = useCreateOntoCodeProject(props.tenant);
@@ -60,16 +64,16 @@ export function CreateSessionPanel(props: CreateSessionPanelProps) {
 
   const submit = async () => {
     if (!selected) {
-      setError("当前业务域还没有活跃的本体域——先在「管理本体域」注册或上传一个。");
+      setError(t("domains.createSession.missing"));
       return;
     }
     if (!selected.executionReadiness.executable) {
-      setError(selected.executionReadiness.message || "所选域尚未运行时就绪。");
+      setError(selected.executionReadiness.message || t("domains.createSession.notReady"));
       return;
     }
     const goalText =
       goal.trim() ||
-      "根据当前本体分析业务范围，并生成可测试、可审查的 Agent 套件。";
+      t("domains.createSession.defaultGoal");
     setBusy(true);
     setError(null);
     try {
@@ -81,13 +85,13 @@ export function CreateSessionPanel(props: CreateSessionPanelProps) {
           domain: selected.ontologyDomainId,
           ontologyDomainRegistrationId: selected.id,
           name: selected.displayName || selected.ontologyDomainId,
-          description: "OntoCode 工作台管理的 Agent 工程项目。",
+          description: t("domains.createSession.projectDescription"),
         });
         project = receipt.project;
       }
       const receipt = await createSession.mutateAsync({
         projectId: project.id,
-        title: goalText.slice(0, 56) || "新的 Agent 构建",
+        title: goalText.slice(0, 56) || t("domains.createSession.defaultTitle"),
         goal: goalText,
         autonomyMode,
       });
@@ -112,11 +116,11 @@ export function CreateSessionPanel(props: CreateSessionPanelProps) {
 
   const body = (
     <div className={styles.createPanel}>
-      <h2 className={styles.goalTitle}>新建 Session</h2>
+      <h2 className={styles.goalTitle}>{t("domains.createSession.title")}</h2>
       <label className={styles.createLabel} htmlFor="oc-create-domain">
-        Ontology 域
+        {t("domains.createSession.source")}
         <HelpTip>
-          只列出活跃注册项；新增或上传去「Business Domains」页。
+          {t("domains.createSession.sourceHint")}
         </HelpTip>
       </label>
       <select
@@ -127,39 +131,44 @@ export function CreateSessionPanel(props: CreateSessionPanelProps) {
         disabled={busy || registrations.length === 0}
       >
         {registrations.length === 0 ? (
-          <option value="">（无可用域）</option>
+          <option value="">{t("domains.createSession.empty")}</option>
         ) : (
           registrations.map((r) => (
             <option key={r.id} value={r.id}>
               {r.displayName || r.ontologyDomainId} ·{" "}
-              {SOURCE_LABEL[r.source] ?? r.source}
-              {r.executionReadiness.executable ? "" : " · 未就绪"}
+              {sourceLabels[r.source] ?? r.source}
+              {r.executionReadiness.executable ? "" : ` · ${t("domains.createSession.readySuffix")}`}
             </option>
           ))
         )}
       </select>
+      <Link href={domainPortalPath(props.tenant, domainSlug, "ontology")} style={{ color: "var(--signal)", fontSize: 12 }}>
+        {t("domains.ontology")}
+      </Link>
+      {domainsQ.isPending ? <div role="status">{t("domains.loading")}</div> : null}
+      {domainsQ.isError ? <div role="alert" className={styles.cardError}>{t("domains.createSession.unavailable")}</div> : null}
       {selected && !selected.executionReadiness.executable ? (
         <div className={styles.cardError}>
-          {selected.executionReadiness.message || "该域尚未运行时就绪。"}
+          {selected.executionReadiness.message || t("domains.createSession.notReady")}
         </div>
       ) : null}
       <label className={styles.createLabel} htmlFor="oc-create-goal">
-        业务目标
+        {t("domains.createSession.goal")}
       </label>
       <textarea
         id="oc-create-goal"
         className={styles.createGoal}
-        placeholder="例：生成可测试、可审查的 Agent 套件…"
+        placeholder={t("domains.createSession.placeholder")}
         value={goal}
         onChange={(e) => setGoal(e.target.value)}
         disabled={busy}
       />
       <label className={styles.createLabel} htmlFor="oc-create-autonomy">
-        执行方式
+        {t("domains.createSession.execution")}
         {/* 模式的能力边界事实收进 HelpTip（与 Composer 共享同一份权威文案）。 */}
         <HelpTip>
           {
-            AUTONOMY_MODE_COPY.find((option) => option.value === autonomyMode)!
+            modes.find((option) => option.value === autonomyMode)!
               .description
           }
         </HelpTip>
@@ -173,7 +182,7 @@ export function CreateSessionPanel(props: CreateSessionPanelProps) {
         }
         disabled={busy}
       >
-        {AUTONOMY_MODE_COPY.map((option) => (
+        {modes.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
           </option>
@@ -185,9 +194,9 @@ export function CreateSessionPanel(props: CreateSessionPanelProps) {
           type="button"
           className={`${styles.btn} ${styles.btnGreen}`}
           onClick={() => void submit()}
-          disabled={busy}
+          disabled={busy || domainsQ.isPending || projectsQ.isPending || domainsQ.isError || projectsQ.isError || !selected?.executionReadiness.executable}
         >
-          {busy ? "创建中…" : "创建"}
+          {busy ? t("domains.createSession.creating") : t("domains.createSession.create")}
         </button>
         {props.onClose ? (
           <button
@@ -196,7 +205,7 @@ export function CreateSessionPanel(props: CreateSessionPanelProps) {
             onClick={props.onClose}
             disabled={busy}
           >
-            取消
+            {t("domains.cancel")}
           </button>
         ) : null}
       </div>

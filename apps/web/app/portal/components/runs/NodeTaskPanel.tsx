@@ -13,6 +13,8 @@
  * both surfaces and only has to be got right once.
  */
 "use client";
+import PortalAnchor from "@/lib/portal-anchor";
+
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -376,7 +378,7 @@ export function NodeTaskPanel({
               <span style={{ fontSize: 11, color: "var(--text-3)", alignSelf: "center" }}>
                 {copy("取消＝暂不决策，节点仍等待人工", "Cancel leaves the node waiting")}
               </span>
-              <a
+              <PortalAnchor
                 href={`/portal/${encodeURIComponent(tenant)}/tasks`}
                 style={{
                   fontSize: 11.5,
@@ -386,7 +388,7 @@ export function NodeTaskPanel({
                 }}
               >
                 {copy("在人工任务中打开", "Open in Tasks")}
-              </a>
+              </PortalAnchor>
             </div>
           </>
         )}

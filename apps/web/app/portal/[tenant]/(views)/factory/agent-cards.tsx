@@ -1,4 +1,6 @@
 "use client";
+import PortalAnchor from "@/lib/portal-anchor";
+
 
 /**
  * Agent 工厂 — the browsable AGENT CARD LIST + the SANDBOX I/O panel (ported from the old AO's
@@ -127,7 +129,7 @@ export function SandboxIOPanel({ testCases, agentRuns, onShowCode: _osc }: { tes
               <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)" }}>{io.agentShort}</span>
                 <span style={{ fontSize: 10.5, color: /complet/i.test(io.status) ? "var(--green)" : "var(--amber)", fontFamily: "var(--mono)" }}>{io.status}{io.degraded ? t("factory.agentCards.degradedSuffix") : ""}</span>
-                {io.url && <a href={io.url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", fontSize: 10.5, color: "var(--signal)" }} title={t("factory.agentCards.runRecord.title")}>{t("factory.agentCards.runRecord.link")}</a>}
+                {io.url && <PortalAnchor href={io.url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", fontSize: 10.5, color: "var(--signal)" }} title={t("factory.agentCards.runRecord.title")}>{t("factory.agentCards.runRecord.link")}</PortalAnchor>}
               </div>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
                 {io.triggerEvent && chip(`◂ ${io.triggerEvent}`, "var(--blue)")}

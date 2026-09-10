@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "@/lib/portal-navigation";
 import {
   OntoCodeThemeBoundary,
   OntoCodeWorkspaceHubConnected,

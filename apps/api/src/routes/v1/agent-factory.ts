@@ -134,6 +134,7 @@ import {
 import { registerFactoryFixtureAssetRoutes } from "./agent-factory-fixture-assets";
 import { AuthoritativeOntologyPromotionError } from "../../services/agent-factory/authoritative-ontology-evidence";
 import { createSseDrainRegistry } from "../../plugins/sse-drain";
+import { createStreamAuthorization } from "../../plugins/stream-auth";
 
 const frame = (data: unknown): string => `data: ${JSON.stringify(data)}\n\n`;
 
@@ -3807,7 +3808,7 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
       run?: unknown;
     };
   }>("/agent-factory/stream", async (req, reply) => {
-    requirePermission(req, "agents.invoke");
+    const auth = requirePermission(req, "agents.invoke");
     if (!req.auth) return reply.fail("unauthorized", "需要租户上下文", 401);
     // Starting through a GET was the source of URL overflow and attachment
     // truncation.  Reject the legacy shape explicitly even if a `run` was
@@ -3843,6 +3844,25 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
     let unsub: (() => void) | null = null;
     let ended = false;
     let unregisterDrain: () => void = () => undefined;
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    const closeStream = () => {
+      if (ended) return;
+      ended = true;
+      if (keepalive) clearInterval(keepalive);
+      if (unsub) unsub();
+      unregisterDrain();
+      try {
+        reply.raw.end();
+      } catch {
+        /* socket gone */
+      }
+    };
+    const authorized = createStreamAuthorization(
+      req,
+      auth,
+      "agents.invoke",
+      closeStream,
+    );
     // #ALIVE-PING — the old `: ping` was an SSE COMMENT, which per spec NEVER dispatches
     // EventSource.onmessage; the client's 60s silence watchdog therefore false-fired on every
     // legitimately quiet stretch (ask_user park waits up to 180s for the human; a deep-reasoning
@@ -3851,7 +3871,8 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
     // can see (and ignore for the transcript). A true zombie (driver gone / run evicted) gets
     // only the comment ping, so the watchdog still catches real corpses.
     const pingRunId = reconnectId;
-    const keepalive = setInterval(() => {
+    keepalive = setInterval(() => {
+      if (ended || !authorized()) return;
       try {
         if (pingRunId && isActiveRun(pingRunId))
           reply.raw.write(`data: {"t":"ping"}\n\n`);
@@ -3861,28 +3882,23 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
       }
     }, 15_000);
     const endStream = () => {
-      if (ended) return;
-      ended = true;
-      clearInterval(keepalive);
-      if (unsub) unsub();
-      unregisterDrain();
+      if (ended || !authorized()) return;
       try {
         reply.raw.write("event: end\ndata: ok\n\n");
-        reply.raw.end();
       } catch {
         /* socket gone */
       }
+      closeStream();
     };
     // Client disconnect → only UNSUBSCRIBE; the background run keeps going.
-    req.raw.on("close", () => {
-      ended = true;
-      clearInterval(keepalive);
-      if (unsub) unsub();
-      unregisterDrain();
-    });
-    unregisterDrain = registerStreamDrain(endStream);
+    req.raw.on("close", closeStream);
+    req.raw.on("error", closeStream);
+    reply.raw.on("close", closeStream);
+    reply.raw.on("error", closeStream);
+    unregisterDrain = registerStreamDrain(closeStream);
 
     const send = (f: unknown) => {
+      if (ended || !authorized()) return;
       try {
         reply.raw.write(frame(f));
       } catch {
@@ -3895,6 +3911,11 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
 
     // Attach to the live run, or replay from the durable row.
     unsub = subscribeRun(reconnectId, send, req.auth.tenantId);
+    // subscribeRun replays synchronously before returning its unsubscribe.
+    if (ended) {
+      unsub?.();
+      return reply;
+    }
     if (!unsub) {
       const durable = await readDurableRun(reconnectId, req.auth.tenantId);
       send({ t: "run.started", runId: reconnectId });

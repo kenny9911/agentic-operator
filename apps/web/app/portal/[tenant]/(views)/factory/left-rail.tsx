@@ -1,4 +1,6 @@
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
 
 /**
  * Agent 工厂 — the LEFT RAIL. Collapsible ontology binding/catalog,
@@ -17,8 +19,8 @@ const SECTION_LABEL: React.CSSProperties = { fontSize: 10.5, color: "var(--text-
 
 export function CollapsibleSection({ title, badge, storageKey, defaultOpen = true, children }: { title: ReactNode; badge?: ReactNode; storageKey: string; defaultOpen?: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
-  useEffect(() => { try { const v = localStorage.getItem(storageKey); if (v != null) setOpen(v === "1"); } catch { /* ignore */ } }, [storageKey]);
-  const toggle = () => setOpen((o) => { const n = !o; try { localStorage.setItem(storageKey, n ? "1" : "0"); } catch { /* ignore */ } return n; });
+  useEffect(() => { try { const v = domainStorage.getItem(storageKey); if (v != null) setOpen(v === "1"); } catch { /* ignore */ } }, [storageKey]);
+  const toggle = () => setOpen((o) => { const n = !o; try { domainStorage.setItem(storageKey, n ? "1" : "0"); } catch { /* ignore */ } return n; });
   return (
     <div>
       <button onClick={toggle} style={{ display: "flex", alignItems: "center", gap: 5, width: "100%", padding: "2px 0", marginBottom: 6, background: "none", border: "none", cursor: "pointer", ...SECTION_LABEL }}>

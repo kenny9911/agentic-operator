@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { apiTokens, getDb, memberships, tenants, users } from "@agentic/db";
 import type { PlatformRole, TenantRole } from "@agentic/contracts";
+import { resolveDomainRuntimeParams, resolveRequestDomain } from "./domain-context";
 
 /**
  * P6-AUTH — authenticated request context.
@@ -29,6 +30,14 @@ export interface AuthedContext {
   scopes?: string[];
   /** Stable credential record id; never contains bearer-token material. */
   credentialId?: string;
+  /** Expiry of the verified cookie, retained for long-lived responses. */
+  sessionExpiresAt?: number;
+  /** Product owner; tenantId/tenantSlug remain the domain's runtime namespace. */
+  ownerTenantId?: string;
+  ownerTenantSlug?: string;
+  ownerRole?: TenantRole | null;
+  domainId?: string;
+  domainSlug?: string;
 }
 
 const COOKIE_NAME = "agentic_session";
@@ -234,6 +243,7 @@ async function authenticateCookie(
     platformRole: u.platformRole as PlatformRole,
     ...resolved,
     via: "cookie",
+    sessionExpiresAt: typeof payload.exp === "number" ? payload.exp * 1000 : undefined,
   };
 }
 
@@ -270,7 +280,7 @@ function authenticateDev(req: FastifyRequest): AuthedContext | null {
   };
 }
 
-function authenticateBearer(token: string): AuthedContext | null {
+function authenticateBearer(token: string, touchLastUsed = true): AuthedContext | null {
   const db = getDb();
   const row = db
     .select({ id: apiTokens.id, tenantId: apiTokens.tenantId, scopes: apiTokens.scopes })
@@ -278,7 +288,9 @@ function authenticateBearer(token: string): AuthedContext | null {
     .where(eq(apiTokens.hash, hashToken(token)))
     .all()[0];
   if (!row) return null;
-  db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id)).run();
+  if (touchLastUsed) {
+    db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id)).run();
+  }
   const t = db.select().from(tenants).where(eq(tenants.id, row.tenantId)).all()[0];
   if (!t) return null;
   const scopes = (row.scopes as string[] | null) ?? [];
@@ -320,6 +332,51 @@ export async function authenticate(req: FastifyRequest): Promise<AuthedContext |
   const token = header.slice(7).trim();
   if (!token) return null;
   return authenticateBearer(token);
+}
+
+/**
+ * Revalidate an open response without tenant fallback or credential switching.
+ * A cookie was verified when the request opened; only its expiry and mutable
+ * identity/grants need refreshing. Bearers must still match the exact record
+ * and original token, including after a record's hash is rotated in place.
+ */
+export function refreshRequestAuth(
+  req: FastifyRequest,
+  original: AuthedContext,
+): AuthedContext | null {
+  let identity: AuthedContext;
+  if (original.via === "token") {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) return null;
+    const fresh = authenticateBearer(header.slice(7).trim(), false);
+    if (!fresh || fresh.credentialId !== original.credentialId) return null;
+    identity = fresh;
+  } else {
+    if (!original.userId) return null;
+    if (original.sessionExpiresAt !== undefined && original.sessionExpiresAt <= Date.now()) return null;
+    const db = getDb();
+    const user = db.select().from(users).where(eq(users.id, original.userId)).get();
+    if (!user || user.status !== "active") return null;
+    // Product Domain sessions authenticate through their owner. Older
+    // compatibility namespaces keep their own exact membership authority.
+    const identityTenantId = original.domainId
+      ? (original.ownerTenantId ?? original.tenantId)
+      : original.tenantId;
+    const tenant = db.select().from(tenants).where(eq(tenants.id, identityTenantId)).get();
+    if (!tenant) return null;
+    identity = {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      platformRole: user.platformRole as PlatformRole,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      role: roleFor(user.id, tenant.id),
+      via: original.via,
+      sessionExpiresAt: original.sessionExpiresAt,
+    };
+  }
+  return resolveRequestDomain(req, identity);
 }
 
 /**
@@ -383,7 +440,11 @@ export function assertAuthModeSafe(): void {
 export async function registerAuth(app: FastifyInstance) {
   assertAuthModeSafe();
   app.addHook("onRequest", async (req) => {
-    req.auth = (await authenticate(req)) ?? undefined;
+    const identity = await authenticate(req);
+    req.auth = identity ? resolveRequestDomain(req, identity) : undefined;
+  });
+  app.addHook("preHandler", async (req) => {
+    resolveDomainRuntimeParams(req);
   });
 }
 

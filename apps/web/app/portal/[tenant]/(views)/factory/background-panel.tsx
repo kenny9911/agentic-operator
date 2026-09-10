@@ -1,4 +1,6 @@
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
 
 /**
  * Agent 工厂 — Background tasks 浮出面板（Claude Desktop 质感）。
@@ -536,7 +538,7 @@ export function BackgroundPanel({ tenant, domain, events, running, convId, viewi
     // ontology's acknowledgements in component state.
     setKept(new Set());
     try {
-      const v = localStorage.getItem(keptKey);
+      const v = domainStorage.getItem(keptKey);
       if (v) setKept(new Set(JSON.parse(v) as string[]));
     } catch {
       /* ignore */
@@ -547,7 +549,7 @@ export function BackgroundPanel({ tenant, domain, events, running, convId, viewi
       const next = new Set(prev);
       next.add(name);
       try {
-        localStorage.setItem(keptKey, JSON.stringify([...next]));
+        domainStorage.setItem(keptKey, JSON.stringify([...next]));
       } catch {
         /* ignore */
       }

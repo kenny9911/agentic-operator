@@ -112,16 +112,18 @@ async function issueSession(
 
 function meResponse(ctx: AuthedContext) {
   const mine = ctx.userId ? membershipsFor(ctx.userId) : [];
-  const activeTenant = ctx.tenantSlug
+  const ownerSlug = ctx.ownerTenantSlug ?? ctx.tenantSlug;
+  const ownerId = ctx.ownerTenantId ?? ctx.tenantId;
+  const activeTenant = ownerSlug
     ? {
-        slug: ctx.tenantSlug,
+        slug: ownerSlug,
         name:
           getDb()
             .select({ name: tenants.name })
             .from(tenants)
-            .where(eq(tenants.id, ctx.tenantId))
-            .all()[0]?.name ?? ctx.tenantSlug,
-        role: ctx.role,
+            .where(eq(tenants.id, ownerId))
+            .all()[0]?.name ?? ownerSlug,
+        role: ctx.ownerRole === undefined ? ctx.role : ctx.ownerRole,
       }
     : null;
   return {

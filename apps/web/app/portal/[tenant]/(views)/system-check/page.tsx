@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import Link from "@/lib/portal-link";
+import { useRouter, useSearchParams } from "@/lib/portal-navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type {
   OperatorCheckAssertion,

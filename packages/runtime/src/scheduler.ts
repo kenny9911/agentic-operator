@@ -28,6 +28,7 @@
  */
 
 import { getTenantInngest } from "./client";
+import { isDomainRuntimeSlugActive } from "./domain-scope";
 import { scheduledAgentTriggerName, tenantEventName } from "./event-name";
 import type { AgentSpec } from "./manifest";
 import type { TenantEventAdapter } from "@agentic/agent-kit";
@@ -300,6 +301,9 @@ function buildCronFn(
       triggers: [{ cron: cronExpr }],
     },
     async ({ step }) => {
+      if (!isDomainRuntimeSlugActive(tenantSlug)) {
+        return { ok: false, skipped: true, reason: "domain_unavailable" };
+      }
       // Inngest replays this handler; wrap the send so the event id is
       // memoized per-tick. The downstream agent function will pick up
       // exactly-once via Inngest's idempotency.

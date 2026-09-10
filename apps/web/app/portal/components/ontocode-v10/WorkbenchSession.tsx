@@ -2,7 +2,7 @@
 // OntoCode v10 · 会话页容器：把真实 /v1/ontocode 数据绑定到三栏工作台。
 // 本文件是唯一发请求的地方；展示组件保持纯净。零 mock：所有内容来自服务端记录。
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter } from "@/lib/portal-navigation";
 import type {
   OntoCodeBuildSession,
   OntoCodeConfigurationTask,
@@ -44,6 +44,8 @@ import {
   type OntoCodeArtifactSummaryItem,
 } from "@/lib/hooks/useOntoCodeWorkspace";
 import { useHealth } from "@/lib/hooks/useHealth";
+import { useI18n } from "@/app/portal/lib/preferences-context";
+import { SessionLoadErrorState, isBusinessDomainScopedSessionMiss } from "@/app/portal/components/ontocode-workspace/SessionLoadErrorState";
 import {
   ArtifactInspectorConnected,
   buildIsInProgress,
@@ -169,14 +171,27 @@ function BoundConfigCard(props: {
   );
 }
 
+/** Mount execution controls and streams only after the scoped Session is authorized. */
 export function WorkbenchSessionConnected() {
-  const params = useParams<{ tenant: string; sessionId: string }>();
+  const params = useParams<{ tenant: string; domain?: string; sessionId: string }>();
+  const { t } = useI18n();
+  const sessionQ = useOntoCodeSession(params.tenant, params.sessionId);
+  if (sessionQ.isPending) {
+    return <div role="status" style={{ padding: 24, color: "var(--text-2)" }}>{t("ontocode.workspace.loadingSession")}</div>;
+  }
+  if (sessionQ.isError || !sessionQ.data?.session) {
+    return <SessionLoadErrorState tenantSlug={params.tenant} domainSlug={params.domain} tenantName={params.domain ?? params.tenant} unavailable={!sessionQ.isError || isBusinessDomainScopedSessionMiss(sessionQ.error)} />;
+  }
+  return <AuthorizedWorkbenchSession key={sessionQ.data.session.id} sessionQ={sessionQ} />;
+}
+
+function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof useOntoCodeSession> }) {
+  const params = useParams<{ tenant: string; domain?: string; sessionId: string }>();
   const tenant = params?.tenant ?? "";
   const sessionId = params?.sessionId ?? "";
   const router = useRouter();
 
   const sessionsQ = useOntoCodeSessions(tenant);
-  const sessionQ = useOntoCodeSession(tenant, sessionId);
   const projectsQ = useOntoCodeProjects(tenant);
   const messagesQ = useOntoCodeMessages(tenant, sessionId);
   const jobsQ = useOntoCodeHarnessJobs(tenant, sessionId);
@@ -972,7 +987,7 @@ export function WorkbenchSessionConnected() {
         onResizeInspector={workbench.resizeInspector}
         rail={
           <SessionRail
-            businessDomainLabel={tenant}
+            businessDomainLabel={params.domain ?? tenant}
             ontologyDomainLabel={project?.domain ?? "未绑定"}
             snapshotShort={session?.ontologySnapshotHash?.slice(0, 6) ?? null}
             ontologyFreshness={ontologyFreshnessQ.data ?? null}
@@ -1028,7 +1043,7 @@ export function WorkbenchSessionConnected() {
         }
         crumb={
           <>
-            <span className={styles.crumbSeg}>{tenant}</span>
+            <span className={styles.crumbSeg}>{tenant} / {params.domain ?? tenant}</span>
             <span className={styles.crumbSep}>/</span>
             <span className={styles.crumbHere}>
               {session?.title ?? (anyLoading ? "加载中…" : "Session")}

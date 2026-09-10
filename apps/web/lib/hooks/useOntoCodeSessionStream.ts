@@ -1,4 +1,6 @@
 "use client";
+import { tenantHeaderFor } from "@/lib/hooks/tenant-header";
+
 
 import { useEffect, useRef } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
@@ -75,8 +77,10 @@ export function parseOntoCodeSseFrame(frame: string): OntoCodeSseFrame | null {
  * 会触发服务端读限流（每用户 600 读/分）。
  */
 const INVALIDATE_MIN_INTERVAL_MS = 1_200;
-const pendingInvalidations = new Map<string, ReturnType<typeof setTimeout>>();
-const lastFlushAt = new Map<string, number>();
+const invalidationStates = new WeakMap<QueryClient, {
+  pendingInvalidations: Map<string, ReturnType<typeof setTimeout>>;
+  lastFlushAt: Map<string, number>;
+}>();
 
 /**
  * 节流，不是防抖。
@@ -97,6 +101,12 @@ export function invalidateOntoCodeEvent(
   tenant: string,
   sessionId: string,
 ): void {
+  let state = invalidationStates.get(client);
+  if (!state) {
+    state = { pendingInvalidations: new Map(), lastFlushAt: new Map() };
+    invalidationStates.set(client, state);
+  }
+  const { pendingInvalidations, lastFlushAt } = state;
   const key = `${tenant}::${sessionId}`;
   if (pendingInvalidations.has(key)) return;
   const previous = lastFlushAt.get(key);
@@ -275,7 +285,7 @@ export function useOntoCodeSessionStream(
             cache: "no-store",
             headers: {
               Accept: "text/event-stream",
-              "x-agentic-tenant": tenant,
+              ...tenantHeaderFor(tenant),
               ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
             },
             signal: controller.signal,

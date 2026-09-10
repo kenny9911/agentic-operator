@@ -10,6 +10,10 @@
  * `reconnectRunId`.
  */
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
+import { scopedStorageKey, scopedStreamPath } from "@/lib/portal-scope";
+
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -38,7 +42,7 @@ export interface UseBrainStreamResult {
 }
 
 export const activeRunKey = (tenant: string) =>
-  `ao:factory:activeRun:${tenant}`;
+  scopedStorageKey(`ao:factory:activeRun:${tenant}`);
 
 /** Full effect identity: any changed request must close/re-open the SSE. */
 export function brainStreamRequestKey(
@@ -102,8 +106,8 @@ export function useBrainStream(
 
   const persistActive = useCallback((tenant: string, id: string | null) => {
     try {
-      if (id) localStorage.setItem(activeRunKey(tenant), id);
-      else localStorage.removeItem(activeRunKey(tenant));
+      if (id) domainStorage.setItem(activeRunKey(tenant), id);
+      else domainStorage.removeItem(activeRunKey(tenant));
     } catch {
       /* ignore */
     }
@@ -153,7 +157,7 @@ export function useBrainStream(
 
     const qs = new URLSearchParams({ tenant: req.tenant });
     qs.set("run", req.reconnectRunId);
-    const es = new EventSource(`/factory-stream?${qs.toString()}`, {
+    const es = new EventSource(scopedStreamPath(`/factory-stream?${qs.toString()}`), {
       withCredentials: true,
     });
     esRef.current = es;

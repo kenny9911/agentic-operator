@@ -1,7 +1,9 @@
 "use client";
+import PortalAnchor from "@/lib/portal-anchor";
+
 
 import { useState } from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import {
   Badge,
   Empty,
@@ -294,12 +296,12 @@ function StepPayload({
       >
         {title}
         {artifactId && (
-          <a
+          <PortalAnchor
             href={`/v1/artifacts/${encodeURIComponent(artifactId)}`}
             style={{ float: "right", color: "var(--signal)" }}
           >
             full ↓
-          </a>
+          </PortalAnchor>
         )}
       </div>
       <pre
@@ -385,7 +387,7 @@ function TraceEvidenceList({ events }: { events: RunTraceEvent[] }) {
               {fmtDur(event.durationMs)}
             </span>
             {event.artifactId && (
-              <a
+              <PortalAnchor
                 href={`/v1/artifacts/${encodeURIComponent(event.artifactId)}`}
                 style={{
                   display: "block",
@@ -395,7 +397,7 @@ function TraceEvidenceList({ events }: { events: RunTraceEvent[] }) {
                 }}
               >
                 evidence ↓
-              </a>
+              </PortalAnchor>
             )}
           </div>
         </div>

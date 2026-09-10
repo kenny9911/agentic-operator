@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { requirePermission } from "../../plugins/rbac";
+import { createStreamAuthorization } from "../../plugins/stream-auth";
+import { createSseDrainRegistry } from "../../plugins/sse-drain";
 import {
   listOntoCodeEvents,
   OntoCodeStoreError,
@@ -62,6 +64,7 @@ function parseStreamVisibility(value: unknown): "user" | "debug" | null {
 export async function ontocodeStreamRoutes(
   app: FastifyInstance,
 ): Promise<void> {
+  const registerStreamDrain = createSseDrainRegistry(app);
   app.get<{
     Params: { sessionId: string };
     Querystring: {
@@ -132,6 +135,7 @@ export async function ontocodeStreamRoutes(
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    let unregisterDrain = () => {};
 
     const close = () => {
       if (closed) return;
@@ -139,15 +143,28 @@ export async function ontocodeStreamRoutes(
       if (pollTimer) clearInterval(pollTimer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (timeoutTimer) clearTimeout(timeoutTimer);
+      unregisterDrain();
       try {
         raw.end();
       } catch {
         // Socket may already be closed by the browser or reverse proxy.
       }
     };
+    const authorized = createStreamAuthorization(
+      req,
+      auth,
+      "workflows.read",
+      close,
+    );
+    unregisterDrain = registerStreamDrain(close);
+    req.raw.on("close", close);
+    req.raw.on("error", close);
+    raw.on("close", close);
+    raw.on("error", close);
 
     const write = (frame: string): boolean => {
-      if (closed || raw.destroyed || raw.writableEnded) return false;
+      if (closed || raw.destroyed || raw.writableEnded || !authorized())
+        return false;
       try {
         return raw.write(frame);
       } catch {
@@ -157,7 +174,7 @@ export async function ontocodeStreamRoutes(
     };
 
     const poll = async () => {
-      if (closed || polling) return;
+      if (closed || polling || !authorized()) return;
       polling = true;
       try {
         let hasMore = true;
@@ -199,6 +216,7 @@ export async function ontocodeStreamRoutes(
     };
 
     await poll();
+    if (closed) return reply;
     pollTimer = setInterval(() => void poll(), POLL_MS);
     heartbeatTimer = setInterval(() => {
       write(`: heartbeat ${Date.now()}\n\n`);
@@ -207,9 +225,6 @@ export async function ontocodeStreamRoutes(
     pollTimer.unref?.();
     heartbeatTimer.unref?.();
     timeoutTimer.unref?.();
-
-    req.raw.on("close", close);
-    req.raw.on("error", close);
   });
 }
 

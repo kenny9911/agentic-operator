@@ -3,7 +3,7 @@
 /** Settings only exposes sections backed by working persistence/API routes. */
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "@/lib/portal-navigation";
 import { Icon, ViewHeader } from "@/app/portal/components";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { useSession } from "@/app/portal/lib/session-context";
