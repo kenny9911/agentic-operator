@@ -27,6 +27,7 @@ import { assertDomainRuntimeActive } from "./domain-scope";
 
 import { appIdForTenant, getTenantInngest } from "./client";
 import { runAction, type LlmTurnTrace, type StepOutput } from "./step-engine";
+import { usesGeneratedCodeActFailurePolicy } from "./codeact-failure-policy";
 import {
   buildToolCallAuditRecord,
   type ProbeVerificationResult,
@@ -1072,11 +1073,14 @@ function resolveActionFailureOutcome(
   if (isNonRetriableFailure(failure) && !options?.reclassifyControlFlow)
     throw failure;
   const inherited = (failure as ActionReturnedFailure | null)?.output as
-    | { meta?: { failureResolution?: unknown } }
+    | { meta?: { failureResolution?: unknown; codeActFailureResolution?: ActionFailureResolution } }
     | undefined;
   const inheritedResolution = inherited?.meta?.failureResolution;
+  const codeActResolution = inherited?.meta?.codeActFailureResolution;
   const resolution =
-    action.on_error === undefined &&
+    codeActResolution && usesGeneratedCodeActFailurePolicy(action.on_error)
+      ? codeActResolution
+      : action.on_error === undefined &&
     inheritedResolution &&
     typeof inheritedResolution === "object" &&
     !Array.isArray(inheritedResolution)
@@ -1828,6 +1832,15 @@ export function registerAgent(
 
       const factoryInputBindings = (agent.factory_input_bindings ??
         []) as FactoryInputBinding[];
+      const codeActValidatesEventInput = agent.generated === true
+        && agent.codeExecuted === true
+        && agent.actions.length === 1
+        && agent.actions[0]?.type === "logic"
+        && !agent.actions[0].input_binding
+        && usesGeneratedCodeActFailurePolicy(agent.actions[0].on_error)
+        && !agent.compensation_event
+        && (agent.tool_use ?? []).length === 0
+        && factoryInputBindings.every((binding) => binding.kind === "event");
       const factoryToolConfigs = Object.fromEntries(
         (agent.tool_use ?? []).map((entry) => [entry.name, entry.config ?? {}]),
       );
@@ -1839,6 +1852,7 @@ export function registerAgent(
           toolProfileRefs: agent.factory_tool_profile_refs ?? {},
           env: process.env,
           eventName: event.name,
+          deferEventValueValidation: codeActValidatesEventInput,
         },
       );
       const inputBindingState = initializedBindings.state;
@@ -3980,7 +3994,7 @@ export function registerAgent(
                   .run(),
               );
 
-              const res = await runWithTraceContext(
+              let res = await runWithTraceContext(
                 { correlationId, agentName: agent.name, tenantSlug, runId },
                 () =>
                   runAction({
@@ -4058,6 +4072,7 @@ export function registerAgent(
                     autoResolveManual: true,
                     // #REDESIGN FU1 — real durable memory for generated-code execution (delivered tier).
                     memory: runMemory,
+                    codeActInputValidationPending: initializedBindings.deferredIssues.length > 0,
                     // Studio/operator structured trace + terminal-output
                     // validation contract (v2) + billing attribution.
                     stepId: sid,
@@ -4066,6 +4081,24 @@ export function registerAgent(
                     usageAttribution,
                   }),
               ); // #SCALE-TRACE — ambient correlationId/agentName/tenantSlug/runId for nested tools/logs
+              if (res.ok && initializedBindings.deferredIssues.length > 0) {
+                const failure = new InputBindingResolutionError(initializedBindings.deferredIssues);
+                // Preserve returned data and the actual execution receipt for
+                // diagnosis, but persist a failed step before publishing any
+                // completion or interpreting candidate emission intents.
+                res = {
+                  ...res,
+                  ok: false,
+                  meta: {
+                    ...res.meta,
+                    emitted: [],
+                    error: "input_binding_validation_failed",
+                    message: failure.message,
+                    inputBindingIssues: initializedBindings.deferredIssues,
+                    codeActFailureResolution: classifyActionFailure({ policy: "terminal", failure }),
+                  },
+                };
+              }
               codeReceipt = codeActExecutionReceiptFromMeta(res.meta);
               if (res.model) runModel = res.model;
               const sEnded = Date.now();
@@ -4513,6 +4546,13 @@ export function registerAgent(
           }
         }
 
+        // A CodeAct handler may reject malformed declared input itself. A
+        // handler that ignores that contract must never commit its buffered
+        // success events; validate before accumulating any emitted intent.
+        if (stepOutcome.ok && initializedBindings.deferredIssues.length) {
+          await abortForInputBindings(initializedBindings.deferredIssues);
+        }
+
         const skillCheckpoint = (stepOutcome.meta as { skillCheckpoint?: SkillExecutionCheckpoint } | undefined)?.skillCheckpoint;
         if (skillSession) await advanceSkillCheckpoint(skillSession, skillCheckpoint as SkillExecutionCheckpoint);
 
@@ -4791,12 +4831,13 @@ export function registerAgent(
       );
       const outbound = selectedEmits.map((intent) => ({
         intent,
-        // An explicit emit payload is authoritative for that event. The incoming envelope is still
-        // carried forward, while the aggregate foreach receipt stays internal unless selected.
+        // An explicit CodeAct payload is authoritative for that event; do not
+        // reintroduce unselected trigger fields. Host correlation/subject and
+        // provenance metadata are assembled separately below.
         // v2 payloads are fully authored by output bindings — no inbound
         // carry-forward may pollute the exact mapped shape.
         assembled: assembleEmitPayload({
-          incoming: usesV2Definition ? {} : data,
+          incoming: usesV2Definition || (agent.generated === true && agent.codeExecuted === true && intent.payload !== undefined) ? {} : data,
           lastResult: intent.payload ?? lastResult,
           lastResultIsEnvelope: legacyEnvelopeEvents.has(intent.event),
           meta: {

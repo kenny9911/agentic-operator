@@ -39,6 +39,7 @@ import {
   type GeneratedCodeHostRuntime,
 } from "./codeact";
 import type { CodeActDockerTransport } from "./codeact-container";
+import { codeActFailureResolution } from "./codeact-failure-policy";
 import { buildSessionSkillTools, buildSessionSkillScriptTool, SKILL_SCRIPT_TOOL_NAME, type SkillSession } from "@agentic/skills";
 import {
   advanceSkillCheckpoint,
@@ -483,6 +484,9 @@ export interface StepInput {
   /** Optional step-safe host bindings for generated-code RPC. Production `invoke` must be supplied
    * by a durable caller; missing bindings fail the generated-code run rather than returning null. */
   generatedCodeHostRuntime?: GeneratedCodeHostRuntime;
+  /** Host-only guard while a pure CodeAct handler validates malformed event
+   * input. No RPC capability may run before this contract is satisfied. */
+  codeActInputValidationPending?: boolean;
   /** Trusted CodeAct executor seam used by focused tests. Production resolves
    * the Docker socket transport inside runGeneratedCodeIsolated. */
   generatedCodeContainerTransport?: CodeActDockerTransport;
@@ -3643,6 +3647,7 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
               correlationId: ctx.correlationId,
               subject: ctx.subject,
               memory: input.memory,
+              denyHostCapabilities: input.codeActInputValidationPending === true,
               skillSession: input.skillSession,
               runId: input.runId,
               timeoutMs: input.resolvedTimeoutMs,
@@ -3747,6 +3752,11 @@ async function runActionCore(input: StepInput): Promise<StepOutput> {
                 codeExecuted: exec.executorStarted,
                 codeExecutionFailure: exec.failure,
                 codeExecutionError: exec.error,
+                message: exec.error,
+                codeActFailureResolution: codeActFailureResolution({
+                  ...exec,
+                  inputValidationPending: input.codeActInputValidationPending === true,
+                }),
                 isolation: exec.executorStarted ? exec.isolation : null,
                 codeSha256: exec.codeSha256,
                 codeAttestation: exec.attestation,

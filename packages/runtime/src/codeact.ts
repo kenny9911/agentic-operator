@@ -394,6 +394,9 @@ export interface RunGeneratedCodeOptions {
   memoryMb?: number;
   production?: GeneratedCodeProductionPolicy;
   hostRuntime?: GeneratedCodeHostRuntime;
+  /** Trusted host guard for pending input validation; candidate input cannot
+   * disable it. Deny every RPC before models/tools/memory/invoke dispatch. */
+  denyHostCapabilities?: boolean;
   /** Server-owned host classification. `fixture` is for exact regression
    * artifacts: it invokes the supplied deterministic host adapter but records
    * the call as fixture evidence, never as a live integration. */
@@ -877,6 +880,9 @@ export async function runGeneratedCodeIsolated(
     method: CodeActRpcMethod,
     args: unknown[],
   ): Promise<unknown> => {
+    if (options.denyHostCapabilities === true) {
+      throw new Error("CodeAct host capabilities are unavailable while input validation is pending");
+    }
     switch (method) {
       case "reason": {
         const systemPrompt =

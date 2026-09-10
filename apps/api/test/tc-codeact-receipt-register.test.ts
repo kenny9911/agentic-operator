@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { projectPlanToActions, type GeneratedAgentSpec } from "@agentic/agent-factory";
 import {
   AgentSchema,
   DockerSocketCodeActTransport,
@@ -11,6 +13,7 @@ import {
 } from "@agentic/runtime";
 import {
   agents,
+  events,
   factorySandboxAttempts,
   getDb,
   runs,
@@ -299,6 +302,144 @@ describe.sequential("registerAgent CodeAct receipt durability", () => {
       codeAttestation: "sandbox_not_required",
       codeExecutionFailure: null,
     });
+  });
+
+  function boundCodeAct(handler: string, overrides: Record<string, unknown> = {}) {
+    // Use the real renderer: generated CodeAct always carries its four-branch
+    // tagged error policy, including the immutable candidate exercised live.
+    const actions = projectPlanToActions({
+      key: "ReceiptReplay", actionName: "ReceiptReplay", slug: "receipt-replay-agent",
+      short: "ReceiptReplay", domainId: targetDomainId, nameZh: "Receipt replay",
+      kind: "llm", trigger: ["START"], emit: ["DONE"], tools: [], unresolvedTools: [],
+      objects: [], systemPrompt: "", userPrompt: "", steps: [], ruleRefs: [],
+      retries: 3, hitl: false, confidence: 1, promptSource: "llm", codeExecuted: true,
+    } as GeneratedAgentSpec);
+    return registerAgent(AgentSchema.parse({
+      id: "receipt-replay-agent", name: "receiptReplayAgent", actor: ["Agent"],
+      trigger: ["START"], triggered_event: ["DONE"], generated: true, codeExecuted: true,
+      typescript_code: `import { defineAgent } from "@agentic/runtime"; export const agent = defineAgent({ name: "receiptReplayAgent", async handler(input, ctx) { ${handler} } });`,
+      factory_domain_id: targetDomainId, factory_target_domain_id: targetDomainId, factory_action_name: "ReceiptReplay",
+      factory_execution_scope: { kind: "sandbox", target_domain_id: targetDomainId, candidate_fingerprint: candidateFingerprint, attempt_id: attemptId },
+      factory_input_bindings: [{ field: "message", type: "String", required: true, kind: "event", event_path: "message" }],
+      actions,
+      ...overrides,
+    }), { tenantId, tenantSlug, workflowVersionId: makeId("wfv") }) as unknown as typeof registered;
+  }
+
+  async function invokeBoundCodeAct(handler: string, payload: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
+    const emitted: unknown[] = [];
+    const subject = `bound-codeact-${randomUUID()}`;
+    let failure: unknown;
+    try {
+      await boundCodeAct(handler, overrides).fn({
+        attempt: 3,
+        event: { name: `${tenantSlug}/START`, data: { ...payload, subject } },
+        step: {
+          run: async (_id: unknown, fn: (...args: unknown[]) => unknown, ...args: unknown[]) => fn(...args),
+          sendEvent: async (_id: unknown, event: unknown) => { emitted.push(event); },
+        },
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+      });
+    } catch (error) { failure = error; }
+    const row = getDb().select().from(runs).where(and(eq(runs.agentId, dbAgentId), eq(runs.subject, subject))).get();
+    return { failure, emitted, row };
+  }
+
+  it.each([{}, { message: null }, { message: 7 }, { message: "" }, { message: "   " }])("lets the actual CodeAct handler reject invalid declared input %j before any emission", async (payload) => {
+    const result = await invokeBoundCodeAct(`
+      if (typeof input.message !== "string" || input.message.trim().length === 0) throw new Error("[terminal] invalid_input");
+      await ctx.emit("DONE", { message: input.message }); return { message: input.message };
+    `, payload);
+    expect(String(result.failure)).toContain("invalid_input");
+    expect(result.row).toMatchObject({ status: "failed", codeExecuted: true, codeIsolation: "isolated_container", codeExecutionFailure: "candidate_failed" });
+    expect(result.row?.errorMessage).toContain("invalid_input");
+    expect((result.failure as Error)?.name).toBe("NonRetriableError");
+    expect(result.row?.emittedEventId).toBeNull();
+    expect(result.emitted).toEqual([]);
+    const step = getDb().select().from(steps).where(eq(steps.runId, result.row!.id)).get()!;
+    expect(step.status).toBe("failed");
+  });
+
+  it.each([{}, { message: null }, { message: 7 }, { message: "" }, { message: "   " }])("blocks an ignoring CodeAct handler from committing success for invalid input %j", async (payload) => {
+    const result = await invokeBoundCodeAct('await ctx.emit("DONE", { message: "invented success" }); return { message: "invented success" };', payload);
+    expect(String(result.failure)).toContain("message");
+    expect(result.row).toMatchObject({ status: "failed", codeRan: true, codeExecuted: true, codeIsolation: "isolated_container" });
+    expect(result.row?.emittedEventId).toBeNull();
+    expect(result.emitted).toEqual([]);
+    const step = getDb().select().from(steps).where(eq(steps.runId, result.row!.id)).get()!;
+    expect(step.status).toBe("failed");
+    // The failed output artifact retains returned data and the candidate's
+    // attempted emit marker for diagnosis; neither reaches an event boundary.
+    expect(JSON.parse(readFileSync(step.outputRef!, "utf8"))).toMatchObject({ message: "invented success" });
+  });
+
+  it("preserves valid raw whitespace and excludes undeclared fields in the actual CodeAct handler", async () => {
+    const result = await invokeBoundCodeAct(`
+      if (Object.keys(input).join(",") !== "message") throw new Error("unexpected input fields");
+      if (input.message !== "  original message  ") throw new Error("input changed");
+      await ctx.emit("DONE", { message: input.message }); return { message: input.message };
+    `, { message: "  original message  ", extra: "must stay outside handler" });
+    expect(result.failure).toBeUndefined();
+    expect(result.row).toMatchObject({ status: "ok", codeRan: true, codeExecuted: true, codeIsolation: "isolated_container" });
+    expect(result.emitted).toHaveLength(1);
+    expect(JSON.stringify(result.emitted)).toContain("  original message  ");
+    expect(JSON.stringify(result.emitted)).not.toContain("must stay outside handler");
+    const sent = result.emitted[0] as { data: Record<string, unknown> };
+    expect(sent.data).toMatchObject({
+      message: "  original message  ",
+      source_agent: "receiptReplayAgent", source_run: result.row!.id,
+      _meta: { subject: result.row!.subject, correlationId: result.row!.correlationId, sourceRun: result.row!.id },
+    });
+    const stored = getDb().select().from(events).where(eq(events.id, result.row!.emittedEventId!)).get()!;
+    const [file, offset] = stored.payloadRef!.split("#");
+    const ledger = JSON.parse(readFileSync(file!, "utf8").slice(Number(offset)).split("\n")[0]!);
+    expect(ledger.data).not.toHaveProperty("extra");
+    expect(ledger.data.message).toBe("  original message  ");
+    expect(ledger.data._meta).toMatchObject({ subject: result.row!.subject, correlationId: result.row!.correlationId });
+  });
+
+  it("keeps validation ahead of execution when the manifest does not select generated CodeAct", async () => {
+    const result = await invokeBoundCodeAct('throw new Error("must not execute");', { message: "   " }, { codeExecuted: false });
+    expect((result.failure as Error)?.name).toBe("InputBindingResolutionError");
+    expect(result.row).toMatchObject({ status: "failed", codeExecuted: null, codeIsolation: null });
+    expect(result.emitted).toEqual([]);
+  });
+
+  it.each(['ctx.memory.put("key", "must not persist")', 'ctx.reason("must not invoke a model", input)'])("blocks %s through actual registration while malformed input validation is pending", async (rpc) => {
+    const result = await invokeBoundCodeAct(`await ${rpc}; return {};`, { message: null });
+    expect(result.failure).toBeDefined();
+    expect((result.failure as Error).name).toBe("NonRetriableError");
+    expect(String(result.failure)).toContain("invalid declared input blocked CodeAct rpc_failed");
+    expect(result.row).toMatchObject({ status: "failed", codeExecuted: true, codeExecutionFailure: "rpc_failed", emittedEventId: null });
+    expect(result.emitted).toEqual([]);
+  });
+
+  it.each(["[park] wait", "[retry] later"])("does not let pending invalid input use handler policy %s", async (message) => {
+    const result = await invokeBoundCodeAct(`throw new Error(${JSON.stringify(message)});`, { message: null });
+    expect((result.failure as Error).name).toBe("NonRetriableError");
+    expect(String(result.failure)).toContain("invalid declared input blocked CodeAct candidate_failed (handler)");
+    expect(result.row).toMatchObject({ status: "failed", codeExecuted: true, emittedEventId: null });
+    expect(result.emitted).toEqual([]);
+  });
+
+  it("does not defer validation for a custom error policy that could emit", async () => {
+    const result = await invokeBoundCodeAct('throw new Error("must not execute");', { message: null }, {
+      actions: [{ order: "1", name: "executeGeneratedHandler", type: "logic", on_error: [{ default: "continue", emit_event: "DONE", default_result: {} }] }],
+    });
+    expect((result.failure as Error).name).toBe("InputBindingResolutionError");
+    expect(result.row).toMatchObject({ status: "failed", codeExecuted: null, emittedEventId: null });
+    expect(result.emitted).toEqual([]);
+  });
+
+  it.each([
+    { typescript_code: 'throw new Error("[terminal] module_load");' },
+    { typescript_code: 'defineAgent({ handler() { return { toJSON() { throw new Error("[terminal] serialization"); } }; } });' },
+  ])("does not classify a terminal-looking setup/result error as a terminal handler rejection", async (override) => {
+    const result = await invokeBoundCodeAct("return {};", { message: "valid" }, override);
+    expect(result.failure).toBeDefined();
+    expect((result.failure as Error).name).not.toBe("NonRetriableError");
+    expect(result.row).toMatchObject({ status: "failed", codeExecuted: true, codeExecutionFailure: "candidate_failed", emittedEventId: null });
+    expect(result.emitted).toEqual([]);
   });
 
   it("does not report the run as ok until the downstream event send is accepted", async () => {

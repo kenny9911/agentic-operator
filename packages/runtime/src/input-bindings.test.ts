@@ -25,6 +25,28 @@ const referenceContext = {
 };
 
 describe("runtime input binding executor", () => {
+  it.each([undefined, null, "", "   ", 7])("retains declared CodeAct input %s for handler rejection while deferring its value issue", (message) => {
+    const eventBindings: FactoryInputBinding[] = [{ field: "message", type: "String", required: true, kind: "event", event_path: "payload.message" }];
+    const event = { payload: message === undefined ? {} : { message }, undeclared: "excluded" };
+    const result = initializeInputBindings(eventBindings, event, {
+      toolConfigs: {}, toolProfileRefs: {}, deferEventValueValidation: true,
+    });
+    expect(result.issues).toEqual([]);
+    expect(result.deferredIssues).toHaveLength(1);
+    expect(result.state.data).toEqual(message === undefined ? {} : { message });
+    expect(initializeInputBindings(eventBindings, event).issues).toHaveLength(1);
+  });
+
+  it("does not defer unsafe CodeAct paths or unresolved configuration references", () => {
+    const result = initializeInputBindings([
+      { field: "message", type: "String", required: true, kind: "event", event_path: "constructor.message" },
+      { field: "api_key", type: "String", required: true, kind: "secret", reference: "tool:missing:api_key_env" },
+    ], {}, { toolConfigs: {}, toolProfileRefs: {}, deferEventValueValidation: true });
+    expect(result.issues.map((issue) => issue.code)).toEqual(["input_binding_path_invalid", "input_reference_unresolved"]);
+    expect(result.deferredIssues).toEqual([]);
+    expect(result.state.data).toEqual({});
+  });
+
   it("resolves event and reference bindings without exposing secret/config values", () => {
     const { state, issues } = initializeInputBindings(
       bindings,

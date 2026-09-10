@@ -18,6 +18,30 @@ async function execute(code: string) {
 }
 
 describe("bootstrap-owned handler stage", () => {
+  it.each([
+    'ctx.reason("prompt", input)',
+    'ctx.tool("meta.ping", {})',
+    'ctx.memory.get("key")',
+    'ctx.memory.put("key", "value")',
+    'ctx.memory.delete("key")',
+    'ctx.memory.search("key")',
+    'ctx.invoke("child", {})',
+    'ctx.spawn("task", {})',
+    'ctx.skills.list({})',
+  ])("denies %s before host dispatch while declared input validation is pending", async (rpc) => {
+    const dispatch = vi.fn(async () => null);
+    const result = await runGeneratedCodeIsolated(`defineAgent({ async handler(input, ctx) { await ${rpc}; return {}; } });`, { message: null }, {
+      ...codeActContainerTestOptions(), tenantSlug: "handler-stage-sb", tenantId: "ten-handler-stage-test",
+      timeoutMs: 5_000, allowedTools: ["meta.ping"], hostRuntimeKind: "fixture", denyHostCapabilities: true,
+      hostRuntime: { reason: dispatch, tool: dispatch, invoke: dispatch, spawn: dispatch as never },
+      memory: { get: dispatch as never, put: dispatch as never, delete: dispatch as never, search: dispatch as never },
+    });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ failure: "rpc_failed", executorStarted: true, containerEvidence: { removed: true, absenceVerified: true } });
+    if (!result.ok) expect(result.error).toContain("input validation is pending");
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("does not mistake a module-load terminal error for a started handler", async () => {
     const result = await execute('const candidateClaim = { handlerStarted: true }; throw new Error("[terminal] module_load_failure");');
     expect(result).toMatchObject({
