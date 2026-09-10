@@ -3794,6 +3794,7 @@ describe("generation readiness gates", () => {
       ).items.$ref,
     ).toBe("#/$defs/planStep");
     const errorPolicy = schema.properties.plan.items.properties.errorPolicy as {
+      description: string;
       items: {
         properties: { do: { enum: string[] }; suppressEmit: { type: string } };
       };
@@ -3802,6 +3803,17 @@ describe("generation readiness gates", () => {
       expect.arrayContaining(["retry", "terminal", "continue"]),
     );
     expect(errorPolicy.items.properties.suppressEmit.type).toBe("boolean");
+    expect(errorPolicy.description).toContain("与 onError 互斥");
+    expect(
+      (schema.properties.plan.items.properties.onError as { description: string }).description,
+    ).toContain("与 errorPolicy 互斥");
+    const toolArguments = schema.properties.plan.items.properties.toolArguments as {
+      type: string; minProperties?: number; description: string;
+    };
+    expect(toolArguments.type).toBe("object");
+    expect(toolArguments.minProperties ?? 0).toBe(0);
+    expect(toolArguments.description).toContain("零参数工具必须显式写 {}");
+    expect(toolArguments.description).toContain("省略不等于 {}");
 
     const ctx = context(validOntology());
     const unsafe = await createTool.execute(

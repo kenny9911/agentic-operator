@@ -1,4 +1,5 @@
 import { domainsZh } from "./domains";
+import { candidateTestsZh } from "./candidate-tests";
 import { skillsZh } from "./skills";
 import type { Dict } from "./types";
 
@@ -6,6 +7,7 @@ import type { Dict } from "./types";
  * Chinese UI strings — must mirror `en.ts`'s key set exactly (parity test).
  */
 export const zh = {
+  candidateTests: candidateTestsZh,
   domains: domainsZh,
   skills: skillsZh,
   common: {

@@ -44,6 +44,41 @@ describe("buildOntologyBundle", () => {
     expect(r.used).toHaveLength(3);
   });
 
+  it("preserves artifact buckets when split-file prefixes mention workflows, agents or links", () => {
+    const files = [
+      file("linked-actions.json", [{ name: "linkPurchase" }]),
+      file("workflow.events.json", [{ name: "PurchaseLinked" }]),
+      file("agent.objects.json", [{ name: "Purchase" }]),
+    ];
+    expect(files.every(({ name, text }) => classifyAttachment(name, text) === "ontology")).toBe(true);
+    const { bundle } = buildOntologyBundle(files);
+    expect(bundle).toEqual({
+      actions: [{ name: "linkPurchase" }], events: [{ name: "PurchaseLinked" }],
+      dataObjects: [{ name: "Purchase" }], rules: [],
+    });
+  });
+
+  it("uses the final explicit artifact name for graph and workflow exports too", () => {
+    const { bundle } = buildOntologyBundle([
+      file("purchase.actions.links_v0_4_000.json", [{ from: "a", to: "E" }]),
+      file("purchase.events.workflows.json", [{ name: "purchase" }]),
+      file("agent.events_v0_4_000.json", []),
+    ]);
+    expect(bundle).toEqual({
+      actions: [], events: [], rules: [], dataObjects: [],
+      links: [{ from: "a", to: "E" }], workflow: [{ name: "purchase" }],
+    });
+  });
+
+  it("keeps legacy artifact precedence for export names without separators", () => {
+    const { bundle } = buildOntologyBundle([
+      file("workflowEvents.json", [{ name: "E" }]),
+      file("agentObjects.json", [{ name: "O" }]),
+      file("linkedActions.json", [{ name: "a" }]),
+    ]);
+    expect(bundle).toEqual({ actions: [{ name: "a" }], events: [{ name: "E" }], rules: [], dataObjects: [{ name: "O" }] });
+  });
+
   it("preserves supplied link graphs and workflow rows without flattening their fields", () => {
     const links = [{ id: "approved-link", from: "a", to: "E", metadata: { approved: true } }];
     const workflow = [{ name: "purchase", stages: [{ id: "review" }] }];

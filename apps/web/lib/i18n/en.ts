@@ -1,4 +1,5 @@
 import { domainsEn } from "./domains";
+import { candidateTestsEn } from "./candidate-tests";
 import { skillsEn } from "./skills";
 import type { Dict } from "./types";
 
@@ -9,6 +10,7 @@ import type { Dict } from "./types";
  * set exactly — enforced by `parity.test.ts`.
  */
 export const en = {
+  candidateTests: candidateTestsEn,
   domains: domainsEn,
   skills: skillsEn,
   common: {

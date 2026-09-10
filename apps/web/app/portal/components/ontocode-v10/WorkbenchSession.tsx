@@ -44,6 +44,7 @@ import {
   type OntoCodeArtifactSummaryItem,
 } from "@/lib/hooks/useOntoCodeWorkspace";
 import { useHealth } from "@/lib/hooks/useHealth";
+import { useCan } from "@/lib/hooks/useMe";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { SessionLoadErrorState, isBusinessDomainScopedSessionMiss } from "@/app/portal/components/ontocode-workspace/SessionLoadErrorState";
 import {
@@ -95,6 +96,7 @@ import { SessionRail } from "./SessionRail";
 import { ActionCardView } from "./ActionCards";
 import { Composer, GuidedFlow } from "./GuidedFlow";
 import { useAssistantWait } from "./use-assistant-wait";
+import { CandidateTestInput, candidateTestTurn } from "./CandidateTestInput";
 
 const TONE_CHIP_CLASS: Record<string, string> = {
   ok: "",
@@ -186,6 +188,8 @@ export function WorkbenchSessionConnected() {
 }
 
 function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof useOntoCodeSession> }) {
+  const { t } = useI18n();
+  const can = useCan();
   const params = useParams<{ tenant: string; domain?: string; sessionId: string }>();
   const tenant = params?.tenant ?? "";
   const sessionId = params?.sessionId ?? "";
@@ -537,6 +541,17 @@ function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof 
     session?.phase === "completed" ||
     registrationRetired;
 
+  const openCandidateTests = () => {
+    setInspectorOpen(true);
+    setInspectorTab("tests");
+  };
+  const candidateTestDisabledReason = !can("workflows.write")
+    ? t("candidateTests.noPermission")
+    : readOnly ? t("candidateTests.readOnly")
+    : session?.autonomyMode === "guide" ? t("candidateTests.guide")
+    : jobs.some(harnessJobIsInProgress) || sendRawTurn.isPending || sendTurn.isPending
+      ? t("candidateTests.active") : null;
+
   const renderCard = (item: Extract<FlowItemVM, { kind: "actionCard" }>) => {
     const card = item.card;
     const recommendation = card.recommendation;
@@ -655,6 +670,7 @@ function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof 
             }
             onPrimary={() => {
               if (duplicateBuild) return;
+              if (action.turnAction === "run_tests") { openCandidateTests(); return; }
               sendRawTurn.mutate({
                 text: action.label,
                 behavior: "execute",
@@ -853,6 +869,7 @@ function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof 
           sendRawTurn.error instanceof Error ? sendRawTurn.error.message : null
         }
         onAnswer={(answer) => {
+          if (resumeAction === "run_tests") { openCandidateTests(); return; }
           if (waitingJobForCard && resumeAction) {
             sendRawTurn.mutate({
               text: answer,
@@ -1274,6 +1291,24 @@ function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof 
                   }
                 />
               ) : inspectorTab === "tests" ? (
+                <div style={{ height: "100%", overflow: "auto" }}>
+                  <CandidateTestInput
+                    candidateRevision={candidateHeadQ.data?.packageVersion ? candidateHeadQ.data.head?.revision ?? null : null}
+                    disabledReason={candidateTestDisabledReason}
+                    onSubmit={async (cases) => {
+                      if (candidateTestDisabledReason) throw new Error(candidateTestDisabledReason);
+                      const reviewed = candidateHeadQ.data;
+                      const fresh = await candidateHeadQ.refetch();
+                      if (fresh.error) throw fresh.error;
+                      if (!reviewed?.head || !reviewed.packageVersion || !fresh.data?.head ||
+                        fresh.data.head.revision !== reviewed.head.revision ||
+                        fresh.data.packageVersion?.id !== reviewed.packageVersion.id) {
+                        throw new Error(t("candidateTests.candidateChanged"));
+                      }
+                      const receipt = await sendRawTurn.mutateAsync(candidateTestTurn(cases, t("candidateTests.run")));
+                      return receipt.command?.requiresHuman ? "approval" : "queued";
+                    }}
+                  />
                 <InspectorTestsView
                   overview={suiteQ.data?.overview ?? null}
                   jobs={jobs}
@@ -1284,6 +1319,7 @@ function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof 
                       : null
                   }
                 />
+                </div>
               ) : inspectorTab === "evidence" ? (
                 <InspectorEvidenceView
                   evidence={evidenceQ.data?.items ?? []}

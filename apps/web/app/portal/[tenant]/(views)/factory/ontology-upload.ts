@@ -50,11 +50,20 @@ const FIELD_ALIASES: Record<keyof OntologyBundle, readonly string[]> = {
 
 function arrayBucket(name: string): keyof OntologyBundle {
   const lower = name.toLowerCase();
-  if (/link/.test(lower)) return "links";
-  if (/workflow|agent/.test(lower) && !/action/.test(lower)) return "workflow";
+  // The final artifact token wins over scenario prefixes (workflow.events.json)
+  // and descriptive words (linked-actions.json). Keep legacy substring matching
+  // below for older exports whose names have no standalone artifact token.
+  for (const token of lower.split(/[^a-z0-9]+/).reverse()) {
+    for (const [key, aliases] of Object.entries(FIELD_ALIASES)) {
+      if (aliases.some((alias) => alias.toLowerCase() === token)) return key as keyof OntologyBundle;
+    }
+  }
   if (/event/.test(lower)) return "events";
   if (/rule/.test(lower)) return "rules";
   if (/object|entit/.test(lower)) return "dataObjects";
+  if (/action/.test(lower)) return "actions";
+  if (/link/.test(lower)) return "links";
+  if (/workflow|agent/.test(lower)) return "workflow";
   return "actions";
 }
 
