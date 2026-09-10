@@ -22,6 +22,7 @@ import {
   type TenantRole,
 } from "@agentic/contracts";
 import { requirePermission, writeAudit } from "../../plugins/rbac";
+import { accountsMode, rejectManagedAccountMutation, AccountAuthorityError } from "../../services/account-authority";
 
 function adminCount(tenantId: string): number {
   return getDb()
@@ -72,6 +73,7 @@ export async function membersRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /v1/members ────────────────────────────────────────────────────
   app.post("/members", async (req, reply) => {
     const ctx = requirePermission(req, "members.write");
+    if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
     if (!ctx.tenantId) return reply.fail("no_tenant", "no active tenant", 400);
     const body = AddMemberBody.parse(req.body);
     const email = body.email.toLowerCase();
@@ -85,6 +87,7 @@ export async function membersRoutes(app: FastifyInstance): Promise<void> {
         404,
       );
     }
+    rejectManagedAccountMutation(target.id);
     const existing = db
       .select({ role: memberships.role })
       .from(memberships)
@@ -115,8 +118,10 @@ export async function membersRoutes(app: FastifyInstance): Promise<void> {
   // ── PATCH /v1/members/:userId ───────────────────────────────────────────
   app.patch<{ Params: { userId: string } }>("/members/:userId", async (req, reply) => {
     const ctx = requirePermission(req, "members.write");
+    if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
     if (!ctx.tenantId) return reply.fail("no_tenant", "no active tenant", 400);
     const { userId } = req.params;
+    rejectManagedAccountMutation(userId);
     const body = UpdateMemberRoleBody.parse(req.body);
     const db = getDb();
 
@@ -147,8 +152,10 @@ export async function membersRoutes(app: FastifyInstance): Promise<void> {
   // ── DELETE /v1/members/:userId ──────────────────────────────────────────
   app.delete<{ Params: { userId: string } }>("/members/:userId", async (req, reply) => {
     const ctx = requirePermission(req, "members.write");
+    if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
     if (!ctx.tenantId) return reply.fail("no_tenant", "no active tenant", 400);
     const { userId } = req.params;
+    rejectManagedAccountMutation(userId);
     const db = getDb();
 
     const current = db

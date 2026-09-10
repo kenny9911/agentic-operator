@@ -70,10 +70,13 @@ export function useChangePassword() {
       currentPassword: string;
       newPassword: string;
     }) => {
-      const result = await callV1<{ ok?: unknown }>("/v1/me/password", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const result = await callV1<{ ok?: unknown; signInRequired?: boolean }>(
+        "/v1/me/password",
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
       if (result.ok !== true) {
         throw new ApiResponseError(
           "/v1/me/password",
@@ -83,6 +86,8 @@ export function useChangePassword() {
           { clientKind: "passwordChangeUnconfirmed" },
         );
       }
+      if (result.signInRequired && typeof window !== "undefined")
+        window.location.href = "/sign-in";
       return { ok: true as const };
     },
   });

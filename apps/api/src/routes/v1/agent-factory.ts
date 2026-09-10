@@ -1,3 +1,4 @@
+import { createStreamAuthorization } from "../../plugins/stream-auth";
 /**
  * Agent Factory — SSE brain stream (background-run model).
  *
@@ -77,7 +78,7 @@ import {
 } from "../../services/agent-factory/mailbox";
 import {
   startRun,
-  subscribeRun,
+  subscribeRunWithReplay,
   abortRun,
   readDurableRun,
   forceFinalizeAborted,
@@ -3807,7 +3808,7 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
       run?: unknown;
     };
   }>("/agent-factory/stream", async (req, reply) => {
-    requirePermission(req, "agents.invoke");
+    const auth = requirePermission(req, "agents.invoke");
     if (!req.auth) return reply.fail("unauthorized", "需要租户上下文", 401);
     // Starting through a GET was the source of URL overflow and attachment
     // truncation.  Reject the legacy shape explicitly even if a `run` was
@@ -3842,77 +3843,163 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
 
     let unsub: (() => void) | null = null;
     let ended = false;
+    let replaying = true;
     let unregisterDrain: () => void = () => undefined;
-    // #ALIVE-PING — the old `: ping` was an SSE COMMENT, which per spec NEVER dispatches
-    // EventSource.onmessage; the client's 60s silence watchdog therefore false-fired on every
-    // legitimately quiet stretch (ask_user park waits up to 180s for the human; a deep-reasoning
-    // call's first token can take 60–90s) — the recurring「该运行已无响应——已解锁」incident.
-    // Fix: while the run is GENUINELY alive in the registry, send a real data frame the client
-    // can see (and ignore for the transcript). A true zombie (driver gone / run evicted) gets
-    // only the comment ping, so the watchdog still catches real corpses.
-    const pingRunId = reconnectId;
-    const keepalive = setInterval(() => {
-      try {
-        if (pingRunId && isActiveRun(pingRunId))
-          reply.raw.write(`data: {"t":"ping"}\n\n`);
-        else reply.raw.write(": ping\n\n");
-      } catch {
-        /* socket gone */
-      }
-    }, 15_000);
-    const endStream = () => {
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    let releaseWrite: (() => void) | null = null;
+    const closeStream = () => {
       if (ended) return;
       ended = true;
-      clearInterval(keepalive);
-      if (unsub) unsub();
+      if (keepalive) clearInterval(keepalive);
+      unsub?.();
+      releaseWrite?.();
       unregisterDrain();
       try {
-        reply.raw.write("event: end\ndata: ok\n\n");
         reply.raw.end();
       } catch {
         /* socket gone */
       }
     };
-    // Client disconnect → only UNSUBSCRIBE; the background run keeps going.
-    req.raw.on("close", () => {
-      ended = true;
-      clearInterval(keepalive);
-      if (unsub) unsub();
-      unregisterDrain();
-    });
-    unregisterDrain = registerStreamDrain(endStream);
+    const authorized = createStreamAuthorization(
+      req,
+      auth,
+      "agents.invoke",
+      closeStream,
+    );
+    const write = async (data: string): Promise<boolean> => {
+      if (ended || !(await authorized()) || ended) return false;
+      try {
+        if (reply.raw.destroyed || reply.raw.writableEnded) {
+          closeStream();
+          return false;
+        }
+        if (!reply.raw.write(data)) {
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              reply.raw.off("drain", done);
+              reply.raw.off("close", done);
+              reply.raw.off("error", done);
+              releaseWrite = null;
+              resolve();
+            };
+            releaseWrite = done;
+            reply.raw.once("drain", done);
+            reply.raw.once("close", done);
+            reply.raw.once("error", done);
+            if (ended) done();
+          });
+        }
+        return !ended;
+      } catch {
+        closeStream();
+        return false;
+      }
+    };
+    const pending: Array<{ data: string; end?: boolean }> = [];
+    let draining = false;
+    const drain = async () => {
+      if (draining || ended || replaying) return;
+      draining = true;
+      try {
+        while (!ended && pending.length) {
+          const next = pending.shift()!;
+          if (!(await write(next.data))) return;
+          if (next.end) {
+            closeStream();
+            return;
+          }
+        }
+      } finally {
+        draining = false;
+        if (ended) pending.length = 0;
+      }
+    };
+    const enqueue = (data: string, end = false) => {
+      if (ended) return;
+      if (pending.length >= 512) {
+        closeStream();
+        return;
+      }
+      pending.push({ data, end });
+      void drain();
+    };
+    keepalive = setInterval(async () => {
+      // Recheck even while a replay is blocked on a slow socket.
+      if (!(await authorized()) || ended) return;
+      enqueue(isActiveRun(reconnectId) ? 'data: {"t":"ping"}\n\n' : ": ping\n\n");
+    }, 15_000);
+    const endStream = () => enqueue("event: end\ndata: ok\n\n", true);
+    req.raw.on("close", closeStream);
+    req.raw.on("error", closeStream);
+    reply.raw.on("close", closeStream);
+    reply.raw.on("error", closeStream);
+    unregisterDrain = registerStreamDrain(closeStream);
 
     const send = (f: unknown) => {
       try {
-        reply.raw.write(frame(f));
+        enqueue(frame(f));
+        if (f && typeof f === "object" && (f as { t?: string }).t === "done")
+          endStream();
       } catch {
-        /* socket gone */
+        closeStream();
       }
-      // The run's `done` frame ends THIS connection (the run itself already finished).
-      if (f && typeof f === "object" && (f as { t?: string }).t === "done")
-        setTimeout(endStream, 50);
+    };
+    const replayFrame = async (f: unknown) => {
+      if (!(await write(frame(f)))) return false;
+      if (f && typeof f === "object" && (f as { t?: string }).t === "done") {
+        await write("event: end\ndata: ok\n\n");
+        closeStream();
+        return false;
+      }
+      return true;
     };
 
-    // Attach to the live run, or replay from the durable row.
-    unsub = subscribeRun(reconnectId, send, req.auth.tenantId);
-    if (!unsub) {
-      const durable = await readDurableRun(reconnectId, req.auth.tenantId);
-      send({ t: "run.started", runId: reconnectId });
-      if (durable?.deleted) {
-        send({
-          t: "message",
-          text: "该运行已被删除（在回收站中，可在历史里恢复后再查看）。",
-        });
-      } else if (durable) {
-        for (const e of durable.transcript) send(e);
-        send({ t: "message", text: "（已从存档回放该运行）" });
-      } else {
-        send({
-          t: "message",
-          text: "该运行不在内存中且无存档——可能已被清理。",
-        });
+    // Subscribe before awaiting replay so live arrivals cannot fall into a gap.
+    // Historical frames are read one at a time; only new live arrivals use the
+    // bounded queue. A long transcript therefore cannot overflow its own replay.
+    const subscription = subscribeRunWithReplay(reconnectId, send, auth.tenantId);
+    unsub = subscription?.unsubscribe ?? null;
+    try {
+      if (ended) {
+        unsub?.();
+        return reply;
       }
-      endStream();
+      if (subscription) {
+        for (const event of subscription.replay) {
+          if (!(await replayFrame(event))) break;
+        }
+      } else {
+        const durable = await readDurableRun(reconnectId, auth.tenantId);
+        if (!(await replayFrame({ t: "run.started", runId: reconnectId })))
+          return reply;
+        if (durable?.deleted) {
+          await replayFrame({
+            t: "message",
+            text: "该运行已被删除（在回收站中，可在历史里恢复后再查看）。",
+          });
+        } else if (durable) {
+          for (const event of durable.transcript) {
+            if (!(await replayFrame(event))) break;
+          }
+          if (!ended)
+            await replayFrame({ t: "message", text: "（已从存档回放该运行）" });
+        } else {
+          await replayFrame({
+            t: "message",
+            text: "该运行不在内存中且无存档——可能已被清理。",
+          });
+        }
+        endStream();
+      }
+    } catch (error) {
+      req.log.error(
+        { error, runId: reconnectId },
+        "[factory.stream] replay failed",
+      );
+      closeStream();
+    } finally {
+      replaying = false;
+      if (!ended) void drain();
     }
     return reply;
   });

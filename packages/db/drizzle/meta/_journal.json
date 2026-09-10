@@ -589,6 +589,13 @@
       "when": 1788940803000,
       "tag": "0083_managed_skill_enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "6",
+      "when": 1789030801000,
+      "tag": "0084_account_authority_projection",
+      "breakpoints": true
     }
   ]
 }

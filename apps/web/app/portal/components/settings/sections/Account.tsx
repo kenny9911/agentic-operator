@@ -23,13 +23,17 @@ export function AccountSection() {
   const { t } = useI18n();
   const me = useMe();
   const changePassword = useChangePassword();
+  const accounts = me.data?.user.identityProvider === "accounts";
+  const passwordMin = accounts ? 15 : PASSWORD_MIN;
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const tooShort = newPassword.length > 0 && newPassword.length < PASSWORD_MIN;
+  const tooShort =
+    newPassword.length > 0 && [...newPassword].length < passwordMin;
+  const tooLong = accounts && new TextEncoder().encode(newPassword).length > 72;
   const mismatch =
     confirmPassword.length > 0 && newPassword !== confirmPassword;
   // Catching "same as current" here keeps the user from believing a rotation
@@ -38,7 +42,8 @@ export function AccountSection() {
     newPassword.length > 0 && newPassword === currentPassword;
   const canSubmit =
     currentPassword.length > 0 &&
-    newPassword.length >= PASSWORD_MIN &&
+    [...newPassword].length >= passwordMin &&
+    (!accounts || new TextEncoder().encode(newPassword).length <= 72) &&
     newPassword === confirmPassword &&
     !unchanged &&
     !changePassword.isPending;
@@ -56,8 +61,10 @@ export function AccountSection() {
     }
   }
 
-  const problem = tooShort
-    ? t("account.errTooShort", { min: PASSWORD_MIN })
+  const problem = tooShort || tooLong
+    ? t(accounts ? "auth.accountPasswordHint" : "account.errTooShort", {
+        min: passwordMin,
+      })
     : mismatch
       ? t("account.errMismatch")
       : unchanged
@@ -67,9 +74,11 @@ export function AccountSection() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <Panel title={t("account.identityTitle")}>
-        <Field label={t("account.emailLabel")}>
-          <div style={{ fontSize: 12.5, color: "var(--text-2)", paddingTop: 6 }}>
-            {me.data?.user.email ?? "—"}
+        <Field label={t(accounts ? "auth.username" : "account.emailLabel")}>
+          <div
+            style={{ fontSize: 12.5, color: "var(--text-2)", paddingTop: 6 }}
+          >
+            {(accounts ? me.data?.user.username : me.data?.user.email) || "—"}
           </div>
         </Field>
         <Field label={t("account.nameLabel")}>
@@ -93,7 +102,7 @@ export function AccountSection() {
         </Field>
         <Field
           label={t("account.newLabel")}
-          hint={t("account.newHint", { min: PASSWORD_MIN })}
+          hint={t(accounts ? "auth.accountPasswordHint" : "account.newHint", { min: passwordMin })}
         >
           <TextIn
             type="password"

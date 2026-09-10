@@ -32,6 +32,7 @@ import {
 } from "@agentic/contracts";
 import { makeId } from "@agentic/shared";
 import { requireSuperadmin, writeAudit } from "../../plugins/rbac";
+import { accountsMode, rejectManagedAccountMutation, AccountAuthorityError } from "../../services/account-authority";
 
 function superadminCount(): number {
   return getDb()
@@ -89,6 +90,9 @@ export async function adminUsersRoutes(app: FastifyInstance): Promise<void> {
   // the new user does not land on the "request access" empty state.
   app.post("/admin/users", async (req, reply) => {
     const ctx = requireSuperadmin(req);
+    if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
+    const managedTarget = (req.params as { userId?: string }).userId;
+    if (managedTarget) rejectManagedAccountMutation(managedTarget);
     const body = AdminCreateUserBody.parse(req.body);
     const email = body.email.toLowerCase();
     const db = getDb();
@@ -164,6 +168,9 @@ export async function adminUsersRoutes(app: FastifyInstance): Promise<void> {
   // ── PATCH /v1/admin/users/:userId ───────────────────────────────────────
   app.patch<{ Params: { userId: string } }>("/admin/users/:userId", async (req, reply) => {
     const ctx = requireSuperadmin(req);
+    if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
+    const managedTarget = (req.params as { userId?: string }).userId;
+    if (managedTarget) rejectManagedAccountMutation(managedTarget);
     const { userId } = req.params;
     const body = AdminUpdateUserBody.parse(req.body);
     const db = getDb();
@@ -214,6 +221,9 @@ export async function adminUsersRoutes(app: FastifyInstance): Promise<void> {
     "/admin/users/:userId/memberships",
     async (req, reply) => {
       const ctx = requireSuperadmin(req);
+      if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
+      const managedTarget = (req.params as { userId?: string }).userId;
+      if (managedTarget) rejectManagedAccountMutation(managedTarget);
       const { userId } = req.params;
       const body = AdminMembershipBody.parse(req.body);
       const db = getDb();
@@ -267,6 +277,9 @@ export async function adminUsersRoutes(app: FastifyInstance): Promise<void> {
     "/admin/users/:userId/memberships/:slug",
     async (req, reply) => {
       const ctx = requireSuperadmin(req);
+      if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
+      const managedTarget = (req.params as { userId?: string }).userId;
+      if (managedTarget) rejectManagedAccountMutation(managedTarget);
       const { userId, slug } = req.params;
       const db = getDb();
       const target = db.select({ id: users.id }).from(users).where(eq(users.id, userId)).all()[0];
@@ -308,6 +321,9 @@ export async function adminUsersRoutes(app: FastifyInstance): Promise<void> {
   // and the user row are removed.
   app.delete<{ Params: { userId: string } }>("/admin/users/:userId", async (req, reply) => {
     const ctx = requireSuperadmin(req);
+    if (accountsMode()) throw new AccountAuthorityError("account_managed_centrally", 403);
+    const managedTarget = (req.params as { userId?: string }).userId;
+    if (managedTarget) rejectManagedAccountMutation(managedTarget);
     const { userId } = req.params;
     const db = getDb();
 

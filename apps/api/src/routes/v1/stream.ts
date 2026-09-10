@@ -1,3 +1,4 @@
+import { createStreamAuthorization } from "../../plugins/stream-auth";
 /**
  * Tenant-scoped lifecycle SSE with a durable gap-free bootstrap.
  *
@@ -134,7 +135,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         keepalive = null;
         pendingFrames.length = 0;
         bootEvents.length = 0;
-        raw.off("drain", flush);
+        raw.off("drain", onDrain);
         unsub();
         unregisterDrain();
         try {
@@ -144,39 +145,43 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         }
       };
 
-      function flush() {
-        if (closed || !blocked) return;
-        blocked = false;
-        while (!closed && pendingFrames.length > 0) {
-          if (!raw.write(pendingFrames.shift()!)) {
-            blocked = true;
-            return;
+    const authorized = createStreamAuthorization(req, auth, "events.read", cleanup);
+
+      let flushing = false;
+      async function flush() {
+        if (closed || flushing || blocked) return;
+        flushing = true;
+        try {
+          while (!closed && !blocked && pendingFrames.length > 0) {
+            if (
+              !(await authorized()) ||
+              closed ||
+              raw.destroyed ||
+              raw.writableEnded
+            )
+              return;
+            blocked = !raw.write(pendingFrames.shift()!);
           }
+        } catch {
+          cleanup();
+        } finally {
+          flushing = false;
         }
       }
+      const onDrain = () => {
+        blocked = false;
+        void flush();
+      };
 
       const writeFrame = (frame: string): boolean => {
         if (closed || raw.destroyed || raw.writableEnded) return false;
-        if (blocked) {
-          if (pendingFrames.length >= MAX_PENDING_FRAMES) {
-            req.log.warn(
-              { tenantId: auth.tenantId, queued: pendingFrames.length },
-              "[stream] client backpressure queue exhausted; closing for durable reconnect",
-            );
-            queueMicrotask(cleanup);
-            return false;
-          }
-          pendingFrames.push(frame);
-          return true;
-        }
-        try {
-          blocked = !raw.write(frame);
-          return true;
-        } catch (error) {
-          req.log.warn({ error }, "[stream] socket write failed");
-          queueMicrotask(cleanup);
+        if (pendingFrames.length >= MAX_PENDING_FRAMES) {
+          cleanup();
           return false;
         }
+        pendingFrames.push(frame);
+        void flush();
+        return true;
       };
 
       const remember = (id: string): boolean => {
@@ -233,7 +238,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         }
       };
 
-      raw.on("drain", flush);
+      raw.on("drain", onDrain);
       raw.on("close", cleanup);
       raw.on("error", cleanup);
       req.raw.on("close", cleanup);
@@ -309,8 +314,9 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         `event: ready\ndata: ${JSON.stringify({ ok: true, tenantSlug: auth.tenantSlug, backfill, at: Date.now() })}\n\n`,
       );
 
-      keepalive = setInterval(() => {
-        if (!closed && !blocked) writeFrame(`: keepalive ${Date.now()}\n\n`);
+      keepalive = setInterval(async () => {
+        if (!closed && (await authorized()) && !closed && !blocked)
+          writeFrame(`: keepalive ${Date.now()}\n\n`);
       }, KEEPALIVE_MS);
       keepalive.unref?.();
       return reply;

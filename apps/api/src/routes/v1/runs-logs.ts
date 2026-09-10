@@ -1,3 +1,4 @@
+import { createStreamAuthorization } from "../../plugins/stream-auth";
 /** Tenant-scoped SSE tail for the exact append-only runtime log file. */
 
 import type { FastifyInstance } from "fastify";
@@ -177,8 +178,17 @@ export async function runsLogsRoute(app: FastifyInstance) {
       }
     };
 
+    const authorized = createStreamAuthorization(req, auth, "runs.read", close);
+
     const writeFrame = async (frame: string): Promise<void> => {
-      if (closed || raw.destroyed || raw.writableEnded) return;
+      if (
+        closed ||
+        raw.destroyed ||
+        raw.writableEnded ||
+        !(await authorized()) ||
+        closed
+      )
+        return;
       if (raw.write(frame)) return;
       await new Promise<void>((resolve) => {
         const done = () => {
@@ -205,6 +215,7 @@ export async function runsLogsRoute(app: FastifyInstance) {
       if (closed || reading) return "ok";
       reading = true;
       try {
+        if (!(await authorized()) || closed) return "ok";
         if (archived) {
           const uncompressed = await gunzipAsync(await readFile(filePath));
           if (pos > uncompressed.length) pos = 0;
@@ -292,6 +303,14 @@ export async function runsLogsRoute(app: FastifyInstance) {
       close();
     };
 
+    // Install before initial replay: a slow socket can block that read on
+    // drain indefinitely, but revoked credentials must still close it.
+    poll = setInterval(async () => {
+      if (!closed && (await authorized()) && !closed && follow)
+        void pump().catch(failStream);
+    }, POLL_MS);
+    poll.unref?.();
+
     try {
       const initial = await pump(!follow);
       if (initial === "missing") {
@@ -321,12 +340,14 @@ export async function runsLogsRoute(app: FastifyInstance) {
       return reply;
     }
 
-    poll = setInterval(() => {
-      void pump().catch(failStream);
-    }, POLL_MS);
-    poll.unref?.();
-    heartbeat = setInterval(() => {
-      if (!closed && !reading && raw.writableNeedDrain !== true) {
+    heartbeat = setInterval(async () => {
+      if (
+        !closed &&
+        (await authorized()) &&
+        !closed &&
+        !reading &&
+        raw.writableNeedDrain !== true
+      ) {
         void writeFrame(`: keepalive ${Date.now()}\n\n`);
       }
     }, HEARTBEAT_MS);

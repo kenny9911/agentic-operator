@@ -1,4 +1,5 @@
 import { AuthForm } from "../auth-form";
+import { readAuthMode } from "@/lib/auth/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,6 @@ export const dynamic = "force-dynamic";
  * afterwards from the Access tab. On success the user lands on the portal,
  * which shows a "waiting for access" state until a role is granted.
  */
-export default function SignUpPage() {
-  return <AuthForm initialMode="signup" />;
+export default async function SignUpPage() {
+  return <AuthForm initialMode="signup" authMode={await readAuthMode()} />;
 }

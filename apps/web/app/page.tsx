@@ -1,17 +1,19 @@
 /**
- * `/` — root entry. Redirects to `/portal`.
- *
- * Keeping this redirect as an App Router page (rather than a next.config
- * rewrite) means tenant resolution happens server-side via the session
- * cookie inside `/portal/page.tsx` — the same code path as a direct
- * `/portal` visit, no double-redirect logic to maintain.
+ * `/` — product entry. Reuse an existing verified product session, otherwise
+ * show the account dialog on this origin so the API owns its session cookie.
  */
 
 import { redirect } from "next/navigation";
+import type { Viewport } from "next";
+import { readSession } from "@/lib/auth/session";
+import { readAuthMode } from "@/lib/auth/config";
+import { ProductEntry } from "./(auth)/product-entry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 
-export default function RootIndex(): never {
-  redirect("/portal");
+export default async function RootIndex() {
+  if (await readSession()) redirect("/portal");
+  return <ProductEntry authMode={await readAuthMode()} />;
 }

@@ -60,6 +60,9 @@ export const users = sqliteTable(
   {
     id: text("id").primaryKey(),
     email: text("email").notNull(),
+    /** Immutable PostgreSQL account identity; no credential/session material. */
+    authorityAccountId: text("authority_account_id"),
+    authorityUsername: text("authority_username"),
     name: text("name").notNull(),
     /**
      * P6-AUTH — scrypt password hash (`scrypt$<N>$<saltB64>$<hashB64>`, see
@@ -88,7 +91,12 @@ export const users = sqliteTable(
       .default(now),
   },
   (t) => ({
-    emailUq: uniqueIndex("users_email_uq").on(t.email),
+    emailUq: uniqueIndex("users_email_uq")
+      .on(t.email)
+      .where(sql`${t.authorityAccountId} IS NULL`),
+    authorityAccountUq: uniqueIndex("users_authority_account_uq").on(
+      t.authorityAccountId,
+    ),
   }),
 );
 

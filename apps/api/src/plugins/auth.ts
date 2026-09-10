@@ -4,6 +4,13 @@ import { and, eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { apiTokens, getDb, memberships, tenants, users } from "@agentic/db";
 import type { PlatformRole, TenantRole } from "@agentic/contracts";
+import {
+  accountsMode,
+  authorityConfig,
+  inspectAuthoritySession,
+  projectAuthorityAccount,
+  AccountAuthorityError,
+} from "../services/account-authority";
 
 /**
  * P6-AUTH — authenticated request context.
@@ -29,6 +36,11 @@ export interface AuthedContext {
   scopes?: string[];
   /** Stable credential record id; never contains bearer-token material. */
   credentialId?: string;
+  /** Expiry of the verified cookie, retained for long-lived responses. */
+  sessionExpiresAt?: number;
+  /** Canonical account provenance, never a credential or local authority grant. */
+  authorityAccountId?: string;
+  username?: string;
 }
 
 const COOKIE_NAME = "agentic_session";
@@ -53,7 +65,10 @@ function getSessionSecret(): Uint8Array {
  * Single-cookie reader. Avoids `@fastify/cookie` because we only need one
  * well-known key and adding the plugin would force a plugin-order change.
  */
-function readCookie(header: string | undefined, name: string): string | null {
+export function readCookie(
+  header: string | undefined,
+  name: string,
+): string | null {
   if (!header) return null;
   for (const part of header.split(";")) {
     const idx = part.indexOf("=");
@@ -99,11 +114,20 @@ export async function signSessionJwt(claims: SessionClaims): Promise<string> {
 }
 
 /** Set the HttpOnly session cookie on a reply (manual Set-Cookie string). */
-export function setSessionCookie(reply: FastifyReply, jwt: string): void {
+export function setSessionCookie(
+  reply: FastifyReply,
+  jwt: string,
+  expiresAt?: number,
+  persistent = true,
+): void {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const maxAge =
+    expiresAt === undefined
+      ? SESSION_TTL_SECONDS
+      : Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
   reply.header(
     "set-cookie",
-    `${COOKIE_NAME}=${jwt}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}${secure}`,
+    `${COOKIE_NAME}=${jwt}; Path=/; HttpOnly; SameSite=Lax${persistent ? `; Max-Age=${maxAge}` : ""}${secure}`,
   );
 }
 
@@ -224,8 +248,9 @@ async function authenticateCookie(
   const userId = typeof payload.sub === "string" ? payload.sub : null;
   if (!userId) return null;
   const u = getDb().select().from(users).where(eq(users.id, userId)).all()[0];
-  if (!u || u.status !== "active") return null;
-  const cookieTenant = typeof payload.tenant === "string" ? payload.tenant : null;
+  if (!u || u.status !== "active" || u.authorityAccountId) return null;
+  const cookieTenant =
+    typeof payload.tenant === "string" ? payload.tenant : null;
   const resolved = resolveTenant(u.id, [headerTenantSlug(req), cookieTenant]);
   return {
     userId: u.id,
@@ -234,6 +259,54 @@ async function authenticateCookie(
     platformRole: u.platformRole as PlatformRole,
     ...resolved,
     via: "cookie",
+    sessionExpiresAt:
+      typeof payload.exp === "number" ? payload.exp * 1000 : undefined,
+  };
+}
+
+async function authenticateAuthorityCookie(
+  token: string,
+  req: FastifyRequest,
+): Promise<AuthedContext | null> {
+  if (!/^[A-Za-z0-9._~-]{32,256}$/.test(token)) return null;
+  let snapshot;
+  try {
+    snapshot = await inspectAuthoritySession(token);
+  } catch (error) {
+    if (
+      error instanceof AccountAuthorityError &&
+      [401, 403].includes(error.statusCode)
+    )
+      return null;
+    throw error;
+  }
+  const principal = projectAuthorityAccount(snapshot);
+  const selected = headerTenantSlug(req);
+  if (req.headers[TENANT_HEADER] !== undefined && !selected)
+    throw new AccountAuthorityError("product_access_required", 403);
+  const active = selected
+    ? getDb().select().from(tenants).where(eq(tenants.slug, selected)).get()
+    : getDb()
+        .select()
+        .from(tenants)
+        .where(eq(tenants.id, snapshot.grants[0]!.tenantId))
+        .get();
+  const grant =
+    active && snapshot.grants.find((row) => row.tenantId === active.id);
+  if (!active || !grant || active.archivedAt)
+    throw new AccountAuthorityError("product_access_required", 403);
+  return {
+    userId: principal.id,
+    email: null,
+    name: principal.name,
+    username: principal.username,
+    authorityAccountId: principal.accountId,
+    platformRole: "none",
+    tenantId: active.id,
+    tenantSlug: active.slug,
+    role: grant.role,
+    via: "cookie",
+    sessionExpiresAt: Date.parse(snapshot.expiresAt),
   };
 }
 
@@ -251,7 +324,7 @@ function configuredDevUser() {
 
 function authenticateDev(req: FastifyRequest): AuthedContext | null {
   const u = configuredDevUser();
-  if (!u) return null;
+  if (!u || u.authorityAccountId) return null;
   // Pin the active tenant to AGENTIC_DEV_TENANT when the request carries no
   // explicit tenant header — preserves the legacy dev default (the seeded dev
   // user is a member of every tenant, so "first membership" would be
@@ -270,7 +343,7 @@ function authenticateDev(req: FastifyRequest): AuthedContext | null {
   };
 }
 
-function authenticateBearer(token: string): AuthedContext | null {
+function authenticateBearer(token: string, touch = true): AuthedContext | null {
   const db = getDb();
   const row = db
     .select({ id: apiTokens.id, tenantId: apiTokens.tenantId, scopes: apiTokens.scopes })
@@ -278,7 +351,7 @@ function authenticateBearer(token: string): AuthedContext | null {
     .where(eq(apiTokens.hash, hashToken(token)))
     .all()[0];
   if (!row) return null;
-  db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id)).run();
+  if (touch) db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id)).run();
   const t = db.select().from(tenants).where(eq(tenants.id, row.tenantId)).all()[0];
   if (!t) return null;
   const scopes = (row.scopes as string[] | null) ?? [];
@@ -310,9 +383,13 @@ export async function authenticate(req: FastifyRequest): Promise<AuthedContext |
 
   const sessionJwt = readCookie(req.headers.cookie, COOKIE_NAME);
   if (sessionJwt) {
-    const cookieCtx = await authenticateCookie(sessionJwt, req);
+    const cookieCtx = accountsMode()
+      ? await authenticateAuthorityCookie(sessionJwt, req)
+      : await authenticateCookie(sessionJwt, req);
     if (cookieCtx) return cookieCtx;
-    // Cookie present but invalid — fall through to bearer.
+    // An invalid account session must not switch to another credential.
+    if (accountsMode()) return null;
+    // Legacy cookie present but invalid — fall through to bearer.
   }
 
   const header = req.headers.authorization;
@@ -320,6 +397,60 @@ export async function authenticate(req: FastifyRequest): Promise<AuthedContext |
   const token = header.slice(7).trim();
   if (!token) return null;
   return authenticateBearer(token);
+}
+
+/**
+ * Revalidate an open response without tenant fallback or credential switching.
+ * A cookie was verified when the request opened; only its expiry and mutable
+ * identity/grants need refreshing. Bearers must still match the exact record
+ * and original token, including after a record's hash is rotated in place.
+ */
+export async function refreshRequestAuth(
+  req: FastifyRequest,
+  original: AuthedContext,
+): Promise<AuthedContext | null> {
+  if (original.authorityAccountId) {
+    if (!accountsMode()) return null;
+    const token = readCookie(req.headers.cookie, COOKIE_NAME);
+    if (!token) return null;
+    const fresh = await authenticateAuthorityCookie(token, req);
+    if (
+      !fresh ||
+      fresh.authorityAccountId !== original.authorityAccountId ||
+      fresh.userId !== original.userId
+    )
+      return null;
+    return fresh;
+  }
+  if (accountsMode() && original.via === "cookie") return null;
+  let identity: AuthedContext;
+  if (original.via === "token") {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) return null;
+    const fresh = authenticateBearer(header.slice(7).trim(), false);
+    if (!fresh || fresh.credentialId !== original.credentialId) return null;
+    identity = fresh;
+  } else {
+    if (!original.userId) return null;
+    if (original.sessionExpiresAt !== undefined && original.sessionExpiresAt <= Date.now()) return null;
+    const db = getDb();
+    const user = db.select().from(users).where(eq(users.id, original.userId)).get();
+    if (!user || user.status !== "active") return null;
+    const tenant = db.select().from(tenants).where(eq(tenants.id, original.tenantId)).get();
+    if (!tenant) return null;
+    identity = {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      platformRole: user.platformRole as PlatformRole,
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      role: roleFor(user.id, tenant.id),
+      via: original.via,
+      sessionExpiresAt: original.sessionExpiresAt,
+    };
+  }
+  return identity;
 }
 
 /**
@@ -338,6 +469,11 @@ export function assertAuthModeSafe(): void {
         "unlock would bypass real authentication. Unset AUTH_MODE for prod or " +
         "run with NODE_ENV=development.",
     );
+  }
+
+  if (accountsMode()) {
+    authorityConfig();
+    return;
   }
 
   // #AUDIT-FIX(P0-07) — production 必须配置一个真实、足够随机的 session secret；缺失或仍是 dev
@@ -383,7 +519,29 @@ export function assertAuthModeSafe(): void {
 export async function registerAuth(app: FastifyInstance) {
   assertAuthModeSafe();
   app.addHook("onRequest", async (req) => {
-    req.auth = (await authenticate(req)) ?? undefined;
+    // Public credential routes and the dedicated service-key endpoint do not
+    // consume a stale browser cookie or require the authority to be available.
+    if (
+      accountsMode() &&
+      !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+      req.headers.origin
+    ) {
+      // The existing WEB_ORIGIN is the browser origin allowlist. Do not trust
+      // forwarded host headers supplied by a caller to authorize mutations.
+      const expected =
+        process.env.WEB_ORIGIN?.trim() || "http://localhost:3599";
+      if (req.headers.origin !== new URL(expected).origin)
+        throw new AccountAuthorityError("forbidden_origin", 403);
+    }
+    if (
+      accountsMode() &&
+      /^\/v1\/auth\/(?:config|login|register|logout|authority\/tenants)$/.test(
+        req.url.split("?", 1)[0] ?? "",
+      )
+    )
+      return;
+    const identity = await authenticate(req);
+    req.auth = identity ?? undefined;
   });
 }
 
