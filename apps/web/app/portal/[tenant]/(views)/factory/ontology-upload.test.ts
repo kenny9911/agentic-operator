@@ -44,6 +44,52 @@ describe("buildOntologyBundle", () => {
     expect(r.used).toHaveLength(3);
   });
 
+  it("preserves supplied link graphs and workflow rows without flattening their fields", () => {
+    const links = [{ id: "approved-link", from: "a", to: "E", metadata: { approved: true } }];
+    const workflow = [{ name: "purchase", stages: [{ id: "review" }] }];
+    const { bundle } = buildOntologyBundle([file("bundle.json", { actions: [{ name: "a" }], links, workflow })]);
+    expect(bundle.links).toEqual(links);
+    expect(bundle.workflow).toEqual(workflow);
+  });
+
+  it("distinguishes omitted optional fields from explicitly empty arrays, including split files", () => {
+    const source = file("actions.json", [{ name: "a" }]);
+    const absent = buildOntologyBundle([source]).bundle;
+    expect(absent).not.toHaveProperty("links");
+    expect(absent).not.toHaveProperty("workflow");
+    const explicit = buildOntologyBundle([source, file("links.json", []), file("workflows.json", [])]).bundle;
+    expect(explicit.links).toEqual([]);
+    expect(explicit.workflow).toEqual([]);
+    expect(explicit.actions).toEqual([{ name: "a" }]);
+    const aliases = buildOntologyBundle([source, file("empty.json", { link: [], agents: [] })]).bundle;
+    expect(aliases.links).toEqual([]);
+    expect(aliases.workflow).toEqual([]);
+  });
+
+  it("recognizes backend aliases and payload arrays, with canonical empty values taking precedence", () => {
+    const { bundle } = buildOntologyBundle([file("bundle.json", {
+      actions: { payload: [{ name: "a" }] }, object: [{ name: "Purchase" }],
+      link: { payload: [{ from: "a", to: "Purchase" }] }, agents: { payload: [{ name: "purchaseAgent" }] },
+    })]);
+    expect(bundle.actions).toEqual([{ name: "a" }]);
+    expect(bundle.dataObjects).toEqual([{ name: "Purchase" }]);
+    expect(bundle.links).toEqual([{ from: "a", to: "Purchase" }]);
+    expect(bundle.workflow).toEqual([{ name: "purchaseAgent" }]);
+    const empty = buildOntologyBundle([file("x.json", { links: [], link: [{ id: "ignored" }], workflow: [], agents: [{ id: "ignored" }] })]).bundle;
+    expect(empty.links).toEqual([]);
+    expect(empty.workflow).toEqual([]);
+  });
+
+  it("routes and merges bare link/workflow/agent arrays without treating them as actions", () => {
+    const { bundle } = buildOntologyBundle([
+      file("actions.json", [{ name: "a" }]), file("links.json", [{ from: "a", to: "E" }]),
+      file("workflow.json", [{ name: "first" }]), file("agents.json", [{ name: "second" }]),
+    ]);
+    expect(bundle.actions).toEqual([{ name: "a" }]);
+    expect(bundle.links).toEqual([{ from: "a", to: "E" }]);
+    expect(bundle.workflow).toEqual([{ name: "first" }, { name: "second" }]);
+  });
+
   it("collects non-JSON files into skipped (never silently dropped)", () => {
     const r = buildOntologyBundle([
       { name: "good.json", text: JSON.stringify({ actions: [{ name: "a" }] }) },
@@ -75,6 +121,17 @@ describe("classifyAttachment", () => {
     // still be ontology so 📎 can create a domain — the old modal supported it).
     expect(classifyAttachment("list.json", JSON.stringify([{ name: "createJob" }, { name: "closeJob" }]))).toBe("ontology");
     expect(classifyAttachment("x.json", JSON.stringify([{ id: "a1" }]))).toBe("ontology");
+  });
+
+  it("recognizes optional ontology fields and named arrays, including explicit empty graph exports", () => {
+    for (const value of [{ links: [] }, { link: [] }, { workflow: [] }, { workflows: [] }, { agents: [] }, { object: [] }]) {
+      expect(classifyAttachment("part.json", JSON.stringify(value))).toBe("ontology");
+    }
+    for (const name of ["links.json", "link.json", "workflow.json", "workflows.json", "agents.json"]) {
+      expect(classifyAttachment(name, "[]")).toBe("ontology");
+    }
+    expect(classifyAttachment("links.json", JSON.stringify([{ from: "a", to: "E" }]))).toBe("ontology");
+    expect(classifyAttachment("links.json", "[1, 2]")).toBe("tooldoc");
   });
 
   it("classifies OpenAPI / prose / non-ontology JSON as tooldoc", () => {

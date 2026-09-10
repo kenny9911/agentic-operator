@@ -112,7 +112,6 @@ const ToolArgumentSourceSchema = z.union([
 ]);
 
 export const ToolArgumentsSchema = z.record(z.string(), ToolArgumentSourceSchema)
-  .refine((value) => Object.keys(value).length > 0, "tool_arguments cannot be empty")
   .superRefine((value, ctx) => {
     for (const key of Object.keys(value)) {
       if (!SAFE_PLAN_NAME_RE.test(key) || UNSAFE_PLAN_KEYS.has(key)) {

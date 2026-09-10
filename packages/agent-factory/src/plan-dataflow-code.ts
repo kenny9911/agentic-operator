@@ -21,7 +21,7 @@ export function assertPlanDataflowRenderable(step: PlanStep, id: string): void {
     throw new Error(`cannot render step "${id}": toolArguments/resultMap are only valid for tool steps`);
   }
   if (step.toolArguments) {
-    if (!Object.keys(step.toolArguments).length) throw new Error(`cannot render tool step "${id}": toolArguments is empty`);
+    // An explicit empty map means no arguments, distinct from omitted legacy carry.
     for (const [argument, source] of Object.entries(step.toolArguments)) {
       if (!SAFE_NAME_RE.test(argument) || UNSAFE_KEYS.has(argument)) throw new Error(`cannot render tool step "${id}": unsafe argument name "${argument}"`);
       if (!source || typeof source !== "object" || Array.isArray(source)) throw new Error(`cannot render tool step "${id}": argument ${argument} is not an explicit source`);

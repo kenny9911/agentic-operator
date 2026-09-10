@@ -60,6 +60,17 @@ function spec(overrides: Partial<GeneratedAgentSpec>): GeneratedAgentSpec {
 }
 
 describe("specToAgentCode — rendered handler REALLY executes", () => {
+  it("executes an explicit empty argument map without forwarding input or prior results", async () => {
+    const plan: PlanStep[] = [
+      { stepId: "prior", kind: "tool", tool: "meta.ping", toolArguments: {} },
+      { stepId: "ping", kind: "tool", tool: "meta.ping", toolArguments: {} },
+    ];
+    const code = specToAgentCode(spec({ plan, tools: ["meta.ping"] }));
+    const { ctx, toolCalls } = makeCtx({ toolImpl: () => ({ private_previous_result: "must-not-forward" }) });
+    await loadRendered(code).handler({ private_input: "must-not-forward" }, ctx);
+    expect(toolCalls).toEqual([{ tool: "meta.ping", args: {} }, { tool: "meta.ping", args: {} }]);
+  });
+
   it("plan[] tool steps actually call ctx.tools.run in order, threading results", async () => {
     const plan: PlanStep[] = [
       { stepId: "fetch-resume", kind: "tool", tool: "fs.readFromInbox" },
