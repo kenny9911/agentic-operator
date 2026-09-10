@@ -2774,3 +2774,19 @@ html[data-ontocode-workbench="true"] [data-portal-topbar] {
   .wf-spine       { transform: none; }
   .wf-rail::after { animation: none; }
 }
+
+/* Native dialog supplies focus containment and Escape dismissal for product entry. */
+.account-entry-dialog {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 90px #0006;
+}
+.account-entry-dialog::backdrop {
+  background: #0008;
+  backdrop-filter: blur(5px);
+}

@@ -1,4 +1,5 @@
 import { AuthForm } from "../auth-form";
+import { readAuthMode } from "@/lib/auth/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,6 @@ export const dynamic = "force-dynamic";
  * password verification + the session cookie). Development uses the same
  * real login route with a seeded user account.
  */
-export default function SignInPage() {
-  return <AuthForm initialMode="signin" />;
+export default async function SignInPage() {
+  return <AuthForm initialMode="signin" authMode={await readAuthMode()} />;
 }

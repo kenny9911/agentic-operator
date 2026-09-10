@@ -5925,6 +5925,26 @@ export const zh = {
     close: "关闭",
   },
   auth: {
+    rememberMe: "保持登录状态",
+    closeDialog: "关闭登录窗口",
+    accountDialog: "登录或创建 Agent OS 账号",
+    enterProduct: "进入 Agent OS",
+    productEntryDescription: "在同一平台构建、运行和治理智能体。登录后即可进入工作空间。",
+    username: "用户名",
+    usernameHint:
+      "使用 3–32 位字母、数字、点、下划线或连字符，首位必须为字母或数字。",
+    usernameTaken: "该用户名已被注册。",
+    accountPasswordHint: "密码至少 15 个字符，UTF-8 编码后不超过 72 字节。",
+    suiteAccountSubtitle: "使用 OntoPlanet 账户登录 Agent OS。",
+    registrationPending:
+      "注册申请已提交，正在等待管理员审核。审核通过并获得 Agent OS 访问权限后，即可使用用户名和密码登录。",
+    accountPending: "账户正在等待管理员审核。",
+    accountRejected: "注册申请未通过审核，请联系管理员。",
+    accountPaused: "账户已暂停使用，请联系管理员。",
+    productAccessRequired:
+      "尚未获得 Agent OS 访问权限，或所选租户不可用，请联系管理员。",
+    authorityUnavailable: "账户服务暂时不可用，请稍后重试。",
+
     signInTitle: "登录",
     signInSubtitle: "欢迎回到 Agentic Operator。",
     signUpTitle: "创建账号",
@@ -5952,7 +5972,7 @@ export const zh = {
     passwordChangeFailed: "修改密码失败",
     save: "保存",
     cancel: "取消",
-    invalidCredentials: "邮箱或密码不正确。",
+    invalidCredentials: "用户名、邮箱或密码不正确。",
     emailTaken: "该邮箱已注册账号。",
     genericError: "出错了，请重试。",
     passwordMin: "密码至少 8 个字符。",

@@ -1,3 +1,4 @@
+import { createStreamAuthorization } from "../../plugins/stream-auth";
 /**
  * Agent Factory — SSE brain stream (background-run model).
  *
@@ -3807,7 +3808,7 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
       run?: unknown;
     };
   }>("/agent-factory/stream", async (req, reply) => {
-    requirePermission(req, "agents.invoke");
+    const auth = requirePermission(req, "agents.invoke");
     if (!req.auth) return reply.fail("unauthorized", "需要租户上下文", 401);
     // Starting through a GET was the source of URL overflow and attachment
     // truncation.  Reject the legacy shape explicitly even if a `run` was
@@ -3843,54 +3844,73 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
     let unsub: (() => void) | null = null;
     let ended = false;
     let unregisterDrain: () => void = () => undefined;
-    // #ALIVE-PING — the old `: ping` was an SSE COMMENT, which per spec NEVER dispatches
-    // EventSource.onmessage; the client's 60s silence watchdog therefore false-fired on every
-    // legitimately quiet stretch (ask_user park waits up to 180s for the human; a deep-reasoning
-    // call's first token can take 60–90s) — the recurring「该运行已无响应——已解锁」incident.
-    // Fix: while the run is GENUINELY alive in the registry, send a real data frame the client
-    // can see (and ignore for the transcript). A true zombie (driver gone / run evicted) gets
-    // only the comment ping, so the watchdog still catches real corpses.
-    const pingRunId = reconnectId;
-    const keepalive = setInterval(() => {
-      try {
-        if (pingRunId && isActiveRun(pingRunId))
-          reply.raw.write(`data: {"t":"ping"}\n\n`);
-        else reply.raw.write(": ping\n\n");
-      } catch {
-        /* socket gone */
-      }
-    }, 15_000);
-    const endStream = () => {
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    const closeStream = () => {
       if (ended) return;
       ended = true;
-      clearInterval(keepalive);
+      if (keepalive) clearInterval(keepalive);
       if (unsub) unsub();
       unregisterDrain();
       try {
-        reply.raw.write("event: end\ndata: ok\n\n");
         reply.raw.end();
       } catch {
         /* socket gone */
       }
     };
-    // Client disconnect → only UNSUBSCRIBE; the background run keeps going.
-    req.raw.on("close", () => {
-      ended = true;
-      clearInterval(keepalive);
-      if (unsub) unsub();
-      unregisterDrain();
-    });
-    unregisterDrain = registerStreamDrain(endStream);
+    const authorized = createStreamAuthorization(
+      req,
+      auth,
+      "agents.invoke",
+      closeStream,
+    );
+    const pending: Array<{ data: string; end?: boolean }> = [];
+    let draining = false;
+    const drain = async () => {
+      if (draining || ended) return;
+      draining = true;
+      try {
+        while (!ended && pending.length) {
+          if (!(await authorized()) || ended) return;
+          const next = pending.shift()!;
+          // Durable reconnect handles a slow consumer without accumulating
+          // unbounded frames or flushing data after account revocation.
+          if (!reply.raw.write(next.data) || next.end) {
+            closeStream();
+            return;
+          }
+        }
+      } catch {
+        closeStream();
+      } finally {
+        draining = false;
+        if (ended) pending.length = 0;
+      }
+    };
+    const enqueue = (data: string, end = false) => {
+      if (ended) return;
+      if (pending.length >= 512) {
+        closeStream();
+        return;
+      }
+      pending.push({ data, end });
+      void drain();
+    };
+    keepalive = setInterval(() => {
+      enqueue(
+        isActiveRun(reconnectId) ? 'data: {"t":"ping"}\n\n' : ": ping\n\n",
+      );
+    }, 15_000);
+    const endStream = () => enqueue("event: end\ndata: ok\n\n", true);
+    req.raw.on("close", closeStream);
+    req.raw.on("error", closeStream);
+    reply.raw.on("close", closeStream);
+    reply.raw.on("error", closeStream);
+    unregisterDrain = registerStreamDrain(closeStream);
 
     const send = (f: unknown) => {
-      try {
-        reply.raw.write(frame(f));
-      } catch {
-        /* socket gone */
-      }
-      // The run's `done` frame ends THIS connection (the run itself already finished).
+      enqueue(frame(f));
       if (f && typeof f === "object" && (f as { t?: string }).t === "done")
-        setTimeout(endStream, 50);
+        endStream();
     };
 
     // Attach to the live run, or replay from the durable row.

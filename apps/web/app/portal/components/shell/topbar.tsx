@@ -334,6 +334,7 @@ const menuItemStyle: React.CSSProperties = {
 function ChangePasswordModal({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
   const changePw = useChangePassword();
+  const accounts = useMe().data?.user.identityProvider === "accounts";
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -341,8 +342,12 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
 
   async function submit() {
     setError(null);
-    if (next.length < 8) {
-      setError(t("auth.passwordMin"));
+    if (
+      accounts
+        ? [...next].length < 15 || new TextEncoder().encode(next).length > 72
+        : next.length < 8
+    ) {
+      setError(t(accounts ? "auth.accountPasswordHint" : "auth.passwordMin"));
       return;
     }
     try {

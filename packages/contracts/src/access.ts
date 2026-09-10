@@ -41,6 +41,9 @@ export type ChangePasswordBody = z.infer<typeof ChangePasswordBody>;
 // ─── Identity (GET /v1/me) ───────────────────────────────────────────────────
 
 export const MeUser = z.object({
+  username: z.string().optional(),
+  accountId: z.string().optional(),
+  identityProvider: z.literal("accounts").optional(),
   id: z.string(),
   email: z.string(),
   name: z.string(),

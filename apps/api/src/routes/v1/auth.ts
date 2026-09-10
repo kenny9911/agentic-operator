@@ -33,6 +33,7 @@ import {
 } from "@agentic/contracts";
 import {
   clearSessionCookie,
+  readCookie,
   initialsFor,
   requireAuth,
   setSessionCookie,
@@ -40,6 +41,21 @@ import {
   type AuthedContext,
 } from "../../plugins/auth";
 import { writeAudit } from "../../plugins/rbac";
+import { z } from "zod";
+import {
+  accountsMode,
+  authorizedAuthorityClient,
+  authorityTenants,
+  AuthorityRegistration,
+  AuthorityLogin,
+  AuthorityPassword,
+  registerAuthorityAccount,
+  loginAuthorityAccount,
+  projectAuthorityAccount,
+  revokeAuthoritySession,
+  changeAuthorityPassword,
+  AccountAuthorityError,
+} from "../../services/account-authority";
 
 // ─── Light in-memory rate limit (anti-abuse for register/login) ──────────────
 
@@ -130,20 +146,50 @@ function meResponse(ctx: AuthedContext) {
       email: ctx.email ?? "",
       name: ctx.name ?? "",
       platformRole: ctx.platformRole,
+      ...(ctx.authorityAccountId
+        ? {
+            username: ctx.username,
+            accountId: ctx.authorityAccountId,
+            identityProvider: "accounts",
+          }
+        : {}),
     },
     activeTenant,
     memberships: mine,
-    capabilities: capabilitiesFor(ctx.role, ctx.platformRole),
+    capabilities: capabilitiesFor(ctx.role, ctx.platformRole).filter(
+      (permission) => !ctx.authorityAccountId || permission !== "members.write",
+    ),
   };
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/auth/config", async (_req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return reply.ok({ mode: accountsMode() ? "accounts" : "local" });
+  });
+  app.get("/auth/authority/tenants", async (req, reply) => {
+    if (!authorizedAuthorityClient(req.headers.authorization))
+      return reply.fail("unauthorized", "unauthorized", 401);
+    reply.header("Cache-Control", "no-store");
+    return { tenants: authorityTenants() };
+  });
   // ── POST /v1/auth/register ──────────────────────────────────────────────
   app.post("/auth/register", async (req, reply) => {
     if (rateLimited(`reg:${clientIp(req)}`, 10)) {
-      return reply.fail("rate_limited", "too many attempts, try again shortly", 429);
+      return reply.fail(
+        "rate_limited",
+        "too many attempts, try again shortly",
+        429,
+      );
+    }
+    if (accountsMode()) {
+      const result = await registerAuthorityAccount(
+        AuthorityRegistration.parse(req.body),
+      );
+      reply.header("Cache-Control", "no-store");
+      return reply.ok(result, 201);
     }
     const body = RegisterBody.parse(req.body);
     const email = body.email.toLowerCase();
@@ -204,7 +250,29 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /v1/auth/login ─────────────────────────────────────────────────
   app.post("/auth/login", async (req, reply) => {
     if (rateLimited(`login:${clientIp(req)}`, 20)) {
-      return reply.fail("rate_limited", "too many attempts, try again shortly", 429);
+      return reply.fail(
+        "rate_limited",
+        "too many attempts, try again shortly",
+        429,
+      );
+    }
+    if (accountsMode()) {
+      const body = AuthorityLogin.parse(req.body);
+      const snapshot = await loginAuthorityAccount(body);
+      const principal = projectAuthorityAccount(snapshot);
+      setSessionCookie(reply, snapshot.token, Date.parse(snapshot.expiresAt), body.rememberMe);
+      reply.header("Cache-Control", "no-store");
+      return reply.ok({
+        user: {
+          id: principal.id,
+          name: principal.name,
+          username: principal.username,
+          email: "",
+          platformRole: "none",
+        },
+        tenant: preferredTenantSlug(principal.id),
+        memberships: membershipsFor(principal.id),
+      });
     }
     const body = LoginBody.parse(req.body);
     const email = body.email.toLowerCase();
@@ -212,8 +280,17 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     // Uniform failure for unknown email / bad password / no credential set, so
     // we don't leak which accounts exist.
-    if (!u || u.status !== "active" || !verifyPassword(body.password, u.passwordHash)) {
-      return reply.fail("invalid_credentials", "email or password is incorrect", 401);
+    if (
+      !u ||
+      u.authorityAccountId ||
+      u.status !== "active" ||
+      !verifyPassword(body.password, u.passwordHash)
+    ) {
+      return reply.fail(
+        "invalid_credentials",
+        "email or password is incorrect",
+        401,
+      );
     }
 
     const tenantSlug = preferredTenantSlug(u.id, body.tenant);
@@ -246,6 +323,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   // ── POST /v1/auth/logout ────────────────────────────────────────────────
   app.post("/auth/logout", async (req, reply) => {
+    if (accountsMode()) {
+      const token = readCookie(req.headers.cookie, "agentic_session");
+      // Clear locally even if the authority is unavailable, while reporting
+      // that server-side revocation could not be confirmed.
+      clearSessionCookie(reply);
+      if (token) await revokeAuthoritySession(token);
+      return reply.ok({ ok: true });
+    }
     if (req.auth) {
       writeAudit(req.auth, { action: "user.logout", targetType: "user", targetId: req.auth.userId });
     }
@@ -263,7 +348,25 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post("/me/password", async (req, reply) => {
     const ctx = requireAuth(req);
     if (!ctx.userId) {
-      return reply.fail("no_user", "this credential is not tied to a user account", 400);
+      return reply.fail(
+        "no_user",
+        "this credential is not tied to a user account",
+        400,
+      );
+    }
+    if (accountsMode()) {
+      const token = readCookie(req.headers.cookie, "agentic_session");
+      if (!token || !ctx.authorityAccountId)
+        throw new AccountAuthorityError("invalid_session", 401);
+      const body = z
+        .object({
+          currentPassword: z.string().min(1).max(256),
+          newPassword: AuthorityPassword,
+        })
+        .parse(req.body);
+      await changeAuthorityPassword({ token, ...body });
+      clearSessionCookie(reply);
+      return reply.ok({ ok: true, signInRequired: true });
     }
     const body = ChangePasswordBody.parse(req.body);
     const db = getDb();

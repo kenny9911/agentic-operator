@@ -6275,6 +6275,29 @@ export const en = {
     close: "Close",
   },
   auth: {
+    rememberMe: "Keep me signed in",
+    closeDialog: "Close sign-in dialog",
+    accountDialog: "Sign in or create your Agent OS account",
+    enterProduct: "Enter Agent OS",
+    productEntryDescription: "Build, run and govern your agents in one place. Sign in to continue to your workspace.",
+    username: "Username",
+    usernameHint:
+      "Use 3–32 letters, digits, dots, underscores or hyphens. Start with a letter or digit.",
+    usernameTaken: "That username is already registered.",
+    accountPasswordHint:
+      "Use at least 15 characters and at most 72 UTF-8 bytes.",
+    suiteAccountSubtitle: "Use your OntoPlanet account to access Agent OS.",
+    registrationPending:
+      "Your registration is awaiting administrator approval. Once approved and granted Agent OS access, sign in with your username and password.",
+    accountPending: "Your account is awaiting administrator approval.",
+    accountRejected:
+      "Your registration was rejected. Contact your administrator.",
+    accountPaused: "Your account is paused. Contact your administrator.",
+    productAccessRequired:
+      "Agent OS access has not been granted, or the selected tenant is unavailable. Contact your administrator.",
+    authorityUnavailable:
+      "Account service is unavailable. Please try again shortly.",
+
     signInTitle: "Sign in",
     signInSubtitle: "Welcome back to Agentic Operator.",
     signUpTitle: "Create your account",
@@ -6302,7 +6325,7 @@ export const en = {
     passwordChangeFailed: "Password change failed",
     save: "Save",
     cancel: "Cancel",
-    invalidCredentials: "Email or password is incorrect.",
+    invalidCredentials: "Username, email or password is incorrect.",
     emailTaken: "An account with this email already exists.",
     genericError: "Something went wrong. Please try again.",
     passwordMin: "Password must be at least 8 characters.",

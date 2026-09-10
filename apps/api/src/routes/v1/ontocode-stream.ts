@@ -1,3 +1,4 @@
+import { createStreamAuthorization } from "../../plugins/stream-auth";
 import type { FastifyInstance } from "fastify";
 import { requirePermission } from "../../plugins/rbac";
 import {
@@ -146,8 +147,17 @@ export async function ontocodeStreamRoutes(
       }
     };
 
-    const write = (frame: string): boolean => {
-      if (closed || raw.destroyed || raw.writableEnded) return false;
+    const authorized = createStreamAuthorization(req, auth, "workflows.read", close);
+
+    const write = async (frame: string): Promise<boolean> => {
+      if (
+        closed ||
+        raw.destroyed ||
+        raw.writableEnded ||
+        !(await authorized()) ||
+        closed
+      )
+        return false;
       try {
         return raw.write(frame);
       } catch {
@@ -160,6 +170,7 @@ export async function ontocodeStreamRoutes(
       if (closed || polling) return;
       polling = true;
       try {
+        if (!(await authorized()) || closed) return;
         let hasMore = true;
         while (!closed && hasMore) {
           const page = listOntoCodeEvents(ctx, req.params.sessionId, {
@@ -170,7 +181,9 @@ export async function ontocodeStreamRoutes(
           for (const event of page.items) {
             const publicEvent = publicOntoCodeSessionEvent(event);
             if (
-              !write(ontocodeSseFrame({ id: event.seq, data: publicEvent }))
+              !(await write(
+                ontocodeSseFrame({ id: event.seq, data: publicEvent }),
+              ))
             ) {
               // Backpressure is allowed to trigger a durable reconnect. The
               // browser carries the last fully written event id.
@@ -186,7 +199,7 @@ export async function ontocodeStreamRoutes(
           { error, sessionId: req.params.sessionId },
           "[ontocode.stream] durable event poll failed",
         );
-        write(
+        await write(
           ontocodeSseFrame({
             event: "stream.error",
             data: { code: "ontocode_event_stream_failed" },
@@ -201,7 +214,7 @@ export async function ontocodeStreamRoutes(
     await poll();
     pollTimer = setInterval(() => void poll(), POLL_MS);
     heartbeatTimer = setInterval(() => {
-      write(`: heartbeat ${Date.now()}\n\n`);
+      void write(`: heartbeat ${Date.now()}\n\n`);
     }, HEARTBEAT_MS);
     timeoutTimer = setTimeout(close, MAX_CONNECTION_MS);
     pollTimer.unref?.();
