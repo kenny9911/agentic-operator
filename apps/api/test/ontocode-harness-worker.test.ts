@@ -38,6 +38,7 @@ import {
   createFactoryGenerationDirective,
   factoryScopeRecommendationId,
   factorySourceOntologyHash,
+  generatedSpecExecutionOwnership,
   FactoryScopeRecommendationError,
   getLlmCallContext,
   ontologyContentHash,
@@ -5197,9 +5198,20 @@ describe("OntoCode Harness Worker Adapter", () => {
     const worker = new OntoCodeHarnessWorkerAdapter({
       tenantId,
       factory: fakeFactory({
-        runBuild: vi.fn(async (input) =>
-          generatedUnverifiedBuildResult("full", input.engineRunId!),
-        ),
+        runBuild: vi.fn(async (input) => {
+          const result = generatedUnverifiedBuildResult("full", input.engineRunId!);
+          const spec = result.receipt.agents[0]!.spec;
+          // An intentional durable execution owner is compatible with an
+          // unverified candidate. It must not invent a code/probe blocker or
+          // promote the reference TypeScript into the CodeAct execution path.
+          spec.plan = [{ stepId: "screen", kind: "logic", onError: "terminal" }];
+          spec.codeExecuted = false;
+          const ownership = generatedSpecExecutionOwnership(spec);
+          expect(ownership.codeActEligible).toBe(false);
+          spec.probeReason = `execution owner=${ownership.owner}: ${ownership.reason}`;
+          result.receipt.draftCheckpoint.specsFingerprint = specsFingerprint([spec]);
+          return result;
+        }),
       }),
     });
 
@@ -5219,6 +5231,9 @@ describe("OntoCode Harness Worker Adapter", () => {
       .where(eq(ontocodeCandidateHeads.sessionId, fixture.session.id))
       .get();
     expect(packageVersion).toMatchObject({ status: "candidate_ready" });
+    expect(JSON.parse(packageVersion!.executionOwnersJson)).toEqual({
+      "screen-candidate-agent": "declarative_manifest",
+    });
     expect(JSON.parse(packageVersion!.validationJson)).toMatchObject({
       schema: "ontocode-candidate-validation/v2",
       runtimeReady: true,

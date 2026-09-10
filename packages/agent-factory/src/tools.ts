@@ -227,6 +227,7 @@ import {
   decisionTablesPromptBlock,
   parseDecisionTables,
 } from "./decision-tables";
+import { actionPreconditionsPromptBlock } from "./action-preconditions";
 import {
   coverageWaiverMatches,
   normalizeCoverageCells,
@@ -2326,6 +2327,21 @@ const designOf = (s: GeneratedAgentSpec) => ({
   probeReason: s.probeReason,
   executionReadiness: s.executionReadiness,
 });
+
+/** The legacy probeReason field also carries an intentional execution-owner
+ * decision. Recognize only the exact current decision, never an arbitrary
+ * prefix that could conceal a genuine compiler/linter/load-probe failure. */
+function intentionalDeclarativeExecutionReason(
+  spec: GeneratedAgentSpec,
+): string | undefined {
+  if (spec.codeExecuted !== false || !spec.generatedCode?.trim()) return undefined;
+  const ownership = generatedSpecExecutionOwnership(spec, spec.generatedCode);
+  if (
+    !ownership.codeActEligible &&
+    spec.probeReason === `execution owner=${ownership.owner}: ${ownership.reason}`
+  ) return ownership.reason;
+  return undefined;
+}
 
 /** Render the spec's reference .ts and select exactly one execution owner.
  * Pure handlers may become CodeAct after compile/lint/probe. Plans that need
@@ -6261,13 +6277,10 @@ const design_agent: BrainTool = {
         }
       }
     }
-    // R3: compile the action's submission_criteria into a fail-close precondition block.
-    const criteria =
-      typeof action.submission_criteria === "string"
-        ? action.submission_criteria.trim()
-        : "";
-    if (criteria && !systemPrompt.includes("【前置条件")) {
-      systemPrompt += `\n\n【前置条件（运行前必须满足；不满足则 fail-close 发拦截/失败事件，不要继续）】\n${criteria}`;
+    // Preconditions must preserve the source's failure policy, not invent an event.
+    const preconditions = actionPreconditionsPromptBlock(action);
+    if (preconditions && !systemPrompt.includes("【前置条件")) {
+      systemPrompt += `\n\n${preconditions}`;
     }
 
     const decisionTableBlock = decisionTablesPromptBlock(decisionTables);
@@ -6592,9 +6605,12 @@ const design_agent: BrainTool = {
       code: spec.generatedCode ?? "",
       codeSource: "render",
     });
+    const declarativeReason = intentionalDeclarativeExecutionReason(spec);
     const execNote = spec.codeExecuted
       ? " · ⚙ 代码已过 编译+安全+加载探针，沙箱将真实执行（CodeAct）"
-      : ` · 📄 声明式执行${spec.probeReason ? `（代码未过加载探针：${spec.probeReason}）` : ""}`;
+      : declarativeReason
+        ? ` · 📄 声明式持久步骤执行（TypeScript 为审查参考）：${declarativeReason}`
+        : ` · 📄 声明式执行${spec.probeReason ? `（代码验证未通过：${spec.probeReason}）` : ""}`;
 
     const agentActionNames = generationScopedAgentActionNames(ctx);
     const done = new Set(ctx.specs.map((s) => s.actionName));
@@ -9408,6 +9424,12 @@ const review_agent: BrainTool = {
     }
     // Tier 1 — free deterministic set-membership checks (fast, certain).
     const findings: string[] = [];
+    const executionNotes: Array<{
+      agent: string;
+      owner: "declarative-plan";
+      referenceCodeOnly: true;
+      reason: string;
+    }> = [];
     const ruleIds = ruleIdentifiers(ctx); // #9: ontology-driven, not RAAS's \d-\d scheme
     const ruleAssessments = new Map(
       ctx.specs.map((spec) => [
@@ -9432,12 +9454,22 @@ const review_agent: BrainTool = {
         findings.push(
           `「${s.nameZh}」没有结构化规则闸证据，却写进了具体业务规则`,
         );
-      // #REDESIGN FU3 — surface reviewLoop PROBE downgrades: code that compiled+linted but didn't load
-      // a callable handler, so it fell back to declarative. Legible instead of silent.
-      if (s.probeReason)
+      // A durable declarative plan is a supported execution owner. Its
+      // reference TypeScript was intentionally not selected for CodeAct;
+      // actual compiler/linter/load-probe failures must still block review.
+      const declarativeReason = intentionalDeclarativeExecutionReason(s);
+      if (declarativeReason) {
+        executionNotes.push({
+          agent: s.actionName,
+          owner: "declarative-plan",
+          referenceCodeOnly: true,
+          reason: declarativeReason,
+        });
+      } else if (s.probeReason) {
         findings.push(
-          `「${s.nameZh}」代码未过加载探针（已回退声明式执行）：${s.probeReason}`,
+          `「${s.nameZh}」代码验证未通过：${s.probeReason}`,
         );
+      }
     }
     // Tier 2 — independent cite-the-span LLM JUDGE on the SEMANTIC question code can't decide:
     // does each rule-gate's prompt ACTUALLY fetch rules at runtime (vs hardcode), and does each
@@ -9537,6 +9569,7 @@ const review_agent: BrainTool = {
           deterministic: findings,
           judge,
           codeCritique,
+          executionNotes,
           reviewFailures,
           blocking: true,
         },
@@ -9553,6 +9586,7 @@ const review_agent: BrainTool = {
         deterministic: findings,
         judge,
         codeCritique,
+        executionNotes,
         reviewFailures,
       },
     };

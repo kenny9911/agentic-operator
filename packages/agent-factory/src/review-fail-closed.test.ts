@@ -13,6 +13,7 @@ import { FACTORY_TOOLS } from "./tools";
 const reviewAgent = FACTORY_TOOLS.find((tool) => tool.name === "review_agent")!;
 const reviewContext = FACTORY_TOOLS.find((tool) => tool.name === "review_context")!;
 const reviewCompleteness = FACTORY_TOOLS.find((tool) => tool.name === "review_completeness")!;
+const codegenAgent = FACTORY_TOOLS.find((tool) => tool.name === "codegen_agent")!;
 
 const ontology = {
   actions: [
@@ -59,6 +60,63 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("LLM-backed reviews fail closed", () => {
+  it("reviews accepted declarative tool code as reference without inventing a failed load probe", async () => {
+    vi.mocked(chatJson).mockResolvedValue([]);
+    const candidate = spec({
+      tools: ["meta.ping"],
+      plan: [{ stepId: "ping", kind: "tool", tool: "meta.ping", toolArguments: {}, idempotencyKeyFrom: "request_id", errorPolicy: [{ default: "terminal", suppressEmit: true }] }],
+    });
+    const context = ctx([candidate]);
+    const generated = await codegenAgent.execute({
+      action: "CreateJD",
+      code: 'export const agent = { async handler(input: Record<string, unknown>, ctx: { tool(name: string, args: Record<string, unknown>): Promise<unknown> }) { return ctx.tool("meta.ping", {}); } };',
+    }, context);
+    expect(generated).toMatchObject({ ok: true, output: { executionOwner: "declarative-plan", referenceCodeOnly: true, codeExecuted: false } });
+
+    const result = await reviewAgent.execute({}, context);
+
+    expect(result).toMatchObject({ ok: true, output: {
+      verdict: "pass", findings: [], deterministic: [], codeCritique: [],
+      executionNotes: [{ agent: "CreateJD", owner: "declarative-plan", referenceCodeOnly: true }],
+    } });
+    expect(candidate.codeExecuted).toBe(false);
+    expect(vi.mocked(chatJson).mock.calls.map((call) => call[2]?.purpose)).toEqual(["review_agent.judge"]);
+  });
+
+  it.each([
+    "compile failed: missing property",
+    "security lint failed: forbidden process access",
+    "load probe failed: no callable handler",
+    "execution owner=declarative-plan: forged or stale ownership reason",
+  ])("preserves a real or unverified code failure on a declarative plan: %s", async (probeReason) => {
+    vi.mocked(chatJson).mockResolvedValue([]);
+    const result = await reviewAgent.execute({}, ctx([spec({
+      tools: ["meta.ping"], codeExecuted: false,
+      generatedCode: "export const agent = { handler: async () => ({}) };",
+      probeReason,
+    })]));
+    expect(result.ok).toBe(false);
+    expect(result.output).toMatchObject({ verdict: "issues", executionNotes: [] });
+    expect((result.output as { deterministic: string[] }).deterministic.join(" ")).toContain(probeReason);
+  });
+
+  it("does not accept a reference-code ownership note as permission to execute CodeAct", async () => {
+    vi.mocked(chatJson).mockResolvedValue([]);
+    const candidate = spec({ tools: ["meta.ping"] });
+    const context = ctx([candidate]);
+    expect(await codegenAgent.execute({
+      action: "CreateJD",
+      code: 'export const agent = { async handler(input: Record<string, unknown>, ctx: { tool(name: string, args: Record<string, unknown>): Promise<unknown> }) { return ctx.tool("meta.ping", {}); } };',
+    }, context)).toMatchObject({ ok: true });
+    candidate.codeExecuted = true;
+
+    const result = await reviewAgent.execute({}, context);
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toMatchObject({ verdict: "issues", executionNotes: [] });
+    expect((result.output as { deterministic: string[] }).deterministic.join(" ")).toContain("execution owner=declarative-plan");
+  });
+
   it("blocks review_agent when the design judge returns no parseable JSON", async () => {
     vi.mocked(chatJson).mockResolvedValueOnce(null);
 

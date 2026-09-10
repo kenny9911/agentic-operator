@@ -75,8 +75,9 @@ export type AgentDesignLite = {
   decisionLogic: string;
   code?: string;
   codeSource?: "ai" | "render";
-  /** #REDESIGN FU3 — graded truly executable (CodeAct): compiled + AST-linted + load-probed. When
-   *  false the runtime executes it declaratively; `probeReason` says why the code was rejected. */
+  /** CodeAct eligibility: compiled + AST-linted + load-probed. False also
+   * covers an intentional declarative owner with reference TypeScript;
+   * probeReason distinguishes that decision from code validation failures. */
   codeExecuted?: boolean;
   probeReason?: string;
 };
