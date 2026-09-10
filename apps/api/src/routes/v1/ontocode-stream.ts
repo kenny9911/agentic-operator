@@ -211,7 +211,13 @@ export async function ontocodeStreamRoutes(
       }
     };
 
+    req.raw.on("close", close);
+    req.raw.on("error", close);
+    raw.on("close", close);
+    raw.on("error", close);
+
     await poll();
+    if (closed || raw.destroyed || raw.writableEnded) return reply;
     pollTimer = setInterval(() => void poll(), POLL_MS);
     heartbeatTimer = setInterval(() => {
       void write(`: heartbeat ${Date.now()}\n\n`);
@@ -221,8 +227,6 @@ export async function ontocodeStreamRoutes(
     heartbeatTimer.unref?.();
     timeoutTimer.unref?.();
 
-    req.raw.on("close", close);
-    req.raw.on("error", close);
   });
 }
 

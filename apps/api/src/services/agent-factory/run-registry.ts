@@ -216,6 +216,24 @@ export function subscribeRun(
   };
 }
 
+/** Capture history and subscribe atomically; the SSE consumer replays at socket speed. */
+export function subscribeRunWithReplay(
+  runId: string,
+  cb: Subscriber,
+  tenantId?: string,
+): { replay: Frame[]; unsubscribe: () => void } | null {
+  const run = runsReg.get(runId);
+  if (!run || (tenantId && run.tenantId !== tenantId)) return null;
+  const replay: Frame[] = [{ t: "run.started", runId }, ...run.events];
+  if (run.status === "running") run.subscribers.add(cb);
+  return {
+    replay,
+    unsubscribe: () => {
+      run.subscribers.delete(cb);
+    },
+  };
+}
+
 /** Abort a run (the stop button) — signals the conductor, which breaks at the next
  *  turn boundary and runs its cleanup (sandbox teardown etc.). */
 export function abortRun(runId: string, tenantId?: string): boolean {

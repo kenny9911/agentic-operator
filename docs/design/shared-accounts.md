@@ -43,7 +43,8 @@ Tenant-scoped API tokens retain their separate machine-authentication policy.
 
 The OntoPlanet Agent OS link targets the configured Operator web origin's root
 (`/`, locally port 3599). Operator verifies its own existing session through the
-API. A valid session continues to `/portal`, where the current tenant routing applies. An unsigned visitor sees an automatically opened sign-in/signup
+API. A valid session continues to `/portal`, where the current tenant routing
+applies. An unsigned visitor sees an automatically opened sign-in/signup
 dialog on the Agent OS origin. Closing the dialog leaves an Enter Agent OS
 button; no tokens or cookies are transferred from the suite landing page.
 
@@ -118,6 +119,13 @@ existing heartbeat/poll (up to 15 seconds); they transmit no subsequent protecte
 frame after a failed recheck. This does not cancel an already-authorized durable
 agent run, which has its own operational cancellation policy.
 
+Factory reconnect captures history and subscribes to live events synchronously,
+then awaits each authorized historical write at the socket's pace. The bounded
+queue contains only new arrivals during replay; a long existing transcript cannot
+overflow its own replay. Closing the stream releases any pending drain wait and
+removes its subscription. OntoCode registers disconnect handlers before its first
+poll and starts periodic timers only if that poll leaves the connection open.
+
 The fixed-tenant `AO_API_KEY` live execution bridge is still separate. Shared
 accounts do not make that service credential suitable for multi-tenant access.
 
@@ -133,7 +141,12 @@ user-facing errors. The public `/v1/auth/config` reveals only `accounts` or
 server configuration.
 
 Regression coverage lives in `apps/api/test/account-authority.test.ts`, alongside
-the existing lifecycle/run-log stream and local auth/RBAC suites. Those tests use
+the existing lifecycle/run-log stream and local auth/RBAC suites.
+`apps/api/test/sse-account-lifecycle-regression.test.ts` exercises the real stream
+routes with controlled authorization and socket seams: initial inspection denial,
+disconnect during inspection, 600-frame durable/live replay, subscriber cleanup,
+and revocation while replay is waiting for socket drain. All five regression cases
+passed after the stream cleanup fixes. Those tests use
 a mocked authority and isolated SQLite fixtures; they do not prove a deployment
 has applied migrations, configured PostgreSQL, connected both products or passed
 a real administrative approval round trip.

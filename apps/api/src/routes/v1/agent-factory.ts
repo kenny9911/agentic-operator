@@ -78,7 +78,7 @@ import {
 } from "../../services/agent-factory/mailbox";
 import {
   startRun,
-  subscribeRun,
+  subscribeRunWithReplay,
   abortRun,
   readDurableRun,
   forceFinalizeAborted,
@@ -3843,13 +3843,16 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
 
     let unsub: (() => void) | null = null;
     let ended = false;
+    let replaying = true;
     let unregisterDrain: () => void = () => undefined;
     let keepalive: ReturnType<typeof setInterval> | null = null;
+    let releaseWrite: (() => void) | null = null;
     const closeStream = () => {
       if (ended) return;
       ended = true;
       if (keepalive) clearInterval(keepalive);
-      if (unsub) unsub();
+      unsub?.();
+      releaseWrite?.();
       unregisterDrain();
       try {
         reply.raw.end();
@@ -3863,24 +3866,49 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
       "agents.invoke",
       closeStream,
     );
+    const write = async (data: string): Promise<boolean> => {
+      if (ended || !(await authorized()) || ended) return false;
+      try {
+        if (reply.raw.destroyed || reply.raw.writableEnded) {
+          closeStream();
+          return false;
+        }
+        if (!reply.raw.write(data)) {
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              reply.raw.off("drain", done);
+              reply.raw.off("close", done);
+              reply.raw.off("error", done);
+              releaseWrite = null;
+              resolve();
+            };
+            releaseWrite = done;
+            reply.raw.once("drain", done);
+            reply.raw.once("close", done);
+            reply.raw.once("error", done);
+            if (ended) done();
+          });
+        }
+        return !ended;
+      } catch {
+        closeStream();
+        return false;
+      }
+    };
     const pending: Array<{ data: string; end?: boolean }> = [];
     let draining = false;
     const drain = async () => {
-      if (draining || ended) return;
+      if (draining || ended || replaying) return;
       draining = true;
       try {
         while (!ended && pending.length) {
-          if (!(await authorized()) || ended) return;
           const next = pending.shift()!;
-          // Durable reconnect handles a slow consumer without accumulating
-          // unbounded frames or flushing data after account revocation.
-          if (!reply.raw.write(next.data) || next.end) {
+          if (!(await write(next.data))) return;
+          if (next.end) {
             closeStream();
             return;
           }
         }
-      } catch {
-        closeStream();
       } finally {
         draining = false;
         if (ended) pending.length = 0;
@@ -3895,10 +3923,10 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
       pending.push({ data, end });
       void drain();
     };
-    keepalive = setInterval(() => {
-      enqueue(
-        isActiveRun(reconnectId) ? 'data: {"t":"ping"}\n\n' : ": ping\n\n",
-      );
+    keepalive = setInterval(async () => {
+      // Recheck even while a replay is blocked on a slow socket.
+      if (!(await authorized()) || ended) return;
+      enqueue(isActiveRun(reconnectId) ? 'data: {"t":"ping"}\n\n' : ": ping\n\n");
     }, 15_000);
     const endStream = () => enqueue("event: end\ndata: ok\n\n", true);
     req.raw.on("close", closeStream);
@@ -3908,31 +3936,70 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
     unregisterDrain = registerStreamDrain(closeStream);
 
     const send = (f: unknown) => {
-      enqueue(frame(f));
-      if (f && typeof f === "object" && (f as { t?: string }).t === "done")
-        endStream();
+      try {
+        enqueue(frame(f));
+        if (f && typeof f === "object" && (f as { t?: string }).t === "done")
+          endStream();
+      } catch {
+        closeStream();
+      }
+    };
+    const replayFrame = async (f: unknown) => {
+      if (!(await write(frame(f)))) return false;
+      if (f && typeof f === "object" && (f as { t?: string }).t === "done") {
+        await write("event: end\ndata: ok\n\n");
+        closeStream();
+        return false;
+      }
+      return true;
     };
 
-    // Attach to the live run, or replay from the durable row.
-    unsub = subscribeRun(reconnectId, send, req.auth.tenantId);
-    if (!unsub) {
-      const durable = await readDurableRun(reconnectId, req.auth.tenantId);
-      send({ t: "run.started", runId: reconnectId });
-      if (durable?.deleted) {
-        send({
-          t: "message",
-          text: "该运行已被删除（在回收站中，可在历史里恢复后再查看）。",
-        });
-      } else if (durable) {
-        for (const e of durable.transcript) send(e);
-        send({ t: "message", text: "（已从存档回放该运行）" });
-      } else {
-        send({
-          t: "message",
-          text: "该运行不在内存中且无存档——可能已被清理。",
-        });
+    // Subscribe before awaiting replay so live arrivals cannot fall into a gap.
+    // Historical frames are read one at a time; only new live arrivals use the
+    // bounded queue. A long transcript therefore cannot overflow its own replay.
+    const subscription = subscribeRunWithReplay(reconnectId, send, auth.tenantId);
+    unsub = subscription?.unsubscribe ?? null;
+    try {
+      if (ended) {
+        unsub?.();
+        return reply;
       }
-      endStream();
+      if (subscription) {
+        for (const event of subscription.replay) {
+          if (!(await replayFrame(event))) break;
+        }
+      } else {
+        const durable = await readDurableRun(reconnectId, auth.tenantId);
+        if (!(await replayFrame({ t: "run.started", runId: reconnectId })))
+          return reply;
+        if (durable?.deleted) {
+          await replayFrame({
+            t: "message",
+            text: "该运行已被删除（在回收站中，可在历史里恢复后再查看）。",
+          });
+        } else if (durable) {
+          for (const event of durable.transcript) {
+            if (!(await replayFrame(event))) break;
+          }
+          if (!ended)
+            await replayFrame({ t: "message", text: "（已从存档回放该运行）" });
+        } else {
+          await replayFrame({
+            t: "message",
+            text: "该运行不在内存中且无存档——可能已被清理。",
+          });
+        }
+        endStream();
+      }
+    } catch (error) {
+      req.log.error(
+        { error, runId: reconnectId },
+        "[factory.stream] replay failed",
+      );
+      closeStream();
+    } finally {
+      replaying = false;
+      if (!ended) void drain();
     }
     return reply;
   });
