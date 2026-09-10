@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHmac, generateKeyPairSync } from "node:crypto";
@@ -21,6 +21,9 @@ import {
   canonicalEvidenceJson,
   sandboxExecutionPlaneCapabilities,
   signSandboxExecutionPlaneAttestation,
+  sandboxCleanupReceiptHash,
+  sandboxRunDrainReceiptHash,
+  type SandboxCleanupReceipt,
 } from "@agentic/agent-factory";
 import { signSandboxCancelFenceAck } from "../src/services/agent-factory/sandbox-cancel-fence";
 
@@ -124,6 +127,34 @@ function cancelFenceAck(candidate: SandboxCandidateBundle) {
     fencedAt,
     expiresAt: "2026-07-17T00:00:00.000Z",
   });
+}
+
+function cleanupReceipt(candidate: SandboxCandidateBundle): SandboxCleanupReceipt {
+  const runDrain = {
+    schema: "agent-factory-sandbox-run-drain/v1" as const,
+    sandboxAttemptId: candidate.attemptId,
+    sandboxTenantSlug: candidate.sandboxTenantSlug,
+    appId: `agentic-factory-sandbox-${candidate.sandboxTenantSlug}`,
+    startedAt: "2026-07-16T00:00:00.000Z",
+    completedAt: "2026-07-16T00:00:00.000Z",
+    observedRuns: [],
+    evidenceHash: "",
+  };
+  runDrain.evidenceHash = sandboxRunDrainReceiptHash(runDrain);
+  const receipt: SandboxCleanupReceipt = {
+    schema: "agent-factory-sandbox-cleanup/v2",
+    sandboxAttemptId: candidate.attemptId,
+    sandboxTenantSlug: candidate.sandboxTenantSlug,
+    appId: runDrain.appId,
+    candidateFingerprint: candidate.candidateFingerprint,
+    targetDomainId: candidate.targetDomainId,
+    runDrain,
+    deletedAt: runDrain.completedAt,
+    absence: { connected: false, functionCount: null, registryState: "not_registered" },
+    absenceProbeHash: "",
+  };
+  receipt.absenceProbeHash = sandboxCleanupReceiptHash(receipt);
+  return receipt;
 }
 
 function root(): string {
@@ -695,7 +726,7 @@ describe("sandbox runner control readiness", () => {
     await app.close();
   });
 
-  it("never reconciles an explicit persisted cleanup failure", async () => {
+  it("never automatically reconciles an explicit persisted cleanup failure", async () => {
     const journalDir = root();
     const candidate = bundle("attempt-persisted-cleanup-failure-1");
     writeJournal(journalDir, {
@@ -736,6 +767,72 @@ describe("sandbox runner control readiness", () => {
     expect(service.jobs.get(candidate.attemptId)?.status).toBe("failed");
     await app.close();
   });
+
+  it.each(["verified", "missing_receipt", "wrong_candidate", "wrong_attempt", "wrong_app", "bad_hash", "stale_nonce", "bad_mac", "active_workload", "registered_app", "persistence_failed"])(
+    "explicit cleanup repair requires fresh exact proof: %s",
+    async (variant) => {
+      const journalDir = root();
+      const candidate = { ...bundle("attempt-explicit-repair"), candidateFingerprint: "candidate-1", targetDomainId: "domain-1" };
+      const originalError = { code: "sandbox_cleanup_failed", message: "original deletion failure" };
+      writeJournal(journalDir, {
+        schema: "agent-factory-sandbox-runner-job/v1", attemptId: candidate.attemptId,
+        bundleHash: candidate.bundleHash, bundle: candidate, status: "failed",
+        createdAt: 1, updatedAt: 1, error: originalError,
+      });
+      const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url).endsWith("/cancel")) {
+          const command = JSON.parse(String(init?.body));
+          expect(command.cleanupRepairNonce).toMatch(/^[a-f0-9-]{36}$/);
+          const receipt = cleanupReceipt(candidate);
+          if (variant === "wrong_candidate") receipt.candidateFingerprint = "another-candidate";
+          if (variant === "wrong_attempt") receipt.sandboxAttemptId = "another-attempt";
+          if (variant === "wrong_app") receipt.appId = "another-app";
+          if (variant !== "bad_hash") receipt.absenceProbeHash = sandboxCleanupReceiptHash(receipt);
+          else receipt.absenceProbeHash = "tampered";
+          const { integrityMac: _oldMac, ...base } = cancelFenceAck(candidate);
+          const ack = signSandboxCancelFenceAck(cancelFenceKey, {
+            ...base,
+            cleanupRepairNonce: variant === "stale_nonce" ? "prior-request-nonce" : command.cleanupRepairNonce,
+            ...(variant === "missing_receipt" ? {} : { cleanupReceipt: receipt }),
+          });
+          if (variant === "bad_mac") ack.integrityMac = "0".repeat(64);
+          return Response.json(ack);
+        }
+        if (String(url).endsWith("/health")) return Response.json(workloadHealth({
+          activeExecutions: variant === "active_workload" ? 1 : 0,
+        }));
+        // Fail only the final repair journal write, after the authenticated
+        // nonce has persisted and all network proof has been checked.
+        if (variant === "persistence_failed") chmodSync(journalDir, 0o500);
+        return Response.json({ data: { apps: variant === "registered_app" ? [{ name: `agentic-factory-sandbox-${candidate.sandboxTenantSlug}` }] : [] } });
+      }) as unknown as typeof fetch;
+      const app = Fastify();
+      const service = await registerSandboxRunnerJobRoutes({ app, config: config(journalDir), execute: vi.fn(), fetchFn });
+      try {
+        const cancel = await app.inject({ method: "POST", url: `/internal/v1/sandbox-jobs/${candidate.attemptId}/cancel`, payload: signRemoteSandboxMessage({
+          purpose: "cancel", keyId: "key-1", secret: requestKey,
+          payload: { schema: "agent-factory-sandbox-cancel/v1", attemptId: candidate.attemptId, bundleHash: candidate.bundleHash },
+        }) });
+        const journal = JSON.parse(readFileSync(path.join(journalDir, `${candidate.attemptId}.json`), "utf8"));
+        expect(journal.error).toEqual(originalError);
+        expect(service.jobs.get(candidate.attemptId)?.error).toEqual(originalError);
+        if (variant === "verified") {
+          expect(cancel.statusCode).toBe(200);
+          expect(journal).toMatchObject({ status: "cancelled", cleanupRepair: { previousStatus: "failed", fence: { cleanupReceipt: cleanupReceipt(candidate) } } });
+          await expect(service.health()).resolves.toMatchObject({ ok: true, failedJobs: 0, cleanupFailures: 0 });
+          const restarted = Fastify();
+          const reloaded = await registerSandboxRunnerJobRoutes({ app: restarted, config: config(journalDir), execute: vi.fn(), fetchFn });
+          expect(reloaded.jobs.get(candidate.attemptId)).toMatchObject({ status: "cancelled", error: originalError, cleanupRepair: journal.cleanupRepair });
+          reloaded.close(); await restarted.close();
+        } else {
+          expect(cancel.statusCode).toBe(400);
+          expect(journal.status).toBe("failed");
+          expect(journal.cleanupRepair).toBeUndefined();
+          await expect(service.health()).resolves.toMatchObject({ ok: false, failedJobs: 1, cleanupFailures: 1 });
+        }
+      } finally { chmodSync(journalDir, 0o700); service.close(); await app.close(); }
+    },
+  );
 
   it("persists the authenticated nonce ledger across a control restart", async () => {
     const journalDir = root();

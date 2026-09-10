@@ -13,6 +13,7 @@ import {
 import path from "node:path";
 
 import { canonicalEvidenceJson } from "@agentic/agent-factory";
+import type { SandboxCleanupReceipt } from "@agentic/agent-factory";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/;
 export const SANDBOX_CANCEL_FENCE_SCHEMA =
@@ -42,6 +43,8 @@ export interface SandboxCancelFenceAckBody {
   expiresAt: string;
   terminalStatus?: "completed" | "cancelled" | "failed";
   terminalCompletedAt?: string;
+  cleanupRepairNonce?: string;
+  cleanupReceipt?: SandboxCleanupReceipt;
 }
 
 export interface SandboxCancelFenceAck extends SandboxCancelFenceAckBody {
