@@ -11,6 +11,7 @@ import type {
   FunctionTestAssertions,
   FunctionValueAssertion,
 } from "./function-test-contract";
+import type { CaseKind } from "./verification";
 
 /** 把 ts_function_module 源码变换成一个自包含、可在隔离里执行的测试模块。
  *  - 剥掉真实 import(inngest client 等——隔离里本就 stub;这里换成 mock);
@@ -102,9 +103,11 @@ export function harnessTsModuleForTest(moduleCode: string): string {
     "  __g.__agentInvokeTarget = (ref) => ({ __agentRef: String(ref) });",
     "  try {",
     "    const result = await __fn.handler({ event: event ?? {}, step, logger });",
-    "    return { ran: __fixtureErrors.length === 0, result, emits: __emits, emitNames: __emits.map((e) => e && e.name).filter(Boolean), toolCalls: __toolCalls, runStepIds: __runStepIds, runSteps: __runSteps, fixtureErrors: __fixtureErrors };",
+    "    return { ran: __fixtureErrors.length === 0, handlerStarted: true, result, emits: __emits, emitNames: __emits.map((e) => e && e.name).filter(Boolean), toolCalls: __toolCalls, runStepIds: __runStepIds, runSteps: __runSteps, fixtureErrors: __fixtureErrors };",
     "  } catch (e) {",
-    "    return { ran: false, error: String((e && e.message) || e), emits: __emits, emitNames: __emits.map((e) => e && e.name).filter(Boolean), toolCalls: __toolCalls, runStepIds: __runStepIds, runSteps: __runSteps, fixtureErrors: __fixtureErrors };",
+    "    const error = String((e && e.message) || e);",
+    "    const terminalFailure = (e && e.name === 'NonRetriableError') || /^\\[terminal\\](?:\\s|$)/.test(error);",
+    "    return { ran: false, handlerStarted: true, terminalFailure, error, emits: __emits, emitNames: __emits.map((e) => e && e.name).filter(Boolean), toolCalls: __toolCalls, runStepIds: __runStepIds, runSteps: __runSteps, fixtureErrors: __fixtureErrors };",
     "  } finally {",
     "    __g.__agentTool = __prevTool; __g.__agentReason = __prevReason; __g.__agentInvokeTarget = __prevInvokeTarget;",
     "  }",
@@ -133,6 +136,8 @@ export interface FunctionTestVerdict {
 
 interface FunctionHarnessObservation {
   ran?: boolean;
+  handlerStarted?: boolean;
+  terminalFailure?: boolean;
   error?: string;
   result?: unknown;
   state?: unknown;
@@ -259,7 +264,7 @@ export function assertionFailuresForObservation(
  *  result 字段(= __run 的返回:{ran, result?, emits?, emitNames?, error?})。 */
 export function gradeFunctionTest(
   runResult: { ok?: boolean; result?: unknown; error?: string; timedOut?: boolean; crashed?: boolean } | null,
-  opts: { expectEmits?: string[]; assertions?: FunctionTestAssertions; exactEmits?: boolean } = {},
+  opts: { expectEmits?: string[]; assertions?: FunctionTestAssertions; exactEmits?: boolean; caseKind?: CaseKind } = {},
 ): FunctionTestVerdict {
   const reasons: string[] = [];
   if (!runResult || runResult.ok === false) {
@@ -267,16 +272,32 @@ export function gradeFunctionTest(
     return { ran: false, emittedExpected: false, emitNames: [], error: why, pass: false, reasons: [`未跑通:${why}`], fixtureErrors: [], assertionFailures: [], unexpectedEmits: [], forbiddenEmitsObserved: [] };
   }
   const r = (runResult.result ?? {}) as FunctionHarnessObservation;
-  const ran = r.ran === true;
   const emitNames = Array.isArray(r.emitNames) ? r.emitNames : [];
   const fixtureErrors = Array.isArray(r.fixtureErrors) ? r.fixtureErrors : [];
-  if (!ran) reasons.push(`handler 抛错/未跑通:${r.error ?? "未知"}`);
-  else reasons.push(`handler 真跑通,发出事件:${emitNames.join("、") || "(无)"}`);
   const expect = opts.expectEmits ?? [];
+  // Only an explicit rejection case with no authored event expectation may
+  // expect terminal failure. Infrastructure errors and missing evidence never
+  // become business rejections, and an emitted event forbids this outcome.
+  const expectedTerminalRejection = opts.caseKind === "reject"
+    && expect.length === 0
+    && !(opts.assertions?.emits?.length)
+    && r.handlerStarted === true
+    && r.ran === false
+    && r.terminalFailure === true
+    && emitNames.length === 0
+    && !(r.emits?.length)
+    && fixtureErrors.length === 0;
+  const ran = r.ran === true || expectedTerminalRejection;
+  if (expectedTerminalRejection) reasons.push("handler 按拒绝用例契约终止，未提交任何事件");
+  else if (!ran) reasons.push(`handler 抛错/未跑通:${r.error ?? "未知"}`);
+  else reasons.push(`handler 真跑通,发出事件:${emitNames.join("、") || "(无)"}`);
   const emittedExpected = expect.length === 0 ? ran : expect.some((e) => emitNames.includes(e));
   if (expect.length && !emittedExpected) reasons.push(`期望 emit 之一 [${expect.join("、")}] 未出现`);
   if (fixtureErrors.length) reasons.push(`测试 fixture 不完整:${fixtureErrors.join("；")}`);
   const assertionResult = assertionFailuresForObservation(r, opts);
+  if (opts.caseKind === "reject" && expect.length === 0 && !(opts.assertions?.emits?.length) && !expectedTerminalRejection) {
+    assertionResult.failures.push("拒绝用例必须以明确终态错误结束且不发出事件");
+  }
   reasons.push(...assertionResult.failures);
   return {
     ran,

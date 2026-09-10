@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadApprovedFunctionTestCassette, testGeneratedFunction } from "../src/services/agent-factory/function-tester-run";
+import { preliminaryFunctionExpectedEvent } from "../src/services/agent-factory/sandbox-deployer";
 import type { GeneratedAgentSpec } from "@agentic/agent-factory";
 import { makeToolCassetteEntry } from "@agentic/shared/cassette";
 
@@ -17,6 +18,96 @@ function spec(over: Partial<GeneratedAgentSpec> = {}): GeneratedAgentSpec {
     steps: [], ruleRefs: [], retries: 3, hitl: false, confidence: 0.9, promptSource: "llm" as GeneratedAgentSpec["promptSource"], ...over,
   } as GeneratedAgentSpec;
 }
+
+describe("preliminary function test rejection expectations", () => {
+  it("requires an explicit event for multiple unique rejection outcomes unless terminal suppression is authored", () => {
+    const candidate = spec({ tools: [], emit: ["REJECTED", "DENIED", "DONE"] });
+    expect(() => preliminaryFunctionExpectedEvent(candidate, { kind: "reject" })).toThrow(/expectedEvent/);
+    expect(preliminaryFunctionExpectedEvent(candidate, { kind: "reject", expectedEvent: "DENIED" })).toBe("DENIED");
+    expect(preliminaryFunctionExpectedEvent({ ...candidate, emit: ["REJECTED", "REJECTED", "DONE"] }, { kind: "reject" })).toBe("REJECTED");
+    candidate.plan = [{ stepId: "validate", kind: "logic", errorPolicy: [{ default: "terminal", suppressEmit: true }] }];
+    expect(preliminaryFunctionExpectedEvent(candidate, { kind: "reject" })).toBeUndefined();
+  });
+  it("preserves declared rejection events but never infers rejection from a sole success event", () => {
+    const rejection = spec({ tools: [], emit: ["MESSAGE_ACKNOWLEDGED", "MESSAGE_REJECTED"] });
+    expect(preliminaryFunctionExpectedEvent(rejection, { kind: "reject" })).toBe("MESSAGE_REJECTED");
+    expect(preliminaryFunctionExpectedEvent(spec({ tools: [], emit: ["MESSAGE_ACKNOWLEDGED"] }), { kind: "reject" })).toBeUndefined();
+    rejection.plan = [{ stepId: "validate", kind: "logic", errorPolicy: [{ default: "terminal", suppressEmit: true }] }];
+    expect(preliminaryFunctionExpectedEvent(rejection, { kind: "reject" })).toBeUndefined();
+    expect(preliminaryFunctionExpectedEvent(rejection, { kind: "reject", expectedEvent: "MESSAGE_REJECTED" })).toBe("MESSAGE_REJECTED");
+  });
+
+  function module(body: string): string {
+    return [
+      'import { inngest } from "@/server/inngest/client";',
+      'import { NonRetriableError } from "inngest";',
+      'export const candidate = inngest.createFunction({ id: "local-rejection" }, { event: "START" }, async ({ event, step }) => {',
+      body,
+      '});',
+    ].join("\n");
+  }
+
+  it.each([
+    ['throw new Error("[terminal] invalid_input");', true],
+    ['throw new NonRetriableError("invalid_input");', true],
+    ['throw new Error("unexpected failure");', false],
+    ['throw new Error("[park] temporary failure");', false],
+    ['return { ok: true };', false],
+    ['await step.sendEvent("done", { name: "DONE", data: {} }); return { ok: true };', false],
+    ['await step.sendEvent("done", { name: "DONE", data: {} }); throw new Error("[terminal] too late");', false],
+  ])("executes the handler and grades reject/no-event correctly: %s", async (body, pass) => {
+    const result = await testGeneratedFunction(spec({ tools: [] }), {
+      code: module(body),
+      tier: "worker",
+      caseKind: "reject",
+      testEvent: { name: "START", data: { message: "   " } },
+    });
+    expect(result.verdict.pass).toBe(pass);
+    if (pass) {
+      expect(result.verdict.ran).toBe(true);
+      expect(result.verdict.emitNames).toEqual([]);
+      expect(result.verdict.error).toContain("invalid_input");
+    }
+  });
+
+  it.each(["pass", "edge", "fault"] as const)("keeps terminal handler errors failing for %s cases", async (caseKind) => {
+    const result = await testGeneratedFunction(spec({ tools: [] }), {
+      code: module('throw new Error("[terminal] invalid_input");'),
+      tier: "worker",
+      caseKind,
+    });
+    expect(result.verdict.pass).toBe(false);
+    expect(result.verdict.error).toBe("[terminal] invalid_input");
+  });
+
+  it("preserves an authored rejection-event expectation instead of accepting a silent throw", async () => {
+    const candidate = spec({ tools: [], emit: ["DONE", "REJECTED"] });
+    const emitted = await testGeneratedFunction(candidate, {
+      code: module('await step.sendEvent("reject", { name: "REJECTED", data: { reason: "invalid_input" } }); return { rejected: true };'),
+      tier: "worker",
+      caseKind: "reject",
+      expectEmits: ["REJECTED"],
+    });
+    expect(emitted.verdict.pass).toBe(true);
+    const silent = await testGeneratedFunction(candidate, {
+      code: module('throw new Error("[terminal] invalid_input");'),
+      tier: "worker",
+      caseKind: "reject",
+      expectEmits: ["REJECTED"],
+    });
+    expect(silent.verdict.pass).toBe(false);
+  });
+
+  it("does not turn missing tool evidence into a terminal business rejection", async () => {
+    const result = await testGeneratedFunction(spec({ tools: [] }), {
+      code: module('try { await globalThis.__agentTool("unconfigured.tool", {}); } catch { throw new Error("[terminal] invalid_input"); }'),
+      tier: "worker",
+      caseKind: "reject",
+    });
+    expect(result.verdict.pass).toBe(false);
+    expect(result.verdict.fixtureErrors.join(" ")).toContain("missing approved cassette");
+  });
+});
 
 function successfulParseCassette(uploadId: string, body: unknown = { name: "张三" }) {
   return {

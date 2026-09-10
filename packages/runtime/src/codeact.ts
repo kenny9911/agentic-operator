@@ -448,6 +448,9 @@ interface GeneratedCodeTelemetry {
   productionAttested: boolean;
   /** True only after Docker started the one-shot container for these bytes. */
   executorStarted: boolean;
+  /** Trusted candidate bootstrap reached the captured handler invocation.
+   * Missing legacy stage evidence must never be treated as true. */
+  handlerStarted?: boolean;
   /** Exit/removal evidence authored by the trusted container executor. */
   containerEvidence?: CodeActContainerExecutionEvidence;
   /** Exact result of the runtime attestation gate. */
@@ -468,6 +471,9 @@ export type GeneratedCodeExecutionResult =
   | (GeneratedCodeTelemetry & {
       ok: false;
       failure: GeneratedCodeFailure;
+      /** Trusted bootstrap exception stage; missing/unknown is not a
+       * handler rejection even when the container itself started. */
+      failureStage?: "setup" | "handler" | "result";
       error: string;
       timedOut?: boolean;
       crashed?: boolean;
@@ -571,12 +577,14 @@ export async function runGeneratedCodeIsolated(
     executorStarted = false,
     durationMs = Date.now() - started,
     containerEvidence?: CodeActContainerExecutionEvidence,
+    handlerStarted = false,
   ): GeneratedCodeTelemetry => ({
     isolation: "isolated_container",
     codeSha256,
     durationMs,
     productionAttested: attestation === "production_verified",
     executorStarted,
+    handlerStarted,
     ...(containerEvidence ? { containerEvidence } : {}),
     attestation,
     toolDispatches: [...toolDispatches],
@@ -1032,6 +1040,9 @@ export async function runGeneratedCodeIsolated(
     return {
       ok: false,
       failure: container.failure,
+      failureStage: ["setup", "handler", "result"].includes(container.failureStage ?? "")
+        ? container.failureStage
+        : undefined,
       error: container.error,
       timedOut: container.timedOut,
       crashed: container.crashed,
@@ -1040,6 +1051,7 @@ export async function runGeneratedCodeIsolated(
         container.executorStarted,
         container.durationMs,
         container.evidence,
+        container.handlerStarted === true,
       ),
     };
   }
@@ -1057,6 +1069,7 @@ export async function runGeneratedCodeIsolated(
       true,
       container.durationMs,
       container.evidence,
+      container.handlerStarted === true,
     ),
   };
 }

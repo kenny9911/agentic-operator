@@ -3174,8 +3174,8 @@ describe("OntoCode Harness Worker Adapter", () => {
       });
       expect(JSON.parse(buildJob!.budgetJson ?? "{}")).toEqual({
         maxWallClockMs: 600_000,
-        maxModelCalls: 10,
-        maxToolCalls: 24,
+        maxModelCalls: 20,
+        maxToolCalls: 32,
       });
 
       await expect(worker.runNext()).resolves.toMatchObject({
@@ -3440,8 +3440,8 @@ describe("OntoCode Harness Worker Adapter", () => {
         domain: ontology.domainId,
         budget: {
           maxWallClockMs: 600_000,
-          maxModelCalls: 10,
-          maxToolCalls: 24,
+          maxModelCalls: 20,
+          maxToolCalls: 32,
         },
         directive: expect.objectContaining({
           requestedActionIds: ["screen-candidate"],
@@ -3574,8 +3574,8 @@ describe("OntoCode Harness Worker Adapter", () => {
       expect.objectContaining({
         runId: expectedRunId,
         executionBudget: {
-          maxTurns: 10,
-          maxToolCalls: 24,
+          maxTurns: 20,
+          maxToolCalls: 32,
           stableExecutionId: persistedJob.buildExecutionId,
         },
       }),
