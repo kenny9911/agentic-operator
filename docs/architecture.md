@@ -155,7 +155,7 @@ The optional backends are config-flips, not rewrites: `fanout-redis.ts` reports
 authoritative and replicates content-addressed keys out to S3 asynchronously,
 falling back to the backend on a local read miss.
 
-Node is pinned to **26.8.1** to keep local, CI, and Docker runtimes consistent.
+Node is pinned to **26.12.1** to keep local, CI, and Docker runtimes consistent.
 `better-sqlite3` must match the runtime's native-module ABI.
 `scripts/ensure-native-modules.mjs` detects a mismatch via
 `process.dlopen` and rebuilds in place; it is wired into `postinstall` and every

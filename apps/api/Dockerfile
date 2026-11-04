@@ -35,7 +35,7 @@
 # override this global arg with a reviewed docker.io/library/node@sha256:<index
 # digest>, which pins the build, runtime and sandbox-common roots to the same
 # bytes.
-ARG NODE_BASE_IMAGE=node:26.8.1-slim
+ARG NODE_BASE_IMAGE=node:26.12.1-slim
 
 # --- base ----------------------------------------------------------------
 FROM ${NODE_BASE_IMAGE} AS base
@@ -51,7 +51,7 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update \
       ca-certificates \
       tini \
  && rm -rf /var/lib/apt/lists/*
-# node:26.8.1-slim does NOT ship corepack; install pnpm via npm to keep the
+# node:26.12.1-slim does NOT ship corepack; install pnpm via npm to keep the
 # layer reproducible (avoids `corepack: not found`).
 RUN npm install --global pnpm@11.21.0
 WORKDIR /app
@@ -240,6 +240,26 @@ RUN rm -rf /app/node_modules/.pnpm/drizzle-kit@* \
              /sandbox/db /sandbox/models /sandbox/data/logs /sandbox/data/artifacts \
              /sandbox/data/tenants /sandbox/gateway \
  && chown -R agentic:agentic /sandbox
+
+# The broker runs in its own service; these roles never launch the development
+# Inngest CLI or Vitest. Remove their installed trees, not just command links:
+# inngest-cli 1.37 embeds Go 1.26.4/x/net 0.56 and Vitest 3 pulls Tinypool 1.
+# Keep tsx/esbuild and TypeScript, which execute/transpile runtime candidates.
+RUN rm -rf /app/node_modules/.pnpm/inngest-cli@* \
+           /app/node_modules/.pnpm/vitest@* /app/node_modules/.pnpm/@vitest+* \
+           /app/node_modules/.pnpm/tinypool@* \
+           /app/node_modules/inngest-cli /app/node_modules/vitest \
+           /app/node_modules/@vitest /app/node_modules/tinypool \
+           /app/node_modules/.pnpm/node_modules/inngest-cli \
+           /app/node_modules/.pnpm/node_modules/vitest \
+           /app/node_modules/.pnpm/node_modules/@vitest \
+           /app/node_modules/.pnpm/node_modules/tinypool \
+           /app/node_modules/.bin/inngest /app/node_modules/.bin/inngest-cli \
+           /app/node_modules/.bin/vitest \
+           /app/apps/api/node_modules/vitest /app/apps/api/node_modules/@vitest \
+           /app/apps/api/node_modules/.bin/vitest \
+           /app/packages/*/node_modules/vitest /app/packages/*/node_modules/@vitest \
+           /app/packages/*/node_modules/.bin/vitest
 
 # Chromium/CJK fonts are large but change far less often than Factory source.
 # Keep them in a source-independent workload base so the generate -> test ->

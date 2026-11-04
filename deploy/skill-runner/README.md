@@ -1,6 +1,6 @@
 # Isolated Skill script image
 
-This image supplies the fixed staging supervisor, Node **26.8.1**, and a
+This image supplies the fixed staging supervisor, Node **26.12.1**, and a
 separately pinned Debian `python3` package. It is independent of the CodeAct
 Node Agent protocol and does not contain Codex, gateway credentials, the
 workspace, or tenant files. No Skill script runs during image build or staging.

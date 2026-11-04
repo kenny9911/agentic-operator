@@ -6,7 +6,7 @@ These are controlled local measurements with a production Next.js build, not dep
 
 ## Comparison and conditions
 
-The baseline is integration commit `86dc662c`, which combines the existing committed Domain/runtime work at `e2f06ef6` with main `84a1f3b3`. The comparison is against the performance changes built on that integration. The Domain/runtime prerequisite is present on both sides; these results do not compare against an older application without Domain navigation.
+The baseline is integration commit `86dc662c`, which combines the existing committed Domain/runtime work at `e2f06ef6` with main `84a1f3b3`. The comparison is against performance commit `48e12a47`, using Node 26.8.1 and Next.js 16.3.4 on both sides. The Domain/runtime prerequisite is present on both sides; these results do not compare against an older application without Domain navigation. CI subsequently required security updates described below; this table is the controlled performance comparison before those dependency updates.
 
 Both runs used:
 
@@ -104,3 +104,11 @@ Repository-wide validation has distinct blockers and must not be described as fu
 - The final full web, runtime, and API retries encountered `ENOSPC` after storage filled, including API database-open failures. Those attempts do not establish passing full-suite results for the final changes. Focused checks for the integration fixes passed separately: Domain hierarchy 15/15, LLM settings 40/40, and RAAS requirement sync 9/9. Consult the PR's latest required checks for final delivery status.
 
 The baseline integration also exposed two fixture/compatibility issues addressed during validation: reserved legacy tenant slugs such as `__system` must not be forced into new native-adapter coordinates, and a cron delivery test must provision its real namespace before checking the lifecycle-gated producer. Existing adapter validation and the scheduler's archive gate remain enforced.
+
+## CI follow-up
+
+The first remote run passed all 1,159 frontend tests and their coverage thresholds. It exposed an unsupported floating Ubuntu runner for Playwright, a date-sensitive model-catalog test, an unhandled pipe error in a test-only crashed-container transport, and fixable critical image vulnerabilities. The browser job now uses supported Ubuntu 24.04; the catalog test uses a fixed clock and explicit fixtures; the subprocess test transport records pipe failures and waits for stdio closure. Existing crash/reject checks remain enforced.
+
+The exact runtime pin is now Node 26.12.1, with its verified Docker image digest updated consistently. Next.js and its ESLint configuration are 16.4.1; shell-quote and proxy-addr resolve to their patched versions. These versions address the [Node security release](https://nodejs.org/en/blog/release/v26.12.1), [Next.js advisories](https://github.com/advisories/GHSA-673q-mjm6-r5xr), [shell-quote advisory](https://github.com/ljharb/shell-quote/security/advisories/GHSA-pqg4-j6r4-53mv), and [proxy-addr advisory](https://github.com/jshttp/proxy-addr/security/advisories/GHSA-jqcg-44mw-7w3h). Sandbox images also omit unused development Inngest CLI and Vitest/Tinypool trees; runtime tsx/esbuild, TypeScript and the Inngest SDK remain available. No vulnerability gate or test assertion was disabled.
+
+The security-updated production build passed. A subsequent attempt to repeat the browser benchmark could not run because the existing local API had stopped; its database writer lease prevented restart. The lease was respected, and no live migration or lease recovery was attempted. The measurements above remain results from the explicitly identified builds, not a new measurement of the security-updated dependencies. The PR's latest CI checks establish final build, coverage, browser and image validation status.

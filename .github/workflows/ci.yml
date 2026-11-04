@@ -38,7 +38,7 @@ concurrency:
 
 env:
   # Exact repository pin from .nvmrc and package.json#engines.node.
-  NODE_VERSION: "26.8.1"
+  NODE_VERSION: "26.12.1"
   PNPM_VERSION: "11.21.0"
   # Tests assume the mock provider so no real API keys are needed.
   LLM_DEFAULT_PROVIDER: mock
@@ -46,11 +46,11 @@ env:
   # Set NODE_ENV=test to opt into the test-time logging level. (apps/api
   # picks this up in src/server.ts.)
   NODE_ENV: test
-  # node:26.8.1-slim (the repository's pinned Node), as a digest. Refresh by
+  # node:26.12.1-slim (the repository's pinned Node), as a digest. Refresh by
   # resolving the tag with `docker buildx imagetools inspect
   # docker.io/library/node:<tag>` when the Node pin moves. Update .nvmrc,
   # engines, NODE_VERSION, and app Dockerfiles together with this digest.
-  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
+  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0
   # Explicit, test-only bootstrap identity. Production seed has no built-in
   # email/name/password; CI supplies all three like any other deployment.
   AGENTIC_BOOTSTRAP_ADMIN_EMAIL: ci-bootstrap-admin@agentic.invalid

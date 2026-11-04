@@ -28,13 +28,14 @@ interface RecordState {
   stderr: PassThrough;
   child?: ChildProcessWithoutNullStreams;
   exitCode: number;
+  transportError?: string;
   oomKilled: boolean;
   removed: boolean;
   createdAtMs: number;
   closed: Promise<void>;
   close(): void;
-  waited: Promise<{ statusCode: number }>;
-  resolveWait(value: { statusCode: number }): void;
+  waited: Promise<{ statusCode: number; error?: string }>;
+  resolveWait(value: { statusCode: number; error?: string }): void;
 }
 
 /** Test-only transport that exercises the exact JSON-lines bootstrap without
@@ -46,8 +47,8 @@ export class InProcessCodeActContainerTestTransport implements CodeActDockerTran
     const id = randomBytes(32).toString("hex");
     let close!: () => void;
     const closed = new Promise<void>((resolve) => { close = resolve; });
-    let resolveWait!: (value: { statusCode: number }) => void;
-    const waited = new Promise<{ statusCode: number }>((resolve) => { resolveWait = resolve; });
+    let resolveWait!: (value: { statusCode: number; error?: string }) => void;
+    const waited = new Promise<{ statusCode: number; error?: string }>((resolve) => { resolveWait = resolve; });
     this.records.set(id, {
       id,
       config,
@@ -124,32 +125,48 @@ export class InProcessCodeActContainerTestTransport implements CodeActDockerTran
     };
   }
 
-  async start(id: string): Promise<void> {
-    const record = this.required(id);
-    const child = spawn(
+  protected spawnCandidate(): ChildProcessWithoutNullStreams {
+    return spawn(
       process.execPath,
       [bootstrap],
       { stdio: ["pipe", "pipe", "pipe"], env: {}, cwd: "/tmp" },
     );
+  }
+
+  async start(id: string): Promise<void> {
+    const record = this.required(id);
+    const child = this.spawnCandidate();
     record.child = child;
+    // Killing a candidate can close its read end before the executor sends
+    // the initial command or an RPC reply. Pipe errors belong to stdin, not
+    // the ChildProcess emitter; report them through the transport contract.
+    child.stdin.on("error", (error: Error) => {
+      record.transportError ??= `test candidate stdin failed: ${error.message}`;
+      record.input.unpipe(child.stdin);
+      child.kill("SIGKILL");
+    });
     record.input.pipe(child.stdin);
     child.stdout.pipe(record.stdout, { end: false });
     child.stderr.pipe(record.stderr, { end: false });
-    child.once("exit", (code, signal) => {
+    // `close` follows stdio completion, so a pending EPIPE is recorded before
+    // wait resolves and the last stdout frame cannot be truncated by exit.
+    child.once("close", (code, signal) => {
+      record.input.unpipe(child.stdin);
       record.exitCode = typeof code === "number" ? code : signal === "SIGKILL" ? 137 : 1;
-      record.resolveWait({ statusCode: record.exitCode });
+      record.resolveWait({
+        statusCode: record.exitCode,
+        ...(record.transportError ? { error: record.transportError } : {}),
+      });
       record.stdout.end();
       record.stderr.end();
       record.close();
     });
-    child.once("error", () => {
-      record.exitCode = 1;
-      record.resolveWait({ statusCode: 1 });
-      record.close();
+    child.once("error", (error: Error) => {
+      record.transportError ??= `test candidate process failed: ${error.message}`;
     });
   }
 
-  wait(id: string): Promise<{ statusCode: number }> {
+  wait(id: string): Promise<{ statusCode: number; error?: string }> {
     return this.required(id).waited;
   }
 

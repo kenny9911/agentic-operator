@@ -4,7 +4,7 @@
   "private": true,
   "description": "Agentic Operator — event-driven agentic workflow runtime + admin portal",
   "engines": {
-    "node": "26.8.1"
+    "node": "26.12.1"
   },
   "packageManager": "pnpm@11.21.0",
   "scripts": {
