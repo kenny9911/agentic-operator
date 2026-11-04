@@ -32,6 +32,7 @@ import type { DB } from "@agentic/db";
 import { makeId } from "@agentic/shared";
 import {
   logPathFor,
+  assertDomainRuntimeActive,
   clearRunMemory,
   createMemoryHandle,
   createRunInputMemory,
@@ -347,6 +348,15 @@ export async function executeAgentRun<TInput, TOutput>(
       ? SYSTEM_TENANT_SLUG
       : requestedTenantSlug;
   const { id: tenantId } = resolveTenantId(db, tenantSlug, requestedProvider);
+  assertDomainRuntimeActive(tenantId);
+  if (callerTenantSlug !== tenantSlug) {
+    // System-owned agents can still be invoked on behalf of a Domain. A
+    // queued platform delivery must not outlive that caller's authorization
+    // boundary merely because its run rows belong to __system.
+    assertDomainRuntimeActive(
+      resolveTenantId(db, callerTenantSlug, requestedProvider).id,
+    );
+  }
   const { agentId, agentVersionId } = resolveAgentRow(
     db,
     agent.name,

@@ -9,9 +9,14 @@ vi.mock("./specialists", async (importOriginal) => {
   const real = await importOriginal<typeof import("./specialists")>();
   return { ...real, runSpecialists: vi.fn() };
 });
+vi.mock("./stream-gateway", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./stream-gateway")>()),
+  chatJson: vi.fn(),
+}));
 
 import { FACTORY_TOOLS } from "./tools";
 import { runSpecialists } from "./specialists";
+import { chatJson } from "./stream-gateway";
 
 const critique = FACTORY_TOOLS.find((t) => t.name === "critique_plan")!;
 
@@ -37,6 +42,8 @@ beforeEach(() => {
   // api.openai.com with a fake key made the full monorepo suite timing-sensitive.
   process.env.FACTORY_GATEWAY_BASE_URL = "http://127.0.0.1:1";
   vi.mocked(runSpecialists).mockReset();
+  vi.mocked(chatJson).mockReset();
+  vi.mocked(chatJson).mockResolvedValue(null);
 });
 afterEach(() => {
   delete process.env.CUSTOM_LLM_API_KEY;
@@ -56,6 +63,91 @@ const PERSPECTIVES_CTX = {
 };
 
 describe("critique_plan — 三视角分治评审", () => {
+  it.each([false, true])("preserves full plan and selected source contracts for deep=%s without unrelated Action evidence", async (deep) => {
+    vi.mocked(chatJson).mockResolvedValue({ verdict: "ok", issues: [] });
+    vi.mocked(runSpecialists).mockResolvedValue(
+      ["chain", "rules", "contract"].map((id) => ({
+        id, role: id, ok: true, output: { issues: [] }, summary: "",
+      })),
+    );
+    const { ctx } = bigPlanCtx();
+    ctx.generationDirective = {
+      schema: "agent-factory-generation-directive/v1",
+      mode: "action_selection",
+      requestedActionIds: ["a1"], requestedActionNames: ["a1"],
+      requestedActions: [{ id: "a1", name: "a1" }], sourceOntologyHash: "scope-hash",
+    };
+    Object.assign(ctx.ontology!.actions[0]!, {
+      // Contracts after a long procedure must not disappear behind a digest cutoff.
+      instruction: "SOURCE_PROCEDURE ".repeat(600),
+      inputs: [{ name: "request_id", type: "string", required: true }],
+      outputs: [{ name: "ack", type: "string", description: "SOURCE_EXACT_ACK_FROM_INPUT_MESSAGE" }],
+      action_steps: [{ stepId: "ping", kind: "tool", tool: "meta.ping", toolArguments: {}, rules: ["R1"] }],
+      on_failure: "SOURCE_TERMINAL_WITHOUT_SUCCESS_EVENT",
+      target_objects: ["Request"],
+      system_prompt: "SOURCE_REQUIRED_CORRELATION",
+    });
+    ctx.ontology!.actions[1]!.instruction = "EXCLUDED_ACTION_CONTRACT";
+    ctx.ontology!.events = [
+      {
+        name: "a1_IN", payload: { source_action: null, state_mutations: [], event_data: [
+          { name: "request_id", type: "string", target_object: "Request", required: true },
+          { name: "message", type: "string", target_object: "Request", description: "SELECTED_EVENT_INPUT_DESCRIPTION" },
+        ] },
+      },
+      {
+        name: "a1_OUT", payload: { source_action: "a1", state_mutations: [], event_data: [
+          { name: "ack", type: "string", target_object: "Request", description: "SELECTED_EVENT_OUTPUT_DESCRIPTION" },
+        ] },
+      },
+      { name: "a2_IN", description: "EXCLUDED_EVENT_CONTRACT", payload: { source_action: null, state_mutations: [], event_data: [] } },
+    ];
+    ctx.ontology!.objects = [
+      { id: "Request", name: "Request", properties: [{ name: "request_id", description: "SELECTED_OBJECT_CONTRACT" }] },
+      { id: "Other", name: "EXCLUDED_OBJECT_CONTRACT" },
+    ];
+    ctx.ontology!.rules = [
+      { id: "R1", name: "AcknowledgementRule", description: "Rule context ".repeat(30) + "SELECTED_RULE_CONTRACT" },
+      { id: "R2", name: "EXCLUDED_RULE_CONTRACT" },
+    ];
+    ctx.ontologyUnderstanding = "EXCLUDED_FULL_DOMAIN_UNDERSTANDING";
+    ctx.currentPlan = {
+      version: 3, summary: "PLAN_SUMMARY_EXACT_ACK", scope: "full",
+      scopeReason: "SERVER_SELECTED_SCOPE_REASON",
+      notes: ["PLAN_NOTE_REQUEST_ID_PASSTHROUGH", "PLAN_NOTE_MANDATORY_META_PING"],
+      agents: [{ actionName: "a1", role: "readiness", triggerEvents: ["a1_IN"], emitEvents: ["a1_OUT"], toolCandidates: ["meta.ping"], edgeCases: ["PLAN_EDGE_CASE_TERMINAL_ON_TOOL_FAILURE", "PLAN_EDGE_CASE_EMPTY_MESSAGE"] }],
+    };
+    const before = structuredClone({ ontology: ctx.ontology, plan: ctx.currentPlan });
+
+    const result = await critique.execute({ deep }, ctx);
+
+    expect(result.ok).toBe(true);
+    const prompts = deep
+      ? vi.mocked(runSpecialists).mock.calls[0]![1].map((task) => [task.system, task.user])
+      : [vi.mocked(chatJson).mock.calls[0]!.slice(0, 2) as string[]];
+    expect(prompts).toHaveLength(deep ? 3 : 1);
+    for (const [system, user] of prompts) {
+      expect(system).toContain("notes 和每个 agent 的 edgeCases");
+      expect(system).toContain("真实缺失或矛盾仍须指出");
+      expect(system).toContain("本次唯一允许评审、生成和验收的 Action 是：a1");
+      expect(user).toContain(JSON.stringify(ctx.currentPlan));
+      expect(user).toContain(JSON.stringify(ctx.ontology!.actions[0]));
+      for (const marker of ["SELECTED_EVENT_INPUT_DESCRIPTION", "SELECTED_EVENT_OUTPUT_DESCRIPTION", "SELECTED_OBJECT_CONTRACT", "SELECTED_RULE_CONTRACT"]) expect(user).toContain(marker);
+      for (const marker of ["EXCLUDED_ACTION_CONTRACT", "EXCLUDED_EVENT_CONTRACT", "EXCLUDED_OBJECT_CONTRACT", "EXCLUDED_RULE_CONTRACT", "EXCLUDED_FULL_DOMAIN_UNDERSTANDING"]) expect(user).not.toContain(marker);
+    }
+    expect({ ontology: ctx.ontology, plan: ctx.currentPlan }).toEqual(before);
+  });
+
+  it("keeps a genuine blocking single-review finding despite plan notes", async () => {
+    const { ctx } = bigPlanCtx();
+    ctx.currentPlan!.notes = ["The plan claims all output fields are covered."];
+    const issue = { severity: "high", problem: "a1_OUT request_id is missing from the proposed output mapping", fix: "Preserve a1_IN request_id exactly" };
+    vi.mocked(chatJson).mockResolvedValue({ verdict: "revise", issues: [issue] });
+    const result = await critique.execute({}, ctx);
+    expect(result).toMatchObject({ ok: false, output: { verdict: "revise", issues: [issue] } });
+    expect(vi.mocked(chatJson).mock.calls[0]![1]).toContain(ctx.currentPlan!.notes[0]);
+  });
+
   it("三视角 issues 去重合并，含高危 → verdict=revise", async () => {
     vi.mocked(runSpecialists).mockResolvedValue([
       { id: "chain", role: "链路完整视角", ok: true, output: { issues: [{ severity: "high", problem: "a2 的产出无人消费", fix: "补衔接" }] }, summary: "" },
@@ -192,7 +284,7 @@ describe("critique_plan — 三视角分治评审", () => {
     const { ctx, events } = bigPlanCtx();
     const r = await critique.execute({ deep: true }, ctx);
     expect(events.some((e) => e.t === "reflect" && String((e as { lesson: string }).lesson).includes("降级"))).toBe(true);
-    // 假 key 下单跳 chatJson 失败 → 明确阻断，不能伪装成 issues:[] 通过。
+    // 单跳 chatJson 返回不可解析结果 → 明确阻断，不能伪装成 issues:[] 通过。
     expect(r.ok).toBe(false);
     expect(r.summary).toContain("阻断");
   });

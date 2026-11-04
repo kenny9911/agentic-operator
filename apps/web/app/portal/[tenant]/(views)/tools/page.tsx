@@ -19,8 +19,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
+import { useParams, useRouter, useSearchParams } from "@/lib/portal-navigation";
+import Link from "@/lib/portal-link";
 import {
   Badge,
   Button,
@@ -43,6 +43,7 @@ import {
 } from "@/lib/hooks/useTools";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { CreateToolModal } from "./create-tool-modal";
+import { ConfigurationTaskReturn } from "@/app/portal/components/domains/ConfigurationTaskPage";
 import { FactoryIntegrationProfiles } from "./factory-integration-profiles";
 import { deriveToolRevisionReviewPolicy } from "./tool-revision-policy";
 
@@ -195,6 +196,8 @@ export default function ToolsPage() {
           </Badge>
         }
       />
+
+      {searchParams.get("configTask") ? <ConfigurationTaskReturn taskId={searchParams.get("configTask")!} /> : null}
 
       {error && (
         <div style={{ padding: 20 }}>

@@ -144,8 +144,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
           // Socket may already be gone.
         }
       };
-
-    const authorized = createStreamAuthorization(req, auth, "events.read", cleanup);
+      const authorized = createStreamAuthorization(
+        req,
+        auth,
+        "events.read",
+        cleanup,
+      );
 
       let flushing = false;
       async function flush() {
@@ -245,7 +249,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       req.raw.on("error", cleanup);
       unregisterDrain = registerStreamDrain(cleanup);
 
-      writeFrame(": stream open\n\nretry: 1000\n\n");
+      if (!writeFrame(": stream open\n\nretry: 1000\n\n")) return reply;
 
       // Subscribe before the durable read. Live events arriving during that
       // read are queued and de-duplicated against history when flushed.
@@ -310,9 +314,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       bootstrapping = false;
       for (const event of bootEvents) send(event);
       bootEvents.length = 0;
-      writeFrame(
-        `event: ready\ndata: ${JSON.stringify({ ok: true, tenantSlug: auth.tenantSlug, backfill, at: Date.now() })}\n\n`,
-      );
+      if (
+        !writeFrame(
+          `event: ready\ndata: ${JSON.stringify({ ok: true, tenantSlug: auth.tenantSlug, backfill, at: Date.now() })}\n\n`,
+        )
+      )
+        return reply;
 
       keepalive = setInterval(async () => {
         if (!closed && (await authorized()) && !closed && !blocked)

@@ -13,7 +13,8 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
+import { domainPortalPath, portalScope } from "@/lib/portal-scope";
 import { usePathname } from "next/navigation";
 import { Icon } from "../Icon";
 import { Kbd } from "../atoms";
@@ -531,26 +532,18 @@ function buildCrumb(
   tenant: string,
   t: Translate,
 ): CrumbPart[] {
-  // Split, drop leading "portal" + tenant.
-  const parts = pathname.split("/").filter(Boolean);
-  // parts: ["portal", tenant, view?, ...rest]
-  const view = parts[2];
-  const rest = parts.slice(3);
-  const base = `/portal/${tenant}`;
-
-  if (!view) {
-    return [{ label: t("nav.dashboard") }];
+  const scope = portalScope(pathname);
+  if (!scope) return [];
+  const base = scope.domain ? domainPortalPath(tenant, scope.domain, "") : `/portal/${tenant}`;
+  const context: CrumbPart[] = [{ label: tenant, href: `/portal/${tenant}/domains` }];
+  if (scope.domain) context.push({ label: scope.domain, href: domainPortalPath(tenant, scope.domain) });
+  if (!scope.feature) return context;
+  context.push({ label: scope.feature === "domains" ? t("domains.title") : viewLabel(scope.feature, t), href: `${base}/${scope.feature}` });
+  if (scope.tail.length) {
+    const tail = scope.tail[scope.tail.length - 1]!;
+    context.push({ label: tail, mono: looksLikeId(tail) });
   }
-  const viewTitle = viewLabel(view, t);
-  if (rest.length === 0) {
-    return [{ label: viewTitle }];
-  }
-  // Detail view — last segment is an ID.
-  const tail = rest[rest.length - 1] ?? "";
-  return [
-    { label: viewTitle, href: `${base}/${view}` },
-    { label: tail, mono: looksLikeId(tail) },
-  ];
+  return context;
 }
 
 function capitalize(s: string): string {

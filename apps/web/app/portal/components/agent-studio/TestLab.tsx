@@ -1,6 +1,8 @@
 "use client";
+import PortalAnchor from "@/lib/portal-anchor";
 
-import Link from "next/link";
+
+import Link from "@/lib/portal-link";
 import {
   type CSSProperties,
   useEffect,
@@ -2700,7 +2702,7 @@ export function TestLab({
             ) : artifacts.data?.length ? (
               <div style={{ display: "grid", gap: 7 }}>
                 {artifacts.data.map((artifact) => (
-                  <a
+                  <PortalAnchor
                     key={artifact.id}
                     href={artifact.downloadPath}
                     style={{
@@ -2745,7 +2747,7 @@ export function TestLab({
                     >
                       {artifact.size} B
                     </span>
-                  </a>
+                  </PortalAnchor>
                 ))}
               </div>
             ) : (

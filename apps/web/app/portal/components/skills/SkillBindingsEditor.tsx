@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { useId, useState, type CSSProperties } from "react";
 import { SkillBindingsSchema, type SkillBindings } from "@agentic/contracts";
 import { useI18n } from "@/app/portal/lib/preferences-context";

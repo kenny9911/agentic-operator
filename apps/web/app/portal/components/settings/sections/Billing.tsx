@@ -3,7 +3,7 @@
 /** Settings → Billing / cost caps, backed only by the tenant budget API. */
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { Button, Empty, Panel } from "@/app/portal/components";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { Field, TextIn } from "@/app/portal/components/settings/atoms";

@@ -1,4 +1,6 @@
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
 // OntoCode v10 · 三栏布局的唯一持有者：宽度 + 收起状态 + 持久化 + 视口跟踪。
 //
 // 单一写入方是刻意的：如果 Shell 和容器各写各的 localStorage，一次收起就会
@@ -49,7 +51,7 @@ export function useWorkbenchLayout(tenant: string): UseWorkbenchLayoutResult {
     hydratedRef.current = false;
     dispatch({
       type: "hydrate",
-      layout: readWorkbenchLayout(window.localStorage, storageKey),
+      layout: readWorkbenchLayout(domainStorage, storageKey),
     });
     hydratedRef.current = true;
   }, [storageKey]);
@@ -57,7 +59,7 @@ export function useWorkbenchLayout(tenant: string): UseWorkbenchLayoutResult {
   useEffect(() => {
     // Don't let the pre-hydration default overwrite what's on disk.
     if (!hydratedRef.current) return;
-    writeWorkbenchLayout(window.localStorage, storageKey, layout);
+    writeWorkbenchLayout(domainStorage, storageKey, layout);
   }, [layout, storageKey]);
 
   return {

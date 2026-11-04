@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { useParams } from "next/navigation";
 import { Icon, type IconName } from "@/app/portal/components/Icon";
 import { ApiResponseError } from "@/lib/api-response";

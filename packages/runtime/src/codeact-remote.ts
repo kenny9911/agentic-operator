@@ -471,7 +471,10 @@ export async function executeProductionCodeActRemote(input: {
       || terminal.buildId !== expectedExecutor.buildId
       || !terminal.result
       || terminal.result.isolation !== "isolated_container"
-      || (terminal.result.ok && (
+      // A candidate failure can satisfy an explicitly expected rejection in
+      // regression replay. Its execution provenance needs the same pins as a
+      // success; infrastructure failures remain failures without this proof.
+      || ((terminal.result.ok || terminal.result.failure === "candidate_failed") && (
         terminal.result.evidence?.codeSha256 !== input.identity.codeSha256
         || !expectedExecutor.candidateRefs.has(terminal.result.candidateImageDigest ?? "")
         || !expectedExecutor.candidateRefs.has(terminal.result.evidence?.candidateImageDigest ?? "")

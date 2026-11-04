@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/portal-navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TenantCreateResponse } from "@agentic/contracts";
 import { Icon } from "../Icon";
@@ -114,7 +114,7 @@ export function TenantSwitcher({
         scopes: created.token.scopes ?? [],
       });
     } else {
-      setImportForSlug(slug);
+      router.push(`/portal/${slug}/domains`);
     }
   }
 
@@ -136,7 +136,7 @@ export function TenantSwitcher({
             onClose={() => {
               const slug = tokenReveal.slug;
               setTokenReveal(null);
-              setImportForSlug(slug);
+              router.push(`/portal/${slug}/domains`);
             }}
           />
         )}
@@ -195,6 +195,7 @@ export function TenantSwitcher({
           {active.name[0]}
         </div>
         <div className={styles.tenantDetails}>
+          <div style={{ fontSize: 10, color: "var(--text-3)" }}>{t("domains.tenant")}</div>
           <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 500 }}>
             {active.name}
           </div>
@@ -321,7 +322,7 @@ export function TenantSwitcher({
           onClose={() => {
             const slug = tokenReveal.slug;
             setTokenReveal(null);
-            setImportForSlug(slug);
+            router.push(`/portal/${slug}/domains`);
           }}
         />
       )}

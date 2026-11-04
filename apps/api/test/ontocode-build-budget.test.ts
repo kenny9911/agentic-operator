@@ -403,7 +403,7 @@ describe("OntoCode Harness build budget + structured waiting", () => {
 
   function makeQueuedJob(input: {
     kind: "build" | "simulation";
-    budget?: { maxWallClockMs?: number };
+    budget?: { maxWallClockMs?: number; maxModelCalls?: number; maxToolCalls?: number };
   }) {
     const suffix = randomUUID().slice(0, 8);
     const ctx = { tenantId, actorId: "test-fde" };
@@ -451,6 +451,24 @@ describe("OntoCode Harness build budget + structured waiting", () => {
     });
     return { ctx, project, session, command, job };
   }
+
+  it("preserves explicitly tightened generation limits on the durable Job", () => {
+    const budget = { maxWallClockMs: 30_000, maxModelCalls: 3, maxToolCalls: 5 };
+    const fixture = makeQueuedJob({ kind: "build", budget });
+    expect(getOntoCodeHarnessJob(fixture.ctx, fixture.job.id).budget).toEqual(budget);
+    cancelOntoCodeSessionJob(fixture.ctx, fixture.session.id, { jobId: fixture.job.id });
+  });
+
+  it("caps a caller's larger allowance at the resolved one-Action policy", () => {
+    const fixture = makeQueuedJob({
+      kind: "build",
+      budget: { maxWallClockMs: 9_000_000, maxModelCalls: 400, maxToolCalls: 960 },
+    });
+    expect(getOntoCodeHarnessJob(fixture.ctx, fixture.job.id).budget).toEqual({
+      maxWallClockMs: 600_000, maxModelCalls: 20, maxToolCalls: 32,
+    });
+    cancelOntoCodeSessionJob(fixture.ctx, fixture.session.id, { jobId: fixture.job.id });
+  });
 
   it("budgets a follow-up Build turn for the scope it continues, not for its own label", () => {
     // A live six-Action Build lost its generated agents here: the FDE's "save
@@ -511,8 +529,8 @@ describe("OntoCode Harness build budget + structured waiting", () => {
     expect(turn.job?.kind).toBe("build");
     expect(turn.job?.budget).toEqual({
       maxWallClockMs: 900_000,
-      maxModelCalls: 30,
-      maxToolCalls: 74,
+      maxModelCalls: 40,
+      maxToolCalls: 82,
     });
 
     // This suite's other cases claim work with `worker.runNext()`; leaving this

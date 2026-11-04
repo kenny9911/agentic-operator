@@ -1,4 +1,6 @@
 "use client";
+import { tenantHeaderFor } from "@/lib/hooks/tenant-header";
+
 
 import {
   useInfiniteQuery,
@@ -58,7 +60,7 @@ async function request<S extends z.ZodType>(
       Accept: "application/json",
       ...(tenant === undefined
         ? tenantHeader()
-        : { "x-agentic-tenant": tenant }),
+        : { ...tenantHeaderFor(tenant) }),
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),

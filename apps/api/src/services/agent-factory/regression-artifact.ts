@@ -32,7 +32,7 @@ import {
   type CodeActDockerTransport,
 } from "@agentic/runtime";
 
-import { testGeneratedFunction } from "./function-tester-run";
+import { preliminaryFunctionExpectedEvent, testGeneratedFunction } from "./function-tester-run";
 import { containsFactoryFixtureAssetReference } from "./fixture-materializer";
 import {
   authoritativeOntologyEvidenceIssues,
@@ -566,8 +566,15 @@ function replayCasesFor(spec: GeneratedAgentSpec, effectiveCases: TestCase[]): R
       blockedReasons.push(`测试用例 ${testCase?.id ?? index + 1} 的 expectedEvent=${expectedEvent} 不在 Agent 声明事件中`);
       expectedEvent = undefined;
     }
-    if (!expectedEvent && (spec.emit ?? []).length === 1) expectedEvent = spec.emit![0];
-    if (!expectedEvent && (spec.emit ?? []).length > 1) {
+    if (!expectedEvent && !testCase?.expectedEvent && testCase?.kind === "reject") {
+      try {
+        expectedEvent = preliminaryFunctionExpectedEvent(spec, testCase);
+      } catch (error) {
+        blockedReasons.push(`测试用例 ${testCase.id}: ${String((error as Error)?.message ?? error)}`);
+      }
+    }
+    if (!expectedEvent && testCase?.kind !== "reject" && (spec.emit ?? []).length === 1) expectedEvent = spec.emit![0];
+    if (!expectedEvent && testCase?.kind !== "reject" && (spec.emit ?? []).length > 1) {
       blockedReasons.push(`测试用例 ${testCase?.id ?? index + 1} 面对多个可能事件却没有 expectedEvent；不能按 pass/reject 名称猜业务分支`);
     }
     const explicitAssertions = testCase?.functionAssertions ?? {};
@@ -1116,10 +1123,26 @@ async function replayExactCodeAct(args: {
   });
   const emitNames = run.ok ? run.emitted.map((entry) => entry.event) : [];
   const missing = args.replayCase.expectEmits.filter((event) => !emitNames.includes(event));
+  const exactExecution = run.executorStarted
+    && run.handlerStarted === true
+    && run.isolation === "isolated_container"
+    && run.codeSha256 === args.expectedHash
+    && run.containerEvidence?.codeSha256 === args.expectedHash
+    && run.containerEvidence.isolation === "isolated_container"
+    && run.containerEvidence.removed === true
+    && run.containerEvidence.absenceVerified === true;
+  const candidateFailure = !run.ok && run.failure === "candidate_failed";
   const verdict = gradeFunctionTest({
-    ok: true,
+    ok: exactExecution && (run.ok || candidateFailure),
+    ...(!run.ok ? { error: run.error } : {}),
+    ...(!exactExecution ? { error: "CodeAct handler-start, exact code or verified container cleanup evidence missing" } : {}),
     result: {
-      ran: run.ok && run.executorStarted,
+      ran: run.ok && exactExecution,
+      handlerStarted: exactExecution,
+      // Failed candidates publish none of their buffered emissions. Only the
+      // trusted invocation stage can establish an expected terminal rejection;
+      // module loading and result serialization errors remain execution failures.
+      terminalFailure: candidateFailure && run.failureStage === "handler" && /^\[terminal\](?:\s|$)/.test(run.error),
       ...(!run.ok ? { error: run.error } : { result: run.data }),
       emits: run.ok ? run.emitted.map((entry) => ({ name: entry.event, data: entry.payload })) : [],
       emitNames,
@@ -1129,6 +1152,7 @@ async function replayExactCodeAct(args: {
       fixtureErrors,
     },
   }, {
+    caseKind: args.replayCase.kind === "structural" ? undefined : args.replayCase.kind,
     expectEmits: args.replayCase.expectEmits,
     assertions: args.replayCase.assertions,
   });
@@ -1143,7 +1167,7 @@ async function replayExactCodeAct(args: {
   return {
     slug: args.spec.slug,
     caseId: args.replayCase.id,
-    pass: verdict.pass && run.ok && run.executorStarted && additionalReasons.length === 0,
+    pass: verdict.pass && exactExecution && additionalReasons.length === 0,
     ran: verdict.ran,
     emitNames,
     reasons,
@@ -1433,6 +1457,7 @@ export async function replayRegressionArtifact(
         }
         const run = await testGeneratedFunction(spec, {
           code,
+          caseKind: executableCase.kind === "structural" ? undefined : executableCase.kind,
           testEvent: executableCase.testEvent,
           expectEmits: executableCase.expectEmits.length ? executableCase.expectEmits : undefined,
           assertions: executableCase.assertions,

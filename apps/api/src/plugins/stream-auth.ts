@@ -27,7 +27,10 @@ export function createStreamAuthorization(
         current.userId === original.userId &&
         current.tenantId === original.tenantId &&
         current.tenantSlug === original.tenantSlug &&
+        current.ownerTenantId === original.ownerTenantId &&
+        current.domainId === original.domainId &&
         current.role === original.role &&
+        current.ownerRole === original.ownerRole &&
         current.platformRole === original.platformRole &&
         JSON.stringify([...(current.scopes ?? [])].sort()) === scopes &&
         can(current, permission)

@@ -126,6 +126,10 @@ import {
   probeAgentModule,
 } from "./codegen";
 import {
+  CODEGEN_AGENT_MODULE_CONTRACT,
+  codegenAgentExpectedMetadata,
+} from "./codegen-module-contract";
+import {
   lintGeneratedToolCode,
   validateGeneratedToolAllowlist,
   validateGeneratedToolCoverage,
@@ -227,6 +231,7 @@ import {
   decisionTablesPromptBlock,
   parseDecisionTables,
 } from "./decision-tables";
+import { actionPreconditionsPromptBlock } from "./action-preconditions";
 import {
   coverageWaiverMatches,
   normalizeCoverageCells,
@@ -331,7 +336,7 @@ const ERROR_POLICY_SCHEMA: Record<string, unknown> = {
   type: "array",
   minItems: 1,
   description:
-    "按顺序 first-match 的错误分类表。when 只能读取 kind/code/status/name/message/data/meta；最后一项必须用 default。park/retry=让 Inngest 重试，terminal=NonRetriableError，continue=带 defaultResult 继续。可用 emitEvent 选择已声明错误事件，或 suppressEmit 禁止历史隐式终态事件。",
+    "按顺序 first-match 的错误分类表。与 onError 互斥，同一步只能选择其中一种错误处理形式。when 只能读取 kind/code/status/name/message/data/meta；最后一项必须用 default。park/retry=让 Inngest 重试，terminal=NonRetriableError，continue=带 defaultResult 继续。可用 emitEvent 选择已声明错误事件，或 suppressEmit 禁止历史隐式终态事件。",
   items: {
     type: "object",
     properties: {
@@ -362,9 +367,8 @@ const ERROR_POLICY_SCHEMA: Record<string, unknown> = {
 
 const TOOL_ARGUMENTS_SCHEMA: Record<string, unknown> = {
   type: "object",
-  minProperties: 1,
   description:
-    "工具的精确 JSON 入参模板。每个参数必须显式写成 {from:'input.x',required?:boolean} 或 {const:<JSON>}；from 只允许 event/input/lastResult/results/locals 安全路径。禁止裸字符串、禁止按参数名猜值。省略本字段仅为旧 plan 的 whole-carry 兼容模式，会产生明确警告。",
+    "工具的精确 JSON 入参模板。零参数工具必须显式写 {}，表示传入空对象。每个参数必须显式写成 {from:'input.x',required?:boolean} 或 {const:<JSON>}；from 只允许 event/input/lastResult/results/locals 安全路径。禁止裸字符串、禁止按参数名猜值。省略本字段仅为旧 plan 的 whole-carry 兼容模式，会产生明确警告；省略不等于 {}。",
   additionalProperties: {
     oneOf: [
       {
@@ -454,7 +458,11 @@ const PLAN_STEP_SCHEMA: Record<string, unknown> = {
     forwardResults: { type: "boolean" },
     dependsOn: { type: "array", items: { type: "string" } },
     idempotencyKeyFrom: { type: "string" },
-    onError: { type: "string", enum: ["terminal", "soft", "park"] },
+    onError: {
+      type: "string",
+      enum: ["terminal", "soft", "park"],
+      description: "单一错误处理形式。与 errorPolicy 互斥，同一步不能同时填写。",
+    },
     errorPolicy: ERROR_POLICY_SCHEMA,
     defaultResult: {},
     timeoutS: { type: "number" },
@@ -2323,6 +2331,21 @@ const designOf = (s: GeneratedAgentSpec) => ({
   probeReason: s.probeReason,
   executionReadiness: s.executionReadiness,
 });
+
+/** The legacy probeReason field also carries an intentional execution-owner
+ * decision. Recognize only the exact current decision, never an arbitrary
+ * prefix that could conceal a genuine compiler/linter/load-probe failure. */
+function intentionalDeclarativeExecutionReason(
+  spec: GeneratedAgentSpec,
+): string | undefined {
+  if (spec.codeExecuted !== false || !spec.generatedCode?.trim()) return undefined;
+  const ownership = generatedSpecExecutionOwnership(spec, spec.generatedCode);
+  if (
+    !ownership.codeActEligible &&
+    spec.probeReason === `execution owner=${ownership.owner}: ${ownership.reason}`
+  ) return ownership.reason;
+  return undefined;
+}
 
 /** Render the spec's reference .ts and select exactly one execution owner.
  * Pure handlers may become CodeAct after compile/lint/probe. Plans that need
@@ -5214,6 +5237,49 @@ const inspect_all_action_readiness: BrainTool = {
 // critique_plan — an INDEPENDENT AI review of the decomposition (review tier), after create_plan and
 // before mass design_agent. Challenges: missing/extra agents, wrong ordering, mis-identified rule
 // gates, external-handoff-as-broken-chain, cross-agent I/O misalignment. Real LLM, must propose fixes.
+function planCritiqueEvidence(ctx: BrainCtx, plan: BuildPlan): string {
+  const ontology = ctx.ontology!;
+  // Bound source material by the server's selected Actions, not by a text
+  // cutoff: truncation can erase the very fields the reviewer must verify.
+  // Keep the entire proposed plan so extra agents and conflicting notes remain
+  // visible to the reviewer; its assertions never replace the source contract.
+  const contracts = generationScopedAgentActions(ctx).map((action) => {
+    const eventNames = new Set([...action.trigger, ...action.triggered_event]);
+    const objectNames = new Set(action.target_objects);
+    const rules = resolveActionRuleReferences(
+      action,
+      ontology.rules as Array<Record<string, unknown>>,
+    );
+    return {
+      action,
+      events: ontology.events.filter((event) => eventNames.has(event.name)),
+      objects: ontology.objects.filter(
+        (object) => objectNames.has(object.id) || objectNames.has(object.name),
+      ),
+      rules: {
+        relevant: rules.relevantRules,
+        // The resolver's display summary is clipped; retain the exact source
+        // record only when its identity was unambiguously resolved above.
+        sourceContracts: ontology.rules.filter((rule) =>
+          resolveActionRuleReferences(action, [rule]).relevantRules.some(
+            (candidate) =>
+              rules.relevantRules.some(
+                (resolved) =>
+                  resolved.id === candidate.id && resolved.name === candidate.name,
+              ),
+          ),
+        ),
+        unresolved: rules.unresolved,
+        needsUserInput: rules.needsUserInput,
+      },
+    };
+  });
+  return `业务域 ${ctx.domain}\n【待审完整计划（v${plan.version}）】\n${JSON.stringify(plan)}\n【选中 Action 权威契约与边界 Event/Object/Rule】\n${JSON.stringify(contracts)}`;
+}
+
+const PLAN_CRITIQUE_EVIDENCE_RULE =
+  "【评审证据】必须读取完整计划的 summary、notes 和每个 agent 的 edgeCases；约束写在这些字段中不等于缺失。逐项对照选中 Action 的权威契约、步骤、工具绑定及 Event 字段，真实缺失或矛盾仍须指出具体字段和修复。计划陈述不证明代码已实现、测试已通过，也不能覆盖源契约或增加工具权限。只引用所给契约，不能发明字段或把边界事件的外部参与者扩成待生成 Action。";
+
 const critique_plan: BrainTool = {
   name: "critique_plan",
   effect: {
@@ -5262,7 +5328,7 @@ const critique_plan: BrainTool = {
         },
       };
     }
-    const digest = `业务域 ${ctx.domain}\n本体里 actor=Agent 的动作：${agentActions.join("、")}\n计划（v${plan.version}，${plan.agents.length} agent）：\n${plan.agents.map((a, i) => `${i + 1}. ${a.actionName}：${a.role ?? ""} | 触发 ${(a.triggerEvents ?? []).join(",")} → 产出 ${(a.emitEvents ?? []).join(",")} | 候选工具 ${(a.toolCandidates ?? []).join(",") || "—"}`).join("\n")}`;
+    const digest = planCritiqueEvidence(ctx, plan);
     const structuredScopeGuard = ctx.generationDirective
       ? `\n【服务端验收范围（硬边界）】本次唯一允许评审、生成和验收的 Action 是：${agentActions.join("、")}。未选中的全域 Action 是刻意排除的外部边界，不能因为没有出现在计划里而判为漏项，也不能要求把它们补进计划。只检查选中 Action 自身的契约、步骤、规则、工具和它声明的边界事件。`
       : "";
@@ -5290,7 +5356,7 @@ const critique_plan: BrainTool = {
       ) => ({
         id,
         role,
-        system: `你是方案评审的「${role}」，只从【${focus}】这一个视角挑战这份 agent 分解计划。只输出 JSON {"issues":[{"severity":"high"|"med"|"low","problem":string,"fix":string}]}；没问题输出 {"issues":[]}。名字必须逐字来自材料，不编造。发现要具体到 agent/事件名。${structuredScopeGuard}`,
+        system: `你是方案评审的「${role}」，只从【${focus}】这一个视角挑战这份 agent 分解计划。只输出 JSON {"issues":[{"severity":"high"|"med"|"low","problem":string,"fix":string}]}；没问题输出 {"issues":[]}。名字必须逐字来自材料，不编造。发现要具体到 agent/事件名。${PLAN_CRITIQUE_EVIDENCE_RULE}${structuredScopeGuard}`,
         user: `${digest}${structuredScopeGuard}${extra}`,
         maxTokens: 1200,
       });
@@ -5403,7 +5469,7 @@ const critique_plan: BrainTool = {
 
     const sys =
       "你是 agent 工厂的【方案评审】，独立挑战这份 agent 分解计划。逐条判断：(1) 是否漏了/多了 agent（对照本体 Agent 动作）；(2) 事件链顺序对不对；(3) 规则校验类动作是否被识别为闸口；(4) 是否有 agent 的产出其实是交给外部平台的终态而被当成断链；(5) 跨 agent 的 I/O 契约是否对齐；(6) 合并质询（OneFlow：同底模多 agent≈白付通信税，KV 复用可省 ~10×）——相邻两个 agent 若无【工具隔离/权限边界/独立部署必要/HITL 停点】任一结构性理由，就该质疑为什么不合并成一个多步 agent，把'不同角色'当理由不算数。只输出 JSON：" +
-      `{"verdict":"ok"|"revise","issues":[{"severity":"high"|"med"|"low","problem":string,"fix":string}]}。没问题就 issues:[]、verdict:"ok"。不要任何其它文字。${structuredScopeGuard}`;
+      `{"verdict":"ok"|"revise","issues":[{"severity":"high"|"med"|"low","problem":string,"fix":string}]}。没问题就 issues:[]、verdict:"ok"。不要任何其它文字。${PLAN_CRITIQUE_EVIDENCE_RULE}${structuredScopeGuard}`;
     const parsed = await chatJson<Record<string, unknown>>(sys, digest, {
       temperature: 0.3,
       maxTokens: 4000,
@@ -6215,13 +6281,10 @@ const design_agent: BrainTool = {
         }
       }
     }
-    // R3: compile the action's submission_criteria into a fail-close precondition block.
-    const criteria =
-      typeof action.submission_criteria === "string"
-        ? action.submission_criteria.trim()
-        : "";
-    if (criteria && !systemPrompt.includes("【前置条件")) {
-      systemPrompt += `\n\n【前置条件（运行前必须满足；不满足则 fail-close 发拦截/失败事件，不要继续）】\n${criteria}`;
+    // Preconditions must preserve the source's failure policy, not invent an event.
+    const preconditions = actionPreconditionsPromptBlock(action);
+    if (preconditions && !systemPrompt.includes("【前置条件")) {
+      systemPrompt += `\n\n${preconditions}`;
     }
 
     const decisionTableBlock = decisionTablesPromptBlock(decisionTables);
@@ -6546,9 +6609,12 @@ const design_agent: BrainTool = {
       code: spec.generatedCode ?? "",
       codeSource: "render",
     });
+    const declarativeReason = intentionalDeclarativeExecutionReason(spec);
     const execNote = spec.codeExecuted
       ? " · ⚙ 代码已过 编译+安全+加载探针，沙箱将真实执行（CodeAct）"
-      : ` · 📄 声明式执行${spec.probeReason ? `（代码未过加载探针：${spec.probeReason}）` : ""}`;
+      : declarativeReason
+        ? ` · 📄 声明式持久步骤执行（TypeScript 为审查参考）：${declarativeReason}`
+        : ` · 📄 声明式执行${spec.probeReason ? `（代码验证未通过：${spec.probeReason}）` : ""}`;
 
     const agentActionNames = generationScopedAgentActionNames(ctx);
     const done = new Set(ctx.specs.map((s) => s.actionName));
@@ -7084,11 +7150,11 @@ const codegen_agent: BrainTool = {
     advancesStage: true,
   },
   description:
-    "为一个已 design_agent 的 agent【亲手写完整 .ts 代码】（从 import 到导出），覆盖自动渲染的参考代码。会做 TS、危险 API、工具 allowlist 与加载探针。只有不调用 reason/tool/memory/invoke/spawn、也不读取 Date.now/new Date/Math.random/crypto/performance 等时间或熵源的纯确定性计算与 emit handler 可成为隔离 CodeAct owner；所需时间/ID必须由 durable host 通过 input 传入。其余代码仍保存供人工审查，真实运行由 declarative plan 的独立 durable steps 负责，绝不把两条路径同时执行。",
+    "为一个已 design_agent 的 agent【亲手写完整 .ts 代码】（从 import 到导出），覆盖自动渲染的参考代码。会做 TS、危险 API、工具 allowlist 与加载探针。只有不调用 reason/tool/memory/invoke/spawn、也不读取 Date.now/new Date/Math.random/crypto/performance 等时间或熵源的纯确定性计算与 emit handler 可成为隔离 CodeAct owner；所需时间/ID必须由 durable host 通过 input 传入。其余代码仍保存供人工审查，真实运行由 declarative plan 的独立 durable steps 负责，绝不把两条路径同时执行。\n\n" + CODEGEN_AGENT_MODULE_CONTRACT,
   parameters: params(
     {
       action: { type: "string" },
-      code: { type: "string", description: "完整 .ts 文件" },
+      code: { type: "string", description: "完整 .ts 模块：import { defineAgent } from \"@agentic/runtime\"；export const agent = defineAgent({ 与 read_spec 一致的元数据, async handler(input, ctx) { 源契约实现 } })。导出的是含 handler 方法的对象，不能只导出 handler 函数或将函数重命名为 defineAgent。详见工具说明中的模块契约。" },
     },
     ["action", "code"],
   ),
@@ -7135,8 +7201,12 @@ const codegen_agent: BrainTool = {
     if (!probe.loads)
       return {
         ok: false,
-        summary: `代码未过加载探针（编译+安全过了，但没有可调用 handler）：${probe.reason}——修正后重交。`,
-        output: { probeReason: probe.reason },
+        summary: `代码未过加载探针：${probe.reason}。请导出 defineAgent({ async handler(input, ctx) { ... } }) 返回的对象；不要导出裸 handler 函数或 defineAgent 函数别名。`,
+        output: {
+          probeReason: probe.reason,
+          moduleContract: CODEGEN_AGENT_MODULE_CONTRACT,
+          expectedMetadata: codegenAgentExpectedMetadata(spec),
+        },
       };
     const ownership = generatedSpecExecutionOwnership(spec, code);
     if (ownership.codeActEligible) {
@@ -9247,6 +9317,7 @@ const read_spec: BrainTool = {
       ok: true,
       summary: `「${spec.nameZh}」：工具 ${spec.tools.length} · 精修 ${(ctx.attemptHistory[name] ?? []).length} 次 · 代码 ${spec.codeSource ?? "无"}`,
       output: {
+        moduleMetadata: codegenAgentExpectedMetadata(spec),
         spec: {
           actionName: spec.actionName,
           slug: spec.slug,
@@ -9362,6 +9433,12 @@ const review_agent: BrainTool = {
     }
     // Tier 1 — free deterministic set-membership checks (fast, certain).
     const findings: string[] = [];
+    const executionNotes: Array<{
+      agent: string;
+      owner: "declarative-plan";
+      referenceCodeOnly: true;
+      reason: string;
+    }> = [];
     const ruleIds = ruleIdentifiers(ctx); // #9: ontology-driven, not RAAS's \d-\d scheme
     const ruleAssessments = new Map(
       ctx.specs.map((spec) => [
@@ -9386,12 +9463,22 @@ const review_agent: BrainTool = {
         findings.push(
           `「${s.nameZh}」没有结构化规则闸证据，却写进了具体业务规则`,
         );
-      // #REDESIGN FU3 — surface reviewLoop PROBE downgrades: code that compiled+linted but didn't load
-      // a callable handler, so it fell back to declarative. Legible instead of silent.
-      if (s.probeReason)
+      // A durable declarative plan is a supported execution owner. Its
+      // reference TypeScript was intentionally not selected for CodeAct;
+      // actual compiler/linter/load-probe failures must still block review.
+      const declarativeReason = intentionalDeclarativeExecutionReason(s);
+      if (declarativeReason) {
+        executionNotes.push({
+          agent: s.actionName,
+          owner: "declarative-plan",
+          referenceCodeOnly: true,
+          reason: declarativeReason,
+        });
+      } else if (s.probeReason) {
         findings.push(
-          `「${s.nameZh}」代码未过加载探针（已回退声明式执行）：${s.probeReason}`,
+          `「${s.nameZh}」代码验证未通过：${s.probeReason}`,
         );
+      }
     }
     // Tier 2 — independent cite-the-span LLM JUDGE on the SEMANTIC question code can't decide:
     // does each rule-gate's prompt ACTUALLY fetch rules at runtime (vs hardcode), and does each
@@ -9406,7 +9493,7 @@ const review_agent: BrainTool = {
       const digest = ctx.specs
         .map(
           (s) =>
-            `## ${s.actionName}（${ruleAssessments.get(s)?.isRuleGate ? "规则闸口" : "普通"} · 工具:${s.tools.join(",") || "无"}）\nsystem_prompt:\n${(s.systemPrompt || "").slice(0, 1400)}\n决策逻辑: ${(s.decisionLogic || "").slice(0, 500)}`,
+            `## ${s.actionName}（${ruleAssessments.get(s)?.isRuleGate ? "规则闸口" : "普通"} · 工具:${s.tools.join(",") || "无"}）\n${designedAgentReviewMaterial(s)}`,
         )
         .join("\n\n");
       const sys =
@@ -9448,7 +9535,7 @@ const review_agent: BrainTool = {
       const digest = execSpecs
         .map(
           (s) =>
-            `## ${s.actionName}（期望 emit:${(s.emit ?? []).join(",") || "—"} · 工具:${s.tools.join(",") || "无"}）\n决策逻辑: ${(s.decisionLogic || "").slice(0, 300)}\n代码:\n${(s.generatedCode || "").slice(0, 1500)}`,
+            `## ${s.actionName}（期望 emit:${(s.emit ?? []).join(",") || "—"} · 工具:${s.tools.join(",") || "无"}）\n${designedAgentReviewMaterial(s)}`,
         )
         .join("\n\n");
       const sys =
@@ -9491,6 +9578,7 @@ const review_agent: BrainTool = {
           deterministic: findings,
           judge,
           codeCritique,
+          executionNotes,
           reviewFailures,
           blocking: true,
         },
@@ -9507,11 +9595,51 @@ const review_agent: BrainTool = {
         deterministic: findings,
         judge,
         codeCritique,
+        executionNotes,
         reviewFailures,
       },
     };
   },
 };
+
+/** Review the actual authored fields, not a short summary of their existence.
+ * Cutting prose or code mid-sentence creates false defects; omitting those
+ * fields makes a source contract look like an unimplemented requirement. Keep
+ * this projection local to the current spec and omit unrelated fleet/history
+ * data and runtime profile configuration. */
+function designedAgentReviewMaterial(spec: GeneratedAgentSpec): string {
+  const executionContract = {
+    actionName: spec.actionName,
+    trigger: spec.trigger ?? [],
+    emit: spec.emit ?? [],
+    tools: spec.tools ?? [],
+    inputSchema: spec.inputSchema ?? [],
+    inputBindings: spec.inputBindings ?? [],
+    outputSchema: spec.outputSchema ?? [],
+    decisionTables: spec.decisionTables ?? [],
+    plan: spec.plan ?? [],
+    steps: spec.steps ?? [],
+    stateBindings: spec.stateBindings ?? [],
+    ruleRefs: spec.ruleRefs ?? [],
+    ruleGates: spec.ruleGates ?? [],
+    ruleGateGaps: spec.ruleGateGaps ?? [],
+    retries: spec.retries,
+    hitl: spec.hitl,
+    hitlGate: spec.hitlGate,
+    codeSource: spec.codeSource,
+    codeExecuted: spec.codeExecuted === true,
+    probeReason: spec.probeReason,
+    ...(spec.isSubAgent ? { parentAction: spec.parentAction, parentTask: spec.parentTask } : {}),
+  };
+  return [
+    "【待审 Agent 完整设计（以下字段均为原文，未截断）】",
+    `执行契约:\n${JSON.stringify(executionContract, null, 2)}`,
+    `system_prompt:\n${spec.systemPrompt ?? ""}`,
+    `user_prompt:\n${spec.userPrompt ?? ""}`,
+    `决策逻辑:\n${spec.decisionLogic ?? ""}`,
+    `代码（codeExecuted=false 时仅为参考，不是执行证据）:\n${spec.generatedCode ?? ""}`,
+  ].join("\n\n");
+}
 
 function actionScopedReviewMaterial(ctx: BrainCtx, actionName: string): string {
   const ontology = ctx.ontology;
@@ -9622,7 +9750,7 @@ const review_context: BrainTool = {
         ctx.specs
           .map(
             (s) =>
-              `## ${s.actionName}\n${actionScopedReviewMaterial(ctx, s.actionName)}\n【待审 Agent】\n触发:${(s.trigger ?? []).join(",") || "—"} → 产出:${(s.emit ?? []).join(",") || "—"} · 工具:${s.tools.join(",") || "无"}\nsystem_prompt:${(s.systemPrompt || "").slice(0, 900)}`,
+              `## ${s.actionName}\n${actionScopedReviewMaterial(ctx, s.actionName)}\n${designedAgentReviewMaterial(s)}`,
           )
           .join("\n\n");
       const sys =
@@ -9796,7 +9924,7 @@ const review_completeness: BrainTool = {
         ctx.specs
           .map(
             (s) =>
-              `· ${s.actionName}: 触发 ${(s.trigger ?? []).join(",") || "—"} → ${(s.emit ?? []).join(",") || "—"} · plan ${s.plan?.length || 0} 步\n${actionScopedReviewMaterial(ctx, s.actionName)}`,
+              `· ${s.actionName}: 触发 ${(s.trigger ?? []).join(",") || "—"} → ${(s.emit ?? []).join(",") || "—"} · plan ${s.plan?.length || 0} 步\n${actionScopedReviewMaterial(ctx, s.actionName)}\n${designedAgentReviewMaterial(s)}`,
           )
           .join("\n");
       const sys =

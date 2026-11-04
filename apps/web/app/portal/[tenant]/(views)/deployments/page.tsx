@@ -28,7 +28,7 @@ import {
 } from "@/app/portal/components";
 import { fmtAgo } from "@/app/portal/lib/format";
 import { useI18n } from "@/app/portal/lib/preferences-context";
-import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useDomainSlug } from "@/app/portal/lib/use-tenant";
 import {
   useDeployments,
   useRollbackDeployment,
@@ -60,7 +60,7 @@ function fromApi(d: DeploymentRow): DeploymentItem {
 export default function DeploymentsPage() {
   const { language, t } = useI18n();
   const toast = useToast();
-  const tenant = useTenant();
+  const domainSlug = useDomainSlug();
   const { data, isLoading, isError, error } = useDeployments();
   const rollback = useRollbackDeployment();
   const dpls = useMemo<DeploymentItem[]>(
@@ -146,7 +146,7 @@ export default function DeploymentsPage() {
             <div style={{ padding: 14 }}>
               <Empty
                 title={t("deployments.emptyTitle")}
-                hint={t("deployments.emptyHint", { tenant })}
+                hint={t("deployments.emptyHint", { tenant: domainSlug })}
               />
             </div>
           ) : (

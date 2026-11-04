@@ -11,6 +11,7 @@ import {
   type ToolCatalogEntry,
 } from "@agentic/tools";
 import { inspectWriteProbeSafety } from "@agentic/shared";
+import { DOMAIN_NATIVE_REGISTRY_VERSION, resolveDomainNativeRegistry } from "../domain-native-registry";
 
 export interface RuntimeTenantRegistrySnapshot {
   tenantSlug: string;
@@ -60,7 +61,10 @@ export function removeRuntimeTenantRegistrySnapshot(tenantSlug: string): void {
 export function getRuntimeTenantRegistrySnapshot(
   tenantSlug: string,
 ): RuntimeTenantRegistrySnapshot | undefined {
-  return snapshots.get(tenantSlug);
+  const published = snapshots.get(tenantSlug);
+  if (published && published.selectedVersion !== DOMAIN_NATIVE_REGISTRY_VERSION) return published;
+  const native = resolveDomainNativeRegistry(tenantSlug);
+  return native ? { tenantSlug, selectedVersion: DOMAIN_NATIVE_REGISTRY_VERSION, registry: native } : undefined;
 }
 
 /** Test-only state reset; production callers publish/replace one slug at a time. */
@@ -292,7 +296,7 @@ export function resolveTenantNativeFactoryTools(input: {
   expectedVersion?: string;
   probesByTool?: ReadonlyMap<string, TenantNativeProbeSummary>;
 }): ResolvedTenantNativeFactoryTool[] {
-  const snapshot = snapshots.get(input.tenantSlug);
+  const snapshot = getRuntimeTenantRegistrySnapshot(input.tenantSlug);
   if (!snapshot) return [];
   return resolveTenantNativeFactoryToolsFromSnapshot({
     snapshot,

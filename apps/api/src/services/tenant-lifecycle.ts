@@ -1,9 +1,16 @@
 import { and, eq, isNull } from "drizzle-orm";
-import { auditLog, getDb, tenants } from "@agentic/db";
+import {
+  auditLog,
+  domains,
+  getDb,
+  tenantRuntimeNamespaces,
+  tenants,
+} from "@agentic/db";
 import { publishStreamEvent } from "@agentic/runtime";
 import { makeId } from "@agentic/shared";
 import { DurableLeaseBusyError } from "./durable-lease";
 import { withTenantRuntimeMutationLease } from "./tenant-runtime-mutation";
+import { domainHasActiveWork } from "./domains";
 
 export type TenantLifecycleAction = "archive" | "restore";
 
@@ -106,6 +113,55 @@ export async function transitionTenantLifecycle(
           );
         }
 
+        const childNamespaces = db
+          .select({ id: tenants.id, slug: tenants.slug })
+          .from(domains)
+          .innerJoin(tenants, eq(tenants.id, domains.runtimeTenantId))
+          .where(eq(domains.tenantId, before.id))
+          .all();
+        const compatibilityNamespaces = db
+          .select({ id: tenants.id, slug: tenants.slug })
+          .from(tenantRuntimeNamespaces)
+          .innerJoin(tenants, eq(tenants.id, tenantRuntimeNamespaces.tenantId))
+          .where(eq(tenantRuntimeNamespaces.businessDomainTenantId, before.id))
+          .all();
+        const namespaces = [
+          ...new Map(
+            [
+              { id: before.id, slug: before.slug },
+              ...childNamespaces,
+              ...compatibilityNamespaces,
+            ].map((row) => [row.id, row]),
+          ).values(),
+        ];
+        if (
+          args.action === "archive" &&
+          namespaces.some((row) => domainHasActiveWork(row.id))
+        ) {
+          throw new TenantLifecycleError(
+            "has_active_work",
+            "Tenant or one of its Domains has active work; resolve it before archiving",
+            409,
+          );
+        }
+        const synchronizeNamespaces = async () => {
+          // Continue after an individual error so every child app is visited
+          // during both the forward transition and compensation.
+          const failures: unknown[] = [];
+          for (const namespace of namespaces) {
+            try {
+              await syncRuntime(namespace.slug);
+            } catch (error) {
+              failures.push(error);
+            }
+          }
+          if (failures.length)
+            throw new AggregateError(
+              failures,
+              "Tenant Domain runtime synchronization failed",
+            );
+        };
+
         const changedAt = new Date();
         const successAuditId = makeId("aud");
         const successAction = `tenant.${args.action}`;
@@ -152,7 +208,7 @@ export async function transitionTenantLifecycle(
 
         try {
           lease.assertOwned();
-          await syncRuntime(args.slug);
+          await synchronizeNamespaces();
           lease.assertOwned();
         } catch (syncError) {
           const compensationErrors: Error[] = [
@@ -199,7 +255,7 @@ export async function transitionTenantLifecycle(
             try {
               // Rebuild from the restored DB row. This repairs both the local
               // registry (which may already have swapped) and broker state.
-              await syncRuntime(args.slug);
+              await synchronizeNamespaces();
               runtimeRestored = true;
             } catch (error) {
               compensationErrors.push(

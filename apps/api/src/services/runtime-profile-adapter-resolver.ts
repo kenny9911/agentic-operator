@@ -13,6 +13,7 @@ import type {
   ToolDescriptor,
   PromptDescriptor,
 } from "@agentic/agent-kit";
+import { DOMAIN_NATIVE_REGISTRY_VERSION, resolveDomainNativeRegistry } from "./domain-native-registry";
 
 type Db = ReturnType<typeof getDb>;
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -162,6 +163,17 @@ export function resolveReviewedRuntimeProfileAdapter(input: {
     input.adapterRegistryVersion,
     "adapterRegistryVersion",
   );
+  if (adapterRegistryVersion === DOMAIN_NATIVE_REGISTRY_VERSION) {
+    const native = resolveDomainNativeRegistry(adapterRegistrySlug);
+    if (!native) {
+      throw new RuntimeProfileAdapterResolutionError(
+        "runtime_profile_adapter_version_unavailable",
+        "The Domain's built-in adapter is unavailable or has been replaced by a tenant-code deployment",
+        409,
+      );
+    }
+    return publishReviewedRuntimeProfileAdapter({ adapterRegistrySlug, adapterRegistryVersion, registry: native });
+  }
   const adapter = reviewedAdapters.get(
     adapterKey(adapterRegistrySlug, adapterRegistryVersion),
   );

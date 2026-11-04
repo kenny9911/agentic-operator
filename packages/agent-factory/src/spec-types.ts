@@ -519,9 +519,9 @@ export interface GeneratedAgentSpec {
    *  TRUE = opt-in "true CodeAct": the runtime transpiles + runs the AI-authored handler
    *  instead of action[] dispatch (the executed path is deferred — flag reserved for it). */
   codeExecuted?: boolean;
-  /** #REDESIGN FU3 — when the reviewLoop PROBE stage rejected the code (compiles+lints but doesn't
-   *  load a callable handler), why. Surfaced in the design card so the failure is legible instead of
-   *  silently downgrading to declarative. Undefined when the probe passed. */
+  /** Code validation failure, or the exact intentional declarative-owner
+   * decision when generatedCode is reference material. An ownership decision
+   * is not a failed load probe; actual validation failures remain blocking. */
   probeReason?: string;
   /** #SAGA（§6.6）— 补偿事件：agent 运行【硬失败】时 runtime 会 emit 它（Saga 补偿模式，
    *  manifest 的 compensation_event → register.ts 幂等发出），用于撤销已发生的外部副作用

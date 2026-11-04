@@ -615,10 +615,7 @@ export function validatePlan(
     }
     if (s.toolArguments !== undefined) {
       const entries = Object.entries(s.toolArguments);
-      if (!entries.length)
-        errors.push(
-          `${at}: toolArguments must contain at least one explicit argument`,
-        );
+      // Zero-parameter tools author {}; absence alone requests legacy whole-carry.
       for (const [argument, template] of entries) {
         if (
           !/^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(argument) ||

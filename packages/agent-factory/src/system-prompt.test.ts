@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { systemPrompt, rankLessons } from "./system-prompt";
 import type { ReflectionLite } from "./brain-types";
+import {
+  FACTORY_SCOPE_INQUIRY_SYSTEM_PROMPT,
+  FACTORY_SCOPE_SINGLE_CALL_SYSTEM_PROMPT,
+  FACTORY_SCOPE_REQUEST_INTERPRETATION_RULES,
+  buildFactoryScopeInquiryToolSchemas,
+  recommendFactoryActionScope,
+  type FactoryScopeTurnFn,
+} from "./action-recommendation";
+import type { DomainOntology } from "./ontology-types";
 
 // Phase 0(b): the brain carries zero production-discipline knowledge today. Inject a
 // "production patterns" module (durability, failure taxonomy, timezone, vendor-envelope
@@ -92,5 +101,151 @@ describe("rankLessons (Phase 5 — dedup + relevance ranking for the lessons blo
       r("failure", `lesson ${i}`),
     );
     expect(rankLessons(many, 5)).toHaveLength(5);
+  });
+});
+
+describe("scope prompts distinguish business requirements from build instructions", () => {
+  const ontology: DomainOntology = {
+    domainId: "scope-prompt-test",
+    source: "snapshot",
+    objects: [],
+    rules: [],
+    events: [],
+    workflow: [],
+    actions: [
+      {
+        id: "checkReadiness",
+        name: "checkReadiness",
+        actor: ["Agent"],
+        category: "logic",
+        description: "Check service readiness",
+        target_objects: [],
+        trigger: [],
+        triggered_event: [],
+        tool_use: [],
+        system_prompt: "",
+        user_prompt: "",
+      },
+    ],
+  };
+  const scenario =
+    "Generate the checkReadiness Agent. Build a candidate for local validation and review.";
+  const decision = (unresolved: string[] = []) => ({
+    actionIds: ["checkReadiness"],
+    reasons: {
+      checkReadiness:
+        "The declared readiness check covers the requested business capability.",
+    },
+    reasoningSummary:
+      "Select the declared readiness check; local validation and review constrain the build process.",
+    confidence: 1,
+    unresolved,
+    requiresVirtualAction: false,
+  });
+
+  it("applies the same narrow distinction to both model paths and the decision tool", () => {
+    for (const prompt of [
+      FACTORY_SCOPE_SINGLE_CALL_SYSTEM_PROMPT,
+      FACTORY_SCOPE_INQUIRY_SYSTEM_PROMPT,
+    ]) {
+      for (const rule of FACTORY_SCOPE_REQUEST_INTERPRETATION_RULES)
+        expect(prompt).toContain(rule);
+      expect(prompt).toContain("真实业务要求必须写入 unresolved");
+      expect(prompt).toContain("不授予生产执行");
+    }
+    const submit = buildFactoryScopeInquiryToolSchemas().find(
+      (tool) => tool.function.name === "submit_scope",
+    )!;
+    const properties = submit.function.parameters.properties as Record<
+      string,
+      { description: string }
+    >;
+    expect(properties.unresolved!.description).toContain("业务能力或契约要求");
+    expect(properties.unresolved!.description).toContain(
+      "构建流程指令不算业务缺口",
+    );
+  });
+
+  it("sends the full natural request through inquiry and preserves real business gaps for the downstream gate", async () => {
+    const businessGap =
+      "The request also needs invoice review, but no invoice review Action is declared.";
+    const businessScenario = `${scenario} Also perform business invoice review.`;
+    let calls = 0;
+    const turnFn: FactoryScopeTurnFn = async function* (messages) {
+      calls += 1;
+      expect(messages[0]!.content).toContain(
+        FACTORY_SCOPE_REQUEST_INTERPRETATION_RULES[0],
+      );
+      expect(messages[1]!.content).toContain(businessScenario);
+      if (calls === 1) {
+        yield {
+          t: "tool_calls",
+          content: "Read the authoritative Action contract.",
+          calls: [
+            {
+              id: "read",
+              name: "read_action",
+              args: JSON.stringify({
+                reasoning: "Verify the named business capability.",
+                id: "checkReadiness",
+              }),
+            },
+          ],
+        };
+      } else {
+        expect(
+          messages.some(
+            (message) =>
+              message.role === "tool" &&
+              message.content?.includes("checkReadiness"),
+          ),
+        ).toBe(true);
+        yield {
+          t: "tool_calls",
+          content: "Submit the grounded scope.",
+          calls: [
+            {
+              id: "submit",
+              name: "submit_scope",
+              args: JSON.stringify({
+                reasoning:
+                  "Keep the unsupported business requirement explicit.",
+                ...decision([businessGap]),
+              }),
+            },
+          ],
+        };
+      }
+    };
+    const result = await recommendFactoryActionScope({
+      ontology,
+      scenario: businessScenario,
+      scopeKey: "inquiry-process-scope",
+      turnFn,
+      budget: { maxModelCalls: 4, maxToolCalls: 8, maxWallClockMs: 10_000 },
+    });
+    expect(calls).toBe(2);
+    expect(result.actionIds).toEqual(["checkReadiness"]);
+    expect(result.unresolved).toEqual([businessGap]);
+    expect(result.scenario).toBe(businessScenario);
+  });
+
+  it("retains exact Action validation in the single-call path", async () => {
+    await expect(
+      recommendFactoryActionScope({
+        ontology,
+        scenario,
+        scopeKey: "invalid-action",
+        callFn: async (system) => {
+          expect(system).toContain(
+            FACTORY_SCOPE_REQUEST_INTERPRETATION_RULES[0],
+          );
+          return JSON.stringify({
+            ...decision(),
+            actionIds: ["inventedAction"],
+          });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "scope_recommendation_invalid" });
   });
 });

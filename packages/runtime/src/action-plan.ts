@@ -389,13 +389,13 @@ function cloneJsonConstant(value: unknown, seen = new Set<object>()): { ok: true
 
 /** Resolve an explicitly-authored tool argument template. Required paths fail
  * closed; optional missing paths are omitted. No key-name inference and no
- * implicit carry merge occurs. */
+ * implicit carry merge occurs. An empty template deliberately sends no arguments. */
 export function materializeToolArguments(
   template: Record<string, ToolArgumentSource>,
   scope: ConditionScope,
 ): ToolArgumentsMaterialization {
-  if (!template || typeof template !== "object" || Array.isArray(template) || !Object.keys(template).length) {
-    return { ok: false, error: "tool_arguments must be a non-empty object" };
+  if (!template || typeof template !== "object" || Array.isArray(template)) {
+    return { ok: false, error: "tool_arguments must be an object" };
   }
   const args: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   for (const [argument, source] of Object.entries(template)) {

@@ -3,6 +3,7 @@
 import { memo, useMemo, useState, type CSSProperties } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import PortalAnchor from "@/lib/portal-anchor";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 
 /**
@@ -29,7 +30,7 @@ const REMARK_PLUGINS = [remarkGfm];
 
 const COMPONENTS: Components = {
   // Open links safely in a new tab; strip react-markdown's `node` before hitting the DOM.
-  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+  a: ({ node: _node, ...props }) => <PortalAnchor {...props} target="_blank" rel="noopener noreferrer" />,
 };
 
 /** A complete, non-trivial HTML document embedded in the message. Requires the CLOSING

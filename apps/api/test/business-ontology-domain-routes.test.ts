@@ -124,6 +124,13 @@ describe("Business Domain Ontology registry and OntoCode lineage", () => {
     // 前端流程。所以这里按真实使用顺序补上绑定，而不是放宽那道门。
     for (const [index, tenant] of tenantsUnderTest.entries()) {
       const compat = compatTenants[index]!;
+      // Compatibility namespaces are explicit migration/provisioning inputs;
+      // profile selection may not reclassify an ordinary product Tenant.
+      getDb().insert(tenantRuntimeNamespaces).values({
+        tenantId: compat.id,
+        businessDomainTenantId: tenant.id,
+        status: "active",
+      }).run();
       runtimeProfileVersionByTenant.set(
         tenant.slug,
         createRuntimeProfile(

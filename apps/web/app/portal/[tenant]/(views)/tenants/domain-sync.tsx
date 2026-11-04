@@ -21,7 +21,7 @@ import {
  * This panel changes only the tenant-scoped association. Archiving never
  * claims to delete the corresponding Domain from Allmeta.
  */
-export function DomainSyncPanel({ activeTenant }: { activeTenant: string }) {
+export function DomainSyncPanel({ activeTenant, domainLabel }: { activeTenant: string; domainLabel?: string }) {
   const { t } = useI18n();
   const toast = useToast();
   const registry = useBusinessOntologyDomains(activeTenant, {
@@ -144,7 +144,7 @@ export function DomainSyncPanel({ activeTenant }: { activeTenant: string }) {
                 <Badge tone="signal">
                   {t("tenants.domainSync.businessDomain")}
                 </Badge>
-                <strong style={{ fontSize: 13 }}>{activeTenant}</strong>
+                <strong style={{ fontSize: 13 }}>{domainLabel ?? activeTenant}</strong>
                 <Icon name="chevron-right" size={12} />
                 <Badge tone="muted">
                   {t("tenants.domainSync.ontologyDomains")}
@@ -413,7 +413,7 @@ export function DomainSyncPanel({ activeTenant }: { activeTenant: string }) {
                       }}
                     >
                       {t("tenants.domainSync.credentialsStayHere", {
-                        tenant: activeTenant,
+                        tenant: domainLabel ?? activeTenant,
                       })}
                     </span>
                   </div>

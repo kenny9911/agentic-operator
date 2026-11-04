@@ -15,7 +15,7 @@
  * show "leave blank to keep".
  */
 
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Icon, Panel } from "@/app/portal/components";
 import {

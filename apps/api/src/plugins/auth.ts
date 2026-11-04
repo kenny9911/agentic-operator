@@ -11,6 +11,7 @@ import {
   projectAuthorityAccount,
   AccountAuthorityError,
 } from "../services/account-authority";
+import { resolveDomainRuntimeParams, resolveRequestDomain } from "./domain-context";
 
 /**
  * P6-AUTH — authenticated request context.
@@ -41,6 +42,12 @@ export interface AuthedContext {
   /** Canonical account provenance, never a credential or local authority grant. */
   authorityAccountId?: string;
   username?: string;
+  /** Product owner; tenantId/tenantSlug remain the domain's runtime namespace. */
+  ownerTenantId?: string;
+  ownerTenantSlug?: string;
+  ownerRole?: TenantRole | null;
+  domainId?: string;
+  domainSlug?: string;
 }
 
 const COOKIE_NAME = "agentic_session";
@@ -420,7 +427,7 @@ export async function refreshRequestAuth(
       fresh.userId !== original.userId
     )
       return null;
-    return fresh;
+    return resolveRequestDomain(req, fresh);
   }
   if (accountsMode() && original.via === "cookie") return null;
   let identity: AuthedContext;
@@ -436,7 +443,12 @@ export async function refreshRequestAuth(
     const db = getDb();
     const user = db.select().from(users).where(eq(users.id, original.userId)).get();
     if (!user || user.status !== "active") return null;
-    const tenant = db.select().from(tenants).where(eq(tenants.id, original.tenantId)).get();
+    // Product Domain sessions authenticate through their owner. Older
+    // compatibility namespaces keep their own exact membership authority.
+    const identityTenantId = original.domainId
+      ? (original.ownerTenantId ?? original.tenantId)
+      : original.tenantId;
+    const tenant = db.select().from(tenants).where(eq(tenants.id, identityTenantId)).get();
     if (!tenant) return null;
     identity = {
       userId: user.id,
@@ -450,7 +462,7 @@ export async function refreshRequestAuth(
       sessionExpiresAt: original.sessionExpiresAt,
     };
   }
-  return identity;
+  return resolveRequestDomain(req, identity);
 }
 
 /**
@@ -541,7 +553,10 @@ export async function registerAuth(app: FastifyInstance) {
     )
       return;
     const identity = await authenticate(req);
-    req.auth = identity ?? undefined;
+    req.auth = identity ? resolveRequestDomain(req, identity) : undefined;
+  });
+  app.addHook("preHandler", async (req) => {
+    resolveDomainRuntimeParams(req);
   });
 }
 

@@ -43,6 +43,9 @@ vi.mock("@agentic/shared", () => ({
 }));
 
 vi.mock("@agentic/runtime", async () => ({
+  // Lifecycle isolation is exercised against real storage by the API's
+  // domain-runtime-integration suite; this suite isolates the run engine.
+  assertDomainRuntimeActive: () => undefined,
   ...(await import("../../runtime/src/run-input")),
   createMemoryHandle: (binding: Record<string, unknown>) => {
     state.memoryBindings.push(binding);

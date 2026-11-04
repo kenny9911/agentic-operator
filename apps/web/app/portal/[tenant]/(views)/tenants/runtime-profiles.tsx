@@ -61,8 +61,10 @@ function versionEditor(
 
 export function RuntimeProfilesPanel({
   activeTenant,
+  domainLabel = activeTenant,
 }: {
   activeTenant: string;
+  domainLabel?: string;
 }) {
   const { t } = useI18n();
   const isSuperadmin = useIsSuperadmin();
@@ -158,7 +160,7 @@ export function RuntimeProfilesPanel({
                 <Badge tone="signal">
                   {t("tenants.runtimeProfiles.businessDomain")}
                 </Badge>
-                <strong style={{ fontSize: 13 }}>{activeTenant}</strong>
+                <strong style={{ fontSize: 13 }}>{domainLabel}</strong>
                 <Icon name="chevron-right" size={12} />
                 <Badge tone="muted">
                   {t("tenants.runtimeProfiles.runtimeProfiles")}
@@ -319,7 +321,7 @@ export function RuntimeProfilesPanel({
               <div style={editorFooterStyle}>
                 <span>
                   {t("tenants.runtimeProfiles.credentialScope", {
-                    tenant: activeTenant,
+                    tenant: domainLabel,
                   })}
                 </span>
                 <Button

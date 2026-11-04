@@ -17,7 +17,7 @@ import {
   type IconName,
 } from "@/app/portal/components";
 import { defaultFleetModelKey } from "@/app/portal/components/workflows/fleet-selection";
-import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useDomainSlug } from "@/app/portal/lib/use-tenant";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import {
   unmetRequirements,
@@ -127,7 +127,7 @@ export function NewWorkflowModal({
   onImport,
 }: NewWorkflowModalProps) {
   const { t } = useI18n();
-  const tenant = useTenant();
+  const domainSlug = useDomainSlug();
   const templatesQuery = useWorkflowTemplates();
   const workflowsQuery = useWorkflowCatalog();
   const foldersQuery = useWorkflowDocumentFolders();
@@ -502,7 +502,7 @@ export function NewWorkflowModal({
                 />
               </Field>
               <Field label={t("newWorkflowModal.tenant")}>
-                <div style={readOnlyFieldStyle}>{tenant}</div>
+                <div style={readOnlyFieldStyle}>{domainSlug}</div>
               </Field>
               {path !== "import" &&
                 (path !== "clone" || overrideCloneModel) && (

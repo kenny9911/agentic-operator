@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import type { OntoCodeAutonomyMode } from "@agentic/contracts";

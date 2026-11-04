@@ -49,6 +49,8 @@ function rpc(method, args) {
 }
 
 async function execute(command) {
+  let handlerStarted = false;
+  let failureStage = 'setup';
   try {
     if (!command || command.kind !== 'execute') throw new Error('first protocol message must be execute');
     if (typeof command.javascript !== 'string' || !command.javascript.trim()) throw new Error('compiled candidate code is missing');
@@ -89,7 +91,8 @@ async function execute(command) {
       : [];
     const definition = captured || exported.find((value) =>
       value && typeof value === 'object' && typeof value.handler === 'function');
-    if (!definition || typeof definition.handler !== 'function') {
+    const handler = definition && definition.handler;
+    if (typeof handler !== 'function') {
       throw new Error('generated module exposes no defineAgent handler');
     }
 
@@ -132,12 +135,19 @@ async function execute(command) {
       },
     };
 
-    const value = await definition.handler(jsonClone(command.input || {}, 'input'), ctx);
+    const input = jsonClone(command.input || {}, 'input');
+    // Bootstrap-owned execution stage. Candidate input/return values cannot
+    // turn a module-load failure into proof that the handler was invoked.
+    failureStage = 'handler';
+    handlerStarted = true;
+    const value = await Reflect.apply(handler, definition, [input, ctx]);
+    failureStage = 'result';
     const normalized = value && typeof value === 'object' && !Array.isArray(value)
       ? value
       : { result: value };
     finish({
       ok: true,
+      handlerStarted,
       result: jsonClone(normalized, 'handler result'),
       emitted,
       rpcCount: rpcSequence,
@@ -146,6 +156,8 @@ async function execute(command) {
     finish({
       ok: false,
       failure: 'candidate_failed',
+      handlerStarted,
+      failureStage,
       error: String(error && error.message || error).slice(0, 1_000),
       rpcCount: rpcSequence,
     }, 1);

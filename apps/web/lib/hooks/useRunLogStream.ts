@@ -19,6 +19,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { scopedResourceHref } from "@/lib/portal-scope";
 
 export interface RunLogLine {
   /** Monotonic sequence so React can key the list without ambiguity. */
@@ -46,6 +48,7 @@ export function useRunLogStream(
   runId: string | null | undefined,
   opts: { follow?: boolean; maxLines?: number } = {},
 ): UseRunLogStreamResult {
+  const pathname = usePathname();
   const follow = opts.follow ?? true;
   const maxLines = opts.maxLines ?? 5000;
 
@@ -68,9 +71,10 @@ export function useRunLogStream(
     let attempt = 0;
     let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const url = `/v1/runs/${encodeURIComponent(runId)}/logs${follow ? "?follow=1" : ""}`;
+    const url = scopedResourceHref(`/v1/runs/${encodeURIComponent(runId)}/logs${follow ? "?follow=1" : ""}`, pathname);
 
     function push(kind: RunLogLine["kind"], text: string) {
+      if (cancelled) return;
       seqRef.current += 1;
       const line: RunLogLine = {
         seq: seqRef.current,
@@ -140,7 +144,7 @@ export function useRunLogStream(
       }
       setConnected(false);
     };
-  }, [runId, follow, maxLines]);
+  }, [runId, follow, maxLines, pathname]);
 
   return {
     lines,

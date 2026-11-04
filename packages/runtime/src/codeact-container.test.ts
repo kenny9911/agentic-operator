@@ -40,6 +40,7 @@ class FakeDockerTransport implements CodeActDockerTransport {
   constructor(
     private readonly cleanupFails = false,
     private readonly onCreate?: () => void,
+    private readonly resultMetadata: Record<string, unknown> = {},
   ) {
     this.exitPromise = new Promise((resolve) => { this.exitResolve = resolve; });
     this.closedPromise = new Promise((resolve) => { this.closedResolve = resolve; });
@@ -67,6 +68,7 @@ class FakeDockerTransport implements CodeActDockerTransport {
             result: { value: message.value },
             emitted: [{ event: "DONE", payload: { ok: true } }],
             rpcCount: 1,
+            ...this.resultMetadata,
           })}\n`);
           this.exitResolve({ statusCode: 0 });
           this.stdout.end();
@@ -142,6 +144,31 @@ const code = `
 `;
 
 describe("one-shot CodeAct container executor", () => {
+  it.each([undefined, false, true, "true"])("trusts only literal bootstrap handler-start evidence: %s", async (handlerStarted) => {
+    const result = await executeCodeActContainer(code, { id: "A" }, {
+      timeoutMs: 2_000, memoryMb: 128, image,
+      identity: { agentName: "stage-test", tenantSlug: "stage-sb", correlationId: "stage-test" },
+      onRpc: async () => ({ found: true }),
+      transport: new FakeDockerTransport(false, undefined, { handlerStarted }),
+    });
+    expect(result).toMatchObject({ ok: true, executorStarted: true, handlerStarted: handlerStarted === true });
+  });
+
+  it.each([undefined, "setup", "handler", "result", "unknown", true])("accepts only recognized bootstrap failure stages: %s", async (failureStage) => {
+    const result = await executeCodeActContainer(code, { id: "A" }, {
+      timeoutMs: 2_000, memoryMb: 128, image,
+      identity: { agentName: "stage-test", tenantSlug: "stage-sb", correlationId: "stage-test" },
+      onRpc: async () => ({ found: true }),
+      transport: new FakeDockerTransport(false, undefined, {
+        ok: false, failure: "candidate_failed", error: "[terminal] test-fixture", handlerStarted: true, failureStage,
+      }),
+    });
+    expect(result).toMatchObject({
+      ok: false, failure: "candidate_failed",
+      failureStage: typeof failureStage === "string" && ["setup", "handler", "result"].includes(failureStage) ? failureStage : undefined,
+    });
+  });
+
   it("requires the exact reviewed candidate identity in production", () => {
     expect(codeActCandidateImageAllowlistIssue(image, undefined, true))
       .toMatch(/required in production/);

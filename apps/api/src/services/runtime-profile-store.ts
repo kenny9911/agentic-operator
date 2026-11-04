@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
   businessOntologyDomains,
+  domains,
   getDb,
   runtimeProfiles,
   runtimeProfileVersions,
@@ -220,15 +221,30 @@ function resolveAdapterTarget(
       { compatibilityTenantSlug: compatibilitySlug },
     );
   }
+  const targetDomain = db.select({ id: domains.id }).from(domains)
+    .where(eq(domains.runtimeTenantId, target.id)).get();
+  if (targetDomain) {
+    throw new RuntimeProfileStoreError(
+      "runtime_profile_domain_namespace_reserved",
+      "An owned Domain runtime namespace cannot be reassigned as another Domain's compatibility adapter",
+      409,
+      { domainId: targetDomain.id },
+    );
+  }
   const marker = db
     .select()
     .from(tenantRuntimeNamespaces)
     .where(eq(tenantRuntimeNamespaces.tenantId, target.id))
     .get();
-  if (
-    marker &&
-    marker.businessDomainTenantId !== ctx.tenantId
-  ) {
+  if (!marker) {
+    throw new RuntimeProfileStoreError(
+      "runtime_profile_namespace_not_explicit",
+      "Compatibility adapters require an explicitly provisioned execution namespace; an ordinary Tenant cannot be reassigned",
+      409,
+      { compatibilityTenantSlug: compatibilitySlug },
+    );
+  }
+  if (marker.businessDomainTenantId !== ctx.tenantId) {
     throw new RuntimeProfileStoreError(
       "runtime_profile_namespace_owned_elsewhere",
       "This compatibility execution namespace is already assigned to another Business Domain",
@@ -240,28 +256,14 @@ function resolveAdapterTarget(
     );
   }
   const now = new Date();
-  if (marker) {
-    db.update(tenantRuntimeNamespaces)
-      .set({
-        status: "active",
-        archivedAt: null,
-        updatedAt: now,
-      })
-      .where(eq(tenantRuntimeNamespaces.tenantId, target.id))
-      .run();
-  } else {
-    db.insert(tenantRuntimeNamespaces)
-      .values({
-        tenantId: target.id,
-        businessDomainTenantId: ctx.tenantId,
-        status: "active",
-        createdBy: ctx.actorId,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-      })
-      .run();
-  }
+  db.update(tenantRuntimeNamespaces)
+    .set({
+      status: "active",
+      archivedAt: null,
+      updatedAt: now,
+    })
+    .where(eq(tenantRuntimeNamespaces.tenantId, target.id))
+    .run();
   return { compatibilityTenantId: target.id };
 }
 

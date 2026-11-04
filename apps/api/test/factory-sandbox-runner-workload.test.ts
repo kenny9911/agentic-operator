@@ -1,5 +1,8 @@
 import {
   sandboxInfrastructureCleanupEvidenceHash,
+  sandboxCleanupReceiptHash,
+  sandboxRunDrainReceiptHash,
+  type SandboxCleanupReceipt,
   type SandboxDeployResult,
 } from "@agentic/agent-factory";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +20,8 @@ import type {
   SandboxCodeActCandidateReaperLike,
   SandboxCodeActReaperTelemetry,
 } from "../src/services/agent-factory/sandbox-codeact-reaper";
+import * as lifecycleStore from "../src/services/agent-factory/sandbox-lifecycle-store";
+import { verifySandboxCancelFenceAck } from "../src/services/agent-factory/sandbox-cancel-fence";
 
 const token = "workload-control-token-that-is-at-least-32-bytes";
 const cancelFenceKey = "workload-cancel-fence-integrity-key-at-least-32-bytes";
@@ -92,6 +97,63 @@ function bundle(): SandboxCandidateBundle {
 }
 
 describe("split sandbox workload service", () => {
+  it.each(["verified", "cleanup_failed", "remote_may_exist", "wrong_fingerprint", "wrong_app", "candidate_orphan"])(
+    "only signs durable exact cleanup evidence for explicit repair: %s",
+    async (variant) => {
+      const candidate = bundle();
+      const appId = `agentic-factory-sandbox-${candidate.sandboxTenantSlug}`;
+      const timestamp = new Date().toISOString();
+      const drain = {
+        schema: "agent-factory-sandbox-run-drain/v1" as const,
+        sandboxAttemptId: candidate.attemptId, sandboxTenantSlug: candidate.sandboxTenantSlug, appId,
+        startedAt: timestamp, completedAt: timestamp, observedRuns: [], evidenceHash: "",
+      };
+      drain.evidenceHash = sandboxRunDrainReceiptHash(drain);
+      const receipt: SandboxCleanupReceipt = {
+        schema: "agent-factory-sandbox-cleanup/v2", sandboxAttemptId: candidate.attemptId,
+        sandboxTenantSlug: candidate.sandboxTenantSlug, appId,
+        candidateFingerprint: variant === "wrong_fingerprint" ? "another-candidate" : candidate.candidateFingerprint,
+        targetDomainId: candidate.targetDomainId, runDrain: drain, deletedAt: timestamp,
+        absence: { connected: false, functionCount: null, registryState: "not_registered" }, absenceProbeHash: "",
+      };
+      receipt.absenceProbeHash = sandboxCleanupReceiptHash(receipt);
+      const row = {
+        id: candidate.attemptId, appId: variant === "wrong_app" ? "another-app" : appId,
+        sandboxTenantSlug: candidate.sandboxTenantSlug, candidateFingerprint: candidate.candidateFingerprint,
+        targetDomainId: candidate.targetDomainId, status: variant === "cleanup_failed" ? "cleanup_failed" : "cleanup_verified",
+        remoteMayExist: variant === "remote_may_exist", cleanupReceipt: receipt,
+      } as unknown as lifecycleStore.SandboxAttemptRecord;
+      let reconciled = false;
+      const rows = vi.spyOn(lifecycleStore, "listSandboxAttempts").mockImplementation(() => {
+        expect(reconciled).toBe(true);
+        return [row];
+      });
+      const app = await buildSandboxRunnerWorkload({
+        config: workloadConfig(), execute: vi.fn(),
+        reconcileCancellation: async () => { reconciled = true; },
+        candidateReaper: readyCandidateReaper(variant === "candidate_orphan" ? { candidateCleanupReady: false, orphanCandidates: 1 } : {}),
+      });
+      try {
+        const cleanupRepairNonce = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        const response = await app.inject({
+          method: "POST", url: `/internal/v1/executions/${candidate.attemptId}/cancel`,
+          headers: { authorization: `Bearer ${token}` },
+          payload: {
+            schema: "agent-factory-sandbox-workload-cancel/v1", attemptId: candidate.attemptId,
+            bundleHash: candidate.bundleHash, sandboxTenantSlug: candidate.sandboxTenantSlug, appId,
+            expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), cleanupRepairNonce,
+          },
+        });
+        expect(response.statusCode).toBe(202);
+        const ack = verifySandboxCancelFenceAck(response.json(), {
+          attemptId: candidate.attemptId, bundleHash: candidate.bundleHash,
+          sandboxTenantSlug: candidate.sandboxTenantSlug, appId,
+        }, cancelFenceKey);
+        expect(ack.cleanupRepairNonce).toBe(cleanupRepairNonce);
+        expect(ack.cleanupReceipt).toEqual(variant === "verified" ? receipt : undefined);
+      } finally { rows.mockRestore(); await app.close(); }
+    },
+  );
   afterEach(() => {
     for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true });
   });

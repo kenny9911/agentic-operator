@@ -1,4 +1,6 @@
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
 
 /**
  * Workflows view — DAG canvas of all agents wired by events. P2-FE-08.
@@ -36,7 +38,7 @@ import type {
   WorkflowDetail,
   WorkflowValidationResponse,
 } from "@agentic/contracts";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "@/lib/portal-navigation";
 import {
   ActorTag,
   Badge,
@@ -46,7 +48,9 @@ import {
   ViewHeader,
   useToast,
 } from "@/app/portal/components";
-import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useTenant, useDomainSlug } from "@/app/portal/lib/use-tenant";
+import { DomainRuntime } from "@/app/portal/components/domains/DomainRuntime";
+import { useCan } from "@/lib/hooks/useMe";
 import { useDirty } from "@/app/portal/lib/dirty-context";
 import {
   useI18n,
@@ -215,6 +219,8 @@ export default function WorkflowsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tenant = useTenant();
+  const domainSlug = useDomainSlug();
+  const can = useCan();
   const { t, language } = useI18n();
   const toast = useToast();
   const requestedWorkflow = searchParams.get("workflow");
@@ -401,7 +407,7 @@ export default function WorkflowsPage() {
   useEffect(() => {
     let layout = emptyCanvasLayout();
     try {
-      layout = deserializeCanvasLayout(window.localStorage.getItem(layoutStorageKey));
+      layout = deserializeCanvasLayout(domainStorage.getItem(layoutStorageKey));
     } catch {
       // Keep movement available when browser storage is unavailable.
     }
@@ -411,7 +417,7 @@ export default function WorkflowsPage() {
   useEffect(() => {
     if (savedLayout.key !== layoutStorageKey || !selectedWorkflow) return;
     try {
-      window.localStorage.setItem(layoutStorageKey, JSON.stringify(savedLayout.layout));
+      domainStorage.setItem(layoutStorageKey, JSON.stringify(savedLayout.layout));
     } catch {
       // The in-memory layout still works when storage is unavailable/full.
     }
@@ -478,7 +484,7 @@ export default function WorkflowsPage() {
   useEffect(() => {
     let next = WORKFLOW_INSPECTOR_DEFAULT_WIDTH;
     try {
-      const stored = window.localStorage.getItem(inspectorStorageKey);
+      const stored = domainStorage.getItem(inspectorStorageKey);
       const parsed = stored == null ? Number.NaN : Number(stored);
       if (Number.isFinite(parsed)) next = parsed;
     } catch {
@@ -496,7 +502,7 @@ export default function WorkflowsPage() {
   useEffect(() => {
     if (hydratedInspectorKey !== inspectorStorageKey) return;
     try {
-      window.localStorage.setItem(
+      domainStorage.setItem(
         inspectorStorageKey,
         String(clampWorkflowInspectorWidth(inspectorWidth, 0)),
       );
@@ -666,11 +672,11 @@ export default function WorkflowsPage() {
       return;
     }
     try {
-      const raw = window.localStorage.getItem(storageKey);
+      const raw = domainStorage.getItem(storageKey);
       if (raw) {
         const parsed = tryReadSerializedDraft(raw);
         if (!parsed) {
-          window.localStorage.removeItem(storageKey);
+          domainStorage.removeItem(storageKey);
         } else {
           setDraft(deserializeDraft(parsed));
           setDraftBaseVersionId(parsed.baseVersionId);
@@ -709,7 +715,7 @@ export default function WorkflowsPage() {
     if (hydratedKey !== storageKey || typeof window === "undefined") return;
     try {
       if (dirty) {
-        window.localStorage.setItem(
+        domainStorage.setItem(
           storageKey,
           JSON.stringify(
             serializeDraft(
@@ -719,7 +725,7 @@ export default function WorkflowsPage() {
           ),
         );
       } else {
-        window.localStorage.removeItem(storageKey);
+        domainStorage.removeItem(storageKey);
       }
     } catch {
       // Persistence failure is best-effort; don't break the UI.
@@ -739,7 +745,7 @@ export default function WorkflowsPage() {
     setDraftBaseVersionId(null);
     if (typeof window !== "undefined") {
       try {
-        window.localStorage.removeItem(storageKey);
+        domainStorage.removeItem(storageKey);
       } catch {
         // ignore
       }
@@ -1324,7 +1330,7 @@ export default function WorkflowsPage() {
       err instanceof WorkflowAuthoringApiError ? err.code : undefined;
     const localized =
       code && PUBLISH_FAILURE_CODES.has(code)
-        ? translate(`workflowPage.publishError.${code}`)
+        ? translate(`workflowPage.toast.publishError.${code}`)
         : null;
     const base =
       localized ??
@@ -2091,6 +2097,10 @@ export default function WorkflowsPage() {
               ]
         }
       />
+
+      <div style={{ padding: "0 20px 12px", flexShrink: 0 }}>
+        <DomainRuntime tenant={tenant} domain={domainSlug} canManage={can("settings.write")} />
+      </div>
 
       <div className={styles.selectorBar}>
         <span className={styles.selectorLabel}>

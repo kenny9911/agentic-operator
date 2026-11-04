@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { formatModelRouteId } from "@agentic/contracts";
 import { useLlmSettings, useGatewayModels } from "@/lib/hooks/useLlmSettings";
 import { useI18n } from "@/app/portal/lib/preferences-context";

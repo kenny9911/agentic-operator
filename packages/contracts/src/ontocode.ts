@@ -621,10 +621,15 @@ export const ONTOCODE_COMMAND_POLICY = {
     jobKind: "build",
     riskClass: "draft_change",
     requiresHuman: false,
+    // One Action needs grounding, planning, critique, design, code admission,
+    // review and save. A live run used all ten outer turns at code admission;
+    // twenty leaves bounded review/refinement headroom. The adapter currently
+    // maps maxModelCalls to outer conductor turns, not an aggregate nested-call
+    // fuse (understanding and critique also make model calls inside tools).
     // `budget` is the bounded one-Action default. Multi-Action generation is
     // expanded by `resolveOntoCodeCommandBudget` up to this server-owned
     // ceiling; callers can tighten that resolved allowance, never widen it.
-    budget: { maxWallClockMs: 600_000, maxModelCalls: 10, maxToolCalls: 24 },
+    budget: { maxWallClockMs: 600_000, maxModelCalls: 20, maxToolCalls: 32 },
     budgetCeiling: {
       maxWallClockMs: 900_000,
       maxModelCalls: 40,
@@ -698,10 +703,9 @@ export const ONTOCODE_COMMAND_POLICY = {
  * Resolve the server-owned default budget for a concrete command.
  *
  * A generated package has real per-Action work (contract grounding, design,
- * validation and evidence), so a fixed ten-call allowance made a six-Action
- * Build terminate immediately after planning. The allowance now grows with
- * the immutable selected scope while remaining capped by the command policy.
- * A single-Action Build keeps the original tight limits.
+ * validation and evidence), so even one Action needs enough allowance to
+ * reach review and save after code admission. The allowance grows with the
+ * immutable selected scope while remaining capped by the command policy.
  *
  * #BUDGET-FOLLOWS-WORK — the allowance belongs to the work stream, not to the
  * label of the command that nudges it. Every `build`-kind command drives the

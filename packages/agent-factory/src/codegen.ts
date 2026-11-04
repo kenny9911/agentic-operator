@@ -418,7 +418,7 @@ export async function probeAgentModule(
     if (!def || typeof def.handler !== "function")
       return {
         loads: false,
-        reason: "加载后没有可调用的 handler（defineAgent 未导出/handler 缺失）",
+        reason: "加载后没有含可调用 .handler 的 Agent 对象；应调用导入的 defineAgent({ async handler(input, ctx) { ... } }) 并导出返回对象，不能只导出 handler 函数",
       };
     if (def.factoryExecutionMode === "declarative_required") {
       return {

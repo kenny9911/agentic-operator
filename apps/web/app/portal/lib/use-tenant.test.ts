@@ -43,39 +43,42 @@ describe("resolveTenantParam", () => {
 });
 
 describe("rewriteTenantInPath", () => {
+  it("drops the previous Domain identity and detail when changing Tenant", () => {
+    expect(rewriteTenantInPath("/portal/acme/domains/hiring/runs/run-1", "northwind")).toBe("/portal/northwind/domains");
+  });
   it("swaps tenant on a typical view path", () => {
     expect(rewriteTenantInPath("/portal/raas/runs", "support")).toBe(
-      "/portal/support/runs",
+      "/portal/support/domains",
     );
   });
 
   it("drops tenant-scoped detail ids", () => {
     expect(
       rewriteTenantInPath("/portal/raas/runs/run-abc", "support"),
-    ).toBe("/portal/support/runs");
+    ).toBe("/portal/support/domains");
   });
 
   it("treats /portal alone as no-rest", () => {
     expect(rewriteTenantInPath("/portal", "support")).toBe(
-      "/portal/support/dashboard",
+      "/portal/support/domains",
     );
   });
 
-  it("preserves the settings usage view", () => {
+  it("requires explicit Domain selection after a Tenant switch", () => {
     expect(rewriteTenantInPath("/portal/raas/settings/usage", "support")).toBe(
-      "/portal/support/settings/usage",
+      "/portal/support/domains",
     );
   });
 
   it("falls back to /portal/<tenant> when not under /portal", () => {
     expect(rewriteTenantInPath("/sign-in", "support")).toBe(
-      "/portal/support/dashboard",
+      "/portal/support/domains",
     );
   });
 
   it("handles an empty path", () => {
     expect(rewriteTenantInPath("/", "support")).toBe(
-      "/portal/support/dashboard",
+      "/portal/support/domains",
     );
   });
 
