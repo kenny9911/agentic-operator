@@ -111,4 +111,22 @@ The first remote run passed all 1,159 frontend tests and their coverage threshol
 
 The exact runtime pin is now Node 26.12.1, with its verified Docker image digest updated consistently. Next.js and its ESLint configuration are 16.4.1; shell-quote and proxy-addr resolve to their patched versions. These versions address the [Node security release](https://nodejs.org/en/blog/release/v26.12.1), [Next.js advisories](https://github.com/advisories/GHSA-673q-mjm6-r5xr), [shell-quote advisory](https://github.com/ljharb/shell-quote/security/advisories/GHSA-pqg4-j6r4-53mv), and [proxy-addr advisory](https://github.com/jshttp/proxy-addr/security/advisories/GHSA-jqcg-44mw-7w3h). Sandbox images also omit unused development Inngest CLI and Vitest/Tinypool trees; runtime tsx/esbuild, TypeScript and the Inngest SDK remain available. No vulnerability gate or test assertion was disabled.
 
-The security-updated production build passed. A subsequent attempt to repeat the browser benchmark could not run because the existing local API had stopped; its database writer lease prevented restart. The lease was respected, and no live migration or lease recovery was attempted. The measurements above remain results from the explicitly identified builds, not a new measurement of the security-updated dependencies. The PR's latest CI checks establish final build, coverage, browser and image validation status.
+The security-updated production build passed. A subsequent attempt to repeat the comparison against the original API could not run because that API had stopped; its database writer lease prevented restart. The lease was respected, and no live migration or lease recovery was attempted.
+
+The final production frontend (application code at `90d17827`, Node 26.12.1 / Next.js 16.4.1) was then verified against an isolated copy of the task test database, using the actual API on port 3640 with `NODE_ENV=test` and explicit development authentication. All five read-only loading scenarios passed again. A second six-sample timing run used the same browser, throttling, languages and navigation sequence described above, with `next start` on port 3601. Its median results were:
+
+| Final-build metric, isolated test backend | Median |
+| --- | ---: |
+| First contentful paint | 290 ms |
+| Sampled largest contentful paint | 840 ms |
+| Dashboard API-settled time | 1,428 ms |
+| Initial JavaScript transferred / decoded | 309,627 B / 1,091,753 B |
+| Dashboard → Agents | 528 ms |
+| Agents → warm Dashboard | 119 ms |
+| Dashboard → Workflows | 683 ms |
+| Workflows → Dashboard | 425 ms |
+| Return after leaving the domain scope | 372 ms |
+
+This final run had zero browser errors, failed API reads, external font requests, and initial browser domain-detail requests. Its health endpoint returned 200. Its isolated dataset and backend conditions differ from the original comparison, so these figures are a final-build reference, **not an additional before/after percentage claim**. The raw results remain local in `agentic-frontend-security-after-isolated.json`.
+
+Remote validation at `90d17827` passed 2,551 API tests, 1,159 frontend tests, 47 CLI tests and their configured coverage gates, plus build, typecheck, lint, harness and image/security checks. The two remaining browser failures were exact URL expectations for the pre-domain route shape; those expectations were corrected while preserving pagination and keyboard assertions, and both targeted cases passed. The full runtime suite also passed locally on Node 26.12.1 (334 Vitest tests and 58 Node tests; six Docker-dependent tests skipped locally). Consult the PR's latest checks for the final complete CI result.

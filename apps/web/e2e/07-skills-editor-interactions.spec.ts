@@ -247,10 +247,10 @@ test("a long skill catalog scrolls to later pages without mixing tenant and shar
   });
   await page.goto("/portal/raas/skills");
   const sharedRows = page.locator(
-    'a[href^="/portal/raas/skills/skl-long-catalog-"]',
+    'a[href^="/portal/raas/domains/raas/skills/skl-long-catalog-"]',
   );
   const tenantRow = page.locator(
-    'a[href="/portal/raas/skills/skl-tenant-only"]',
+    'a[href="/portal/raas/domains/raas/skills/skl-tenant-only"]',
   );
   const loadMore = page.getByRole("button", { name: "Load more", exact: true });
   await expect(sharedRows).toHaveCount(50);
@@ -358,7 +358,7 @@ test("skill availability toggles by keyboard without navigation and disabled ent
   release();
   await expect(toggle).not.toBeChecked();
   await expect(toggle).toBeEnabled();
-  await expect(page).toHaveURL(/\/portal\/raas\/skills$/);
+  await expect(page).toHaveURL(/\/portal\/raas\/domains\/raas\/skills$/);
   await expect(
     page.getByRole("link", { name: /interaction-test/ }),
   ).toBeVisible();
