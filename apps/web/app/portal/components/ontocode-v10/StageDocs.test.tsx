@@ -1,3 +1,4 @@
+import { en } from "@/lib/i18n/en";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -6,7 +7,7 @@ import { PreferencesProvider } from "@/app/portal/lib/preferences-context";
 
 /** StageDocView renders HelpTip (deliberation), which reads i18n preferences. */
 function renderDoc(node: React.ReactElement): string {
-  return renderToStaticMarkup(<PreferencesProvider>{node}</PreferencesProvider>);
+  return renderToStaticMarkup(<PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>{node}</PreferencesProvider>);
 }
 
 describe("classifyStageDoc", () => {

@@ -2173,6 +2173,107 @@ describe("generation readiness gates", () => {
     });
   });
 
+  it.each([
+    {
+      name: "terminal failure with suppressed events",
+      onFailure: "Invalid input terminates the run; emit no event.",
+      events: ["WORK_DONE"],
+      step: {
+        id: "validate-input",
+        type: "logic",
+        errorPolicy: [{ default: "terminal", suppressEmit: true }],
+      },
+    },
+    {
+      name: "an explicitly declared failure event",
+      onFailure: "Invalid input emits WORK_REJECTED and terminates.",
+      events: ["WORK_DONE", "WORK_REJECTED"],
+      step: {
+        id: "validate-input",
+        type: "logic",
+        errorPolicy: [{ default: "terminal", emitEvent: "WORK_REJECTED" }],
+      },
+    },
+    {
+      name: "a missing failure contract",
+      onFailure: undefined,
+      events: ["WORK_DONE"],
+      step: { id: "validate-input", type: "logic" },
+    },
+    {
+      name: "a scoped continue policy without turning it into global termination",
+      onFailure: "The optional normalization step may continue with its authored default.",
+      events: ["WORK_DONE"],
+      step: {
+        id: "validate-input",
+        type: "logic",
+        errorPolicy: [{ default: "continue", defaultResult: { result: "authored fallback" }, suppressEmit: true }],
+      },
+    },
+    {
+      name: "an unknown legacy policy without silently repairing it",
+      onFailure: "Follow the supplied custom policy after its contract is resolved.",
+      events: ["WORK_DONE"],
+      step: {
+        id: "validate-input",
+        type: "logic",
+        on_error: [{ default: "custom-policy", extension: { authored: true } }],
+      },
+    },
+  ])("preserves $name when compiling submission criteria", async ({ onFailure, events, step }) => {
+    const ontology = validOntology();
+    const action = ontology.actions[0]!;
+    delete action.integration;
+    action.tool_use = [];
+    action.action_steps = [step];
+    action.submission_criteria = "work_id must be a non-empty string.";
+    action.on_failure = onFailure;
+    action.triggered_event = events;
+    if (events.includes("WORK_REJECTED")) {
+      ontology.events.push({
+        name: "WORK_REJECTED",
+        payload: {
+          source_action: "doWork",
+          event_data: [{ name: "work_id", type: "String", target_object: "Work" }],
+          state_mutations: [],
+        },
+      });
+    }
+    const sourceBefore = structuredClone(action);
+    const ctx = context(ontology);
+    await readOntology.execute({}, ctx);
+    const result = await designAgent.execute({
+      action: "doWork",
+      system_prompt: "Validate the original input and obey the authored outcome policy.",
+      decision_logic: "Valid input emits WORK_DONE; invalid input follows the source failure contract.",
+    }, ctx);
+
+    expect(result.ok).toBe(true);
+    const prompt = ctx.specs[0]!.systemPrompt;
+    expect(prompt).toContain(action.submission_criteria);
+    expect(prompt).not.toContain("fail-close 发拦截/失败事件");
+    expect(prompt).toContain("suppressEmit:true 仅抑制该失败边界的隐式失败事件");
+    expect(prompt).toContain("不得移作前置条件的失败策略或把 continue 改成全局终止");
+    expect(prompt).toContain("源策略缺失、未知或互相冲突时，保留并报告契约缺口");
+    // Inspect the delivered source evidence, not a reinterpreted policy. The
+    // event allow-list alone must never turn a success event into a rejection.
+    const evidence = JSON.parse(prompt.slice(prompt.indexOf('{\n  "on_failure"')));
+    const rawStep = step as Record<string, unknown>;
+    const policy = rawStep.errorPolicy !== undefined
+      ? { errorPolicy: rawStep.errorPolicy }
+      : rawStep.on_error !== undefined
+        ? { on_error: rawStep.on_error }
+        : null;
+    expect(evidence).toEqual({
+      on_failure: onFailure ?? null,
+      triggered_event: events,
+      step_error_policies: policy
+        ? [{ sourcePath: "action_steps[0]", id: "validate-input", ...policy }]
+        : [],
+    });
+    expect(action).toEqual(sourceBefore);
+  });
+
   it("allows authoring but reports a sandbox blocker when a selected integration lacks probe evidence", async () => {
     const ontology = validOntology();
     ontology.actions[0]!.tool_use = ["vendor.unprobed"];
@@ -3794,6 +3895,7 @@ describe("generation readiness gates", () => {
       ).items.$ref,
     ).toBe("#/$defs/planStep");
     const errorPolicy = schema.properties.plan.items.properties.errorPolicy as {
+      description: string;
       items: {
         properties: { do: { enum: string[] }; suppressEmit: { type: string } };
       };
@@ -3802,6 +3904,17 @@ describe("generation readiness gates", () => {
       expect.arrayContaining(["retry", "terminal", "continue"]),
     );
     expect(errorPolicy.items.properties.suppressEmit.type).toBe("boolean");
+    expect(errorPolicy.description).toContain("与 onError 互斥");
+    expect(
+      (schema.properties.plan.items.properties.onError as { description: string }).description,
+    ).toContain("与 errorPolicy 互斥");
+    const toolArguments = schema.properties.plan.items.properties.toolArguments as {
+      type: string; minProperties?: number; description: string;
+    };
+    expect(toolArguments.type).toBe("object");
+    expect(toolArguments.minProperties ?? 0).toBe(0);
+    expect(toolArguments.description).toContain("零参数工具必须显式写 {}");
+    expect(toolArguments.description).toContain("省略不等于 {}");
 
     const ctx = context(validOntology());
     const unsafe = await createTool.execute(

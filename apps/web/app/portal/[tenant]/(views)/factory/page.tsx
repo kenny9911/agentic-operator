@@ -1,4 +1,8 @@
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
+import { scopedStorageKey } from "@/lib/portal-scope";
+
 
 /**
  * Agent 工厂 — the autonomous Harness brain cockpit.
@@ -23,7 +27,7 @@ import {
   HelpTip,
 } from "@/app/portal/components";
 import { useI18n, type Translate } from "@/app/portal/lib/preferences-context";
-import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useTenant, useDomainSlug } from "@/app/portal/lib/use-tenant";
 import { tenantHeader } from "@/lib/hooks/tenant-header";
 import {
   AGENT_FACTORY_DOMAIN_KEYS,
@@ -60,6 +64,7 @@ import {
 import { BackgroundPanel } from "./background-panel";
 import { DomainKnowledgePanel } from "./domain-knowledge-panel";
 import { buildOntologyBundle, classifyAttachment } from "./ontology-upload";
+import { isFactoryUploadScopeCurrent, readScopedFactoryAttachments, type FactoryUploadScope } from "./upload-scope";
 import { SystemMap } from "./system-map";
 import {
   buildHumanInteractionSubmission,
@@ -157,12 +162,13 @@ async function apiSend<T = unknown>(
   path: string,
   method: "POST" | "PUT" | "PATCH" | "DELETE",
   body?: unknown,
+  originalScopeHeaders?: Record<string, string>,
 ): Promise<FactoryApiResult<T>> {
   // Only attach a JSON content-type when there's a body — Fastify 400s on an empty body with
   // `content-type: application/json` (FST_ERR_CTP_EMPTY_JSON_BODY). Matches useMe/useAccess.
   const headers: Record<string, string> = {
     Accept: "application/json",
-    ...tenantHeaders(tenant),
+    ...(originalScopeHeaders ?? tenantHeaders(tenant)),
   };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   try {
@@ -181,7 +187,7 @@ async function apiSend<T = unknown>(
 // #4/#2 — durable per-(tenant,bound-ontology) conversation id, so a follow-up message
 // after a page reload / finished run RESUMES the thread (brain reloads prior context) instead of
 // silently starting a fresh conversation that ignores history.
-const convStoreKey = (tn: string, dm: string) => `ao:factory:conv:${tn}:${dm}`;
+const convStoreKey = (tn: string, dm: string) => scopedStorageKey(`ao:factory:conv:${tn}:${dm}`);
 
 interface FactoryDomainsSnapshot {
   tenant: string;
@@ -215,6 +221,7 @@ export default function FactoryPage() {
     tRef.current = t;
   }, [t]);
   const tenant = useTenant();
+  const domainSlug = useDomainSlug();
   const queryClient = useQueryClient();
   const [requestGate] = useState(() => new FactoryRequestGate());
   const [domainsSnapshot, setDomainsSnapshot] =
@@ -661,7 +668,7 @@ export default function FactoryPage() {
   }, [domain, requestGate, tenant]);
   useEffect(() => {
     try {
-      const v = localStorage.getItem(`ao:factory:leftOpen:${tenant}`);
+      const v = domainStorage.getItem(`ao:factory:leftOpen:${tenant}`);
       if (v != null) setLeftOpen(v === "1");
     } catch {
       /* ignore */
@@ -671,7 +678,7 @@ export default function FactoryPage() {
     setLeftOpen((o) => {
       const n = !o;
       try {
-        localStorage.setItem(`ao:factory:leftOpen:${tenant}`, n ? "1" : "0");
+        domainStorage.setItem(`ao:factory:leftOpen:${tenant}`, n ? "1" : "0");
       } catch {
         /* ignore */
       }
@@ -679,7 +686,7 @@ export default function FactoryPage() {
     });
   useEffect(() => {
     try {
-      const v = localStorage.getItem(`ao:factory:rightOpen:${tenant}`);
+      const v = domainStorage.getItem(`ao:factory:rightOpen:${tenant}`);
       if (v != null) setRightOpen(v === "1");
     } catch {
       /* ignore */
@@ -689,7 +696,7 @@ export default function FactoryPage() {
     setRightOpen((o) => {
       const n = !o;
       try {
-        localStorage.setItem(`ao:factory:rightOpen:${tenant}`, n ? "1" : "0");
+        domainStorage.setItem(`ao:factory:rightOpen:${tenant}`, n ? "1" : "0");
       } catch {
         /* ignore */
       }
@@ -700,11 +707,11 @@ export default function FactoryPage() {
   const clampRight = (v: number) => Math.min(760, Math.max(320, Math.round(v)));
   useEffect(() => {
     try {
-      const l = Number(localStorage.getItem(`ao:factory:leftW:${tenant}`));
+      const l = Number(domainStorage.getItem(`ao:factory:leftW:${tenant}`));
       if (Number.isFinite(l) && l > 0) setLeftW(clampLeft(l));
-      const r = Number(localStorage.getItem(`ao:factory:rightW:${tenant}`));
+      const r = Number(domainStorage.getItem(`ao:factory:rightW:${tenant}`));
       if (Number.isFinite(r) && r > 0) setRightW(clampRight(r));
-      const d = localStorage.getItem(`ao:factory:density:${tenant}`);
+      const d = domainStorage.getItem(`ao:factory:density:${tenant}`);
       if (d === "brief" || d === "full") setDensity(d);
     } catch {
       /* ignore */
@@ -714,7 +721,7 @@ export default function FactoryPage() {
   const pickDensity = (d: "brief" | "full") => {
     setDensity(d);
     try {
-      localStorage.setItem(`ao:factory:density:${tenant}`, d);
+      domainStorage.setItem(`ao:factory:density:${tenant}`, d);
     } catch {
       /* ignore */
     }
@@ -740,7 +747,7 @@ export default function FactoryPage() {
           ? clampLeft(startW + (ev.clientX - startX))
           : clampRight(startW - (ev.clientX - startX));
       try {
-        localStorage.setItem(`ao:factory:${side}W:${tenant}`, String(finalW));
+        domainStorage.setItem(`ao:factory:${side}W:${tenant}`, String(finalW));
       } catch {
         /* ignore */
       }
@@ -765,7 +772,7 @@ export default function FactoryPage() {
     try {
       // Reconnect to a still-live background run by its id (SSE replays its full buffer).
       // The durable conversation id is restored separately below for the next JSON start.
-      const active = localStorage.getItem(activeRunKey(tenant));
+      const active = domainStorage.getItem(activeRunKey(tenant));
       if (active) setReq({ tenant, reconnectRunId: active, nonce: Date.now() });
     } catch {
       /* ignore */
@@ -778,7 +785,7 @@ export default function FactoryPage() {
   useEffect(() => {
     if (!domain || convRef.current || viewingRun) return;
     try {
-      const stored = localStorage.getItem(convStoreKey(tenant, domain));
+      const stored = domainStorage.getItem(convStoreKey(tenant, domain));
       if (stored) setConv(stored);
     } catch {
       /* ignore */
@@ -1007,8 +1014,8 @@ export default function FactoryPage() {
     // Drop this domain's saved thread AND the reconnect handle, so a fresh start isn't hijacked by
     // the on-mount reconnect effect resurrecting the previous run.
     try {
-      localStorage.removeItem(convStoreKey(tenant, domain));
-      localStorage.removeItem(activeRunKey(tenant));
+      domainStorage.removeItem(convStoreKey(tenant, domain));
+      domainStorage.removeItem(activeRunKey(tenant));
     } catch {
       /* ignore */
     }
@@ -1112,20 +1119,10 @@ export default function FactoryPage() {
     if (!files) return;
     setComposerErr("");
     setComposerOk("");
-    const snaps: Array<{ name: string; text: string }> = [];
-    const readFailures: string[] = [];
-    const emptyFiles: string[] = [];
-    for (const f of Array.from(files)) {
-      try {
-        const text = await f.text();
-        if (text.length > 0) snaps.push({ name: f.name, text });
-        else emptyFiles.push(f.name);
-      } catch {
-        readFailures.push(f.name);
-      }
-    }
-    if (fileRef.current) fileRef.current.value = ""; // safe now — we hold snapshots, not the FileList.
-    if (!isViewedTenant(tenant)) return;
+    const loaded = await readScopedFactoryAttachments(tenant, Array.from(files));
+    if (!loaded) return;
+    const { scope, snaps, readFailures, emptyFiles } = loaded;
+    if (fileRef.current) fileRef.current.value = "";
     const ontologyFiles: Array<{ name: string; text: string }> = [];
     const docFiles: Array<{ name: string; text: string }> = [];
     const malformed: string[] = []; // {/[-leading but unparseable → a BROKEN ontology fragment; must NOT be
@@ -1171,7 +1168,7 @@ export default function FactoryPage() {
         ...prev,
         ...docFiles.map((d) => ({ ...d, kind: "tooldoc" as const })),
       ]);
-    if (ontologyFiles.length) await uploadOntology(ontologyFiles, malformed);
+    if (ontologyFiles.length) await uploadOntology(ontologyFiles, malformed, scope);
     else if (malformed.length)
       setComposerErr(
         (previous) =>
@@ -1184,12 +1181,13 @@ export default function FactoryPage() {
   // tenant-scoped ontology; no catalog item is chosen implicitly.
   const uploadOntology = async (
     files: Array<{ name: string; text: string }>,
-    malformed: string[] = [],
+    malformed: string[],
+    uploadScope: FactoryUploadScope,
   ) => {
     // File.text() above is async; the operator may have navigated to another
-    // tenant while it was reading. Never let that old attachment start a
-    // mutation (or supersede the new tenant's mutation token).
-    if (!isViewedTenant(tenant)) return;
+    // Tenant or Domain while it was reading. Never let that old attachment
+    // start a mutation in the newly selected scope.
+    if (!isFactoryUploadScopeCurrent(uploadScope)) return;
     const { bundle, skipped, actionCount, eventCount, ruleCount } =
       buildOntologyBundle(files);
     const skipList = [...skipped, ...malformed];
@@ -1205,8 +1203,8 @@ export default function FactoryPage() {
     const fallbackName =
       files.length === 1
         ? files[0]!.name.replace(/\.[^.]+$/, "") ||
-          t("factory.page.upload.defaultOntologyName", { tenant })
-        : t("factory.page.upload.defaultOntologyName", { tenant });
+          t("factory.page.upload.defaultOntologyName", { tenant: domainSlug })
+        : t("factory.page.upload.defaultOntologyName", { tenant: domainSlug });
     const targetName = boundDomain?.name ?? boundDomain?.id ?? fallbackName;
     const mutationTicket = requestGate.begin("domain-mutation", { tenant });
     try {
@@ -1216,9 +1214,9 @@ export default function FactoryPage() {
         name: targetName,
         ontology: bundle,
         ...(domain ? { domainId: domain } : {}),
-      });
+      }, uploadScope.headers);
       if (
-        !isViewedTenant(tenant) ||
+        !isFactoryUploadScopeCurrent(uploadScope) ||
         !requestGate.isCurrent(mutationTicket, { tenant })
       )
         return;
@@ -1258,7 +1256,7 @@ export default function FactoryPage() {
       );
     } catch (e) {
       if (
-        isViewedTenant(tenant) &&
+        isFactoryUploadScopeCurrent(uploadScope) &&
         requestGate.isCurrent(mutationTicket, { tenant })
       ) {
         setComposerErr(
@@ -1367,7 +1365,7 @@ export default function FactoryPage() {
       const conversationId = priorConversation ?? result.data.runId;
       setConv(conversationId);
       try {
-        localStorage.setItem(convStoreKey(tenant, runDomain), conversationId);
+        domainStorage.setItem(convStoreKey(tenant, runDomain), conversationId);
       } catch {
         setActionErr(t("factory.page.start.cannotPersistConv"));
       }
@@ -1630,7 +1628,7 @@ export default function FactoryPage() {
     if (result.data.run.status === "waiting_human") {
       setConv(id);
       try {
-        localStorage.setItem(
+        domainStorage.setItem(
           convStoreKey(tenant, result.data.run.domain ?? domain),
           id,
         );
@@ -2563,7 +2561,7 @@ export default function FactoryPage() {
         action={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <Badge tone="muted">
-              {t("factory.page.header.runDomain", { tenant })}
+              {t("factory.page.header.runDomain", { tenant: domainSlug })}
             </Badge>
             {boundDomain ? (
               <Badge tone="green">
@@ -2728,7 +2726,7 @@ export default function FactoryPage() {
             onDoubleClick={() => {
               setLeftW(238);
               try {
-                localStorage.setItem(`ao:factory:leftW:${tenant}`, "238");
+                domainStorage.setItem(`ao:factory:leftW:${tenant}`, "238");
               } catch {
                 /* ignore */
               }
@@ -2755,7 +2753,7 @@ export default function FactoryPage() {
             onDoubleClick={() => {
               setRightW(440);
               try {
-                localStorage.setItem(`ao:factory:rightW:${tenant}`, "440");
+                domainStorage.setItem(`ao:factory:rightW:${tenant}`, "440");
               } catch {
                 /* ignore */
               }
@@ -2883,7 +2881,7 @@ export default function FactoryPage() {
                     fontWeight: 600,
                   }}
                 >
-                  {tenant}
+                  {domainSlug}
                 </div>
                 <div style={{ color: "var(--text-3)", marginTop: 5 }}>
                   {t("factory.page.leftRail.knowledgeSource")}
@@ -3139,7 +3137,7 @@ export default function FactoryPage() {
                 lineHeight: 1.6,
               }}
             >
-              {t("factory.page.composer.unboundWarning", { tenant })}
+              {t("factory.page.composer.unboundWarning", { tenant: domainSlug })}
             </div>
           )}
           {streamError && (

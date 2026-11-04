@@ -4,8 +4,8 @@
 #
 # The exceptions below were recorded against the previous `node:26.5.0-slim`
 # base. Their package versions and upstream status are historical evidence,
-# not verified findings for the current Node 26.8.1 base:
-# docker.io/library/node@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
+# not verified findings for the current Node 26.12.1 base:
+# docker.io/library/node@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0
 # Revalidate these exceptions against a fresh image scan before release and
 # remove entries fixed by the new base. The dependency lockfile also needs
 # a fresh scan; the prior clean result does not cover the upgraded packages.

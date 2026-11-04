@@ -1182,6 +1182,16 @@ describe("validatePlan — enforces production discipline (Phase 1)", () => {
     expect(invalid.ok).toBe(false);
     expect(invalid.errors.join(" ")).toMatch(/rooted|bare values|_raw/);
   });
+
+  it("preserves explicit zero arguments through validation and manifest round-trip", () => {
+    const plan = parsePlan([{ stepId: "ping", kind: "tool", tool: "meta.ping", toolArguments: {}, idempotencyKeyFrom: "request_id", onError: "terminal" }]);
+    expect(validatePlan(plan)).toEqual({ ok: true, errors: [], warnings: [] });
+    const actions = projectPlanToActions(spec({ actionName: "diagnostic", plan }));
+    expect(actions[0]!.tool_arguments).toEqual({});
+    const back = parsePlan(actions.map((action) => ({ ...action, stepId: "ping", kind: "tool", tool: "meta.ping" })));
+    expect(back[0]!.toolArguments).toEqual({});
+    expect(validatePlan([{ stepId: "ping", kind: "tool", tool: "meta.ping" }]).warnings).toHaveLength(1);
+  });
 });
 
 // #G12/#G13 —— 新 IR 的完整往返。设计端能写、投影能存、运行时读不回来，比没有这个字段更糟：

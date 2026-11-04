@@ -1,4 +1,6 @@
 "use client";
+import { tenantHeaderFor } from "@/lib/hooks/tenant-header";
+
 
 /**
  * 实时终端日志 — a true real-time `tail -f` console of ALL tenant activity.
@@ -451,7 +453,7 @@ export function TerminalLogTab() {
         try {
           const response = await fetch(`/v1/activity?limit=${MAX_LINES}`, {
             credentials: "same-origin",
-            headers: { Accept: "application/json", "x-agentic-tenant": tenant },
+            headers: { Accept: "application/json", ...tenantHeaderFor(tenant) },
             signal: controller.signal,
           });
           const raw = await readActivityResponse(response, t);
@@ -499,6 +501,8 @@ export function TerminalLogTab() {
     setConnection(status);
   }, []);
   useStream({
+    // The terminal needs history on each mount; chrome owns cache invalidation.
+    invalidateQueries: false,
     path: `/livefeed?tenant=${encodeURIComponent(tenant)}&backfill=${MAX_LINES}`,
     onEvent: append,
     onStatusChange,

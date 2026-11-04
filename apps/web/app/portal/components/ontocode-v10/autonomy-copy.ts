@@ -35,3 +35,13 @@ export function autonomyModeDescription(mode: string): string | null {
     null
   );
 }
+
+/** Same authorization boundaries for the English creation flow. */
+export function autonomyModeCopy(language: string): AutonomyModeCopy[] {
+  if (language === "zh") return AUTONOMY_MODE_COPY;
+  return [
+    { value: "sandbox_autopilot", label: "Autonomous", description: "Autonomous execution is limited to authorized local sandbox steps and steps without external side effects. External writes, production promotion and deployment still require explicit authorization." },
+    { value: "copilot", label: "Confirm each step", description: "Each step with side effects or a change to code generation state asks for confirmation first." },
+    { value: "guide", label: "Analyze only", description: "Only reads and explains; does not generate, test, write, promote or deploy." },
+  ];
+}

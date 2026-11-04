@@ -33,7 +33,7 @@ import {
 } from "@agentic/db";
 import { makePromotableSandboxExecutionEvidence } from "./factory-sandbox-execution-fixture";
 import { makePromotableSandboxRegistrationEvidence } from "./factory-sandbox-registration-fixture";
-import { codeActContainerTestOptions } from "./codeact-container-test-transport";
+import { codeActContainerTestOptions, InProcessCodeActContainerTestTransport, TEST_CODEACT_CANDIDATE_IMAGE } from "./codeact-container-test-transport";
 import {
   attestLiveProbeCassette,
   cassetteConfigHash,
@@ -914,5 +914,111 @@ describe("versioned Agent Factory regression artifacts", () => {
       emitNames: ["RESUME_FAILED"],
     });
     expect(replay.results[0]!.reasons.join(" ")).toContain("expected emit not observed: RESUME_PROCESSED");
+  });
+
+  async function saveRejectArtifact(options: {
+    handler: string;
+    setup?: string;
+    emits?: string[];
+    expectedEvent?: string;
+  }) {
+    const store = new FsAgentDraftStore();
+    const ev = await evidence();
+    const executable = spec({
+      tools: [], toolPolicies: {}, toolSideEffects: {}, sandboxToolConfigs: {},
+      emit: options.emits ?? ["RESUME_PROCESSED"],
+      codeSource: "ai", codeExecuted: true,
+      generatedCode: `
+        import { defineAgent } from "@agentic/runtime";
+        ${options.setup ?? ""}
+        export const agent = defineAgent({
+          name: "resume-agent",
+          async handler(input, ctx) { ${options.handler} },
+        });
+      `,
+    });
+    await store.save("regression-domain", [executable], {
+      ...ev,
+      approvedTestCases: [{
+        id: "tc-reject", name: "Reject invalid input", scenario: "Invalid local input",
+        kind: "reject", entryEvent: "RESUME_DOWNLOADED", payload: {},
+        expectedOutcome: options.expectedEvent ? `Emit ${options.expectedEvent}` : "Reject without a committed event",
+        ...(options.expectedEvent ? { expectedEvent: options.expectedEvent } : {}),
+      }],
+      testDataOverrides: {}, replayReceipts: [], cassetteRefs: [],
+      functionTester: [{ short: "ResumeAgent", pass: true, ran: true, emitNames: [], reasons: [], tier: "container", fixtureMode: "scripted", qualification: "promotable" }],
+    });
+    const [draft] = await store.list("regression-domain");
+    const artifactPath = path.join(root, "factory-drafts", "regression-domain", draft!.regression!.artifact);
+    const artifact = JSON.parse(await fs.readFile(artifactPath, "utf8")) as PersistedRegressionArtifact;
+    return { store, artifactPath, artifact };
+  }
+
+  it("persists an explicit no-event rejection and replays its actual terminal handler", async () => {
+    const { store, artifact } = await saveRejectArtifact({ handler: 'throw new Error("[terminal] invalid_input");' });
+    expect(artifact.agents[0]!.cases[0]).toMatchObject({ kind: "reject", expectEmits: [], fixture: {} });
+    const replay = await store.replayRegression("regression-domain", ["resume-agent"], undefined, isolatedReplayOptions());
+    expect(replay.pass, JSON.stringify(replay)).toBe(true);
+    expect(replay.results[0]).toMatchObject({ pass: true, ran: true, emitNames: [], execution: "codeact-runtime" });
+  });
+
+  it.each([
+    { label: "module loading", setup: 'throw new Error("[terminal] setup_failed");', handler: "return {};" },
+    { label: "ordinary handler failure", handler: 'throw new Error("unexpected failure");' },
+    { label: "result serialization", handler: 'return { toJSON() { throw new Error("[terminal] serialize_failed"); } };' },
+    { label: "successful business emission", handler: 'await ctx.emit("RESUME_PROCESSED", input); return {};' },
+    { label: "silent successful return", handler: "return {};" },
+    { label: "missing explicitly required rejection event", handler: 'throw new Error("[terminal] invalid_input");', emits: ["RESUME_REJECTED"], expectedEvent: "RESUME_REJECTED" },
+  ])("does not grade $label as an expected rejection", async (options) => {
+    const { store } = await saveRejectArtifact(options);
+    const replay = await store.replayRegression("regression-domain", ["resume-agent"], undefined, isolatedReplayOptions());
+    expect(replay.pass).toBe(false);
+    expect(replay.results[0]?.pass).toBe(false);
+    expect(replay.promotionEvidenceReady).toBe(false);
+  });
+
+  it("preserves the declared rejection-event fallback instead of substituting a success event", async () => {
+    const { store, artifact } = await saveRejectArtifact({
+      emits: ["RESUME_REJECTED", "RESUME_PROCESSED"],
+      handler: 'await ctx.emit("RESUME_REJECTED", input); return {};',
+    });
+    expect(artifact.agents[0]!.cases[0]!.expectEmits).toEqual(["RESUME_REJECTED"]);
+    const replay = await store.replayRegression("regression-domain", ["resume-agent"], undefined, isolatedReplayOptions());
+    expect(replay.pass, JSON.stringify(replay)).toBe(true);
+  });
+
+  it("blocks ambiguous rejection events until the approved case names an exact outcome", async () => {
+    const emits = ["RESUME_REJECTED", "RESUME_DENIED", "RESUME_PROCESSED"];
+    const ambiguous = await saveRejectArtifact({ emits, handler: 'throw new Error("[terminal] invalid_input");' });
+    expect(ambiguous.artifact.agents[0]!.cases[0]!.blockedReasons?.join(" ")).toContain("expectedEvent");
+    const blocked = await ambiguous.store.replayRegression("regression-domain", ["resume-agent"], undefined, isolatedReplayOptions());
+    expect(blocked.pass).toBe(false);
+    expect(blocked.results[0]).toMatchObject({ pass: false, ran: false });
+    const explicit = await saveRejectArtifact({
+      emits, expectedEvent: "RESUME_DENIED", handler: 'await ctx.emit("RESUME_DENIED", input); return {};',
+    });
+    expect(explicit.artifact.agents[0]!.cases[0]!.expectEmits).toEqual(["RESUME_DENIED"]);
+    const accepted = await explicit.store.replayRegression("regression-domain", ["resume-agent"], undefined, isolatedReplayOptions());
+    expect(accepted.pass, JSON.stringify(accepted)).toBe(true);
+  });
+
+  it("keeps a crashed container and tampered exact bytes failing for a reject case", async () => {
+    const { store, artifact, artifactPath } = await saveRejectArtifact({ handler: 'throw new Error("[terminal] invalid_input");' });
+    class CrashingTransport extends InProcessCodeActContainerTestTransport {
+      override async start(id: string): Promise<void> {
+        await super.start(id);
+        await this.kill(id);
+      }
+    }
+    const crash = await store.replayRegression("regression-domain", ["resume-agent"], undefined, {
+      codeActCandidateImage: TEST_CODEACT_CANDIDATE_IMAGE,
+      codeActContainerTransport: new CrashingTransport(),
+    });
+    expect(crash.pass).toBe(false);
+    expect(crash.results[0]).toMatchObject({ pass: false, ran: false });
+    await fs.appendFile(path.join(path.dirname(artifactPath), artifact.agents[0]!.runtimeCodeFile!), "\n// tampered bytes\n");
+    const tampered = await store.replayRegression("regression-domain", ["resume-agent"], undefined, isolatedReplayOptions());
+    expect(tampered.pass).toBe(false);
+    expect(tampered.errors.join(" ")).toContain("runtime code hash mismatch");
   });
 });

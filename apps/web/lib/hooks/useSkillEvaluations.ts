@@ -1,4 +1,6 @@
 "use client";
+import { tenantHeaderFor } from "@/lib/hooks/tenant-header";
+
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
 import { z } from "zod";
@@ -29,7 +31,7 @@ async function request<S extends z.ZodType>(
       credentials: "same-origin",
       headers: {
         Accept: "application/json",
-        "x-agentic-tenant": tenant,
+        ...tenantHeaderFor(tenant),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),

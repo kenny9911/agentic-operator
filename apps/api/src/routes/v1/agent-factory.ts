@@ -3936,6 +3936,7 @@ export async function agentFactoryRoutes(app: FastifyInstance) {
     unregisterDrain = registerStreamDrain(closeStream);
 
     const send = (f: unknown) => {
+      if (ended) return;
       try {
         enqueue(frame(f));
         if (f && typeof f === "object" && (f as { t?: string }).t === "done")

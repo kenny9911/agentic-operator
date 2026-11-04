@@ -10,7 +10,7 @@
  * highlighted and each row deep-linking to its own run detail.
  */
 
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import {
   Badge,
   Empty,

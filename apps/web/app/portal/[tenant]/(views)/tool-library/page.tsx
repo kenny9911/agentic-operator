@@ -10,7 +10,7 @@
  */
 
 import { useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter } from "@/lib/portal-navigation";
 import { Empty } from "@/app/portal/components";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 

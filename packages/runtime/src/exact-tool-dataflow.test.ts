@@ -3,6 +3,29 @@ import { ActionSchema } from "./manifest";
 import { runAction } from "./step-engine";
 
 describe("exact manifest tool dataflow", () => {
+  it("dispatches explicit empty arguments without exposing any implicit carry", async () => {
+    let received: unknown;
+    let carry: unknown[] = [];
+    const output = await runAction({
+      ctx: {
+        agentName: "diagnostic", actionName: "zero.args", correlationId: "c", tenantSlug: "tenant",
+        event: { name: "IN", data: { private_input: "must-not-forward" } },
+        lastResult: { private_previous_result: true }, results: { prior: { value: true } }, locals: { value: true },
+      },
+      action: ActionSchema.parse({ order: "1", name: "zero.args", type: "tool", tool_arguments: {} }),
+      tenantRegistry: { tools: {
+        "zero.args": { kind: "tool", name: "zero.args", async handler(ctx) {
+          received = ctx.event?.data;
+          carry = [ctx.lastResult, ctx.results, ctx.locals];
+          return { data: { pong: true } };
+        } },
+      } },
+    });
+    expect(received).toEqual({});
+    expect(carry).toEqual([undefined, undefined, undefined]);
+    expect(output).toMatchObject({ ok: true, data: { pong: true }, meta: { argumentMode: "explicit" } });
+  });
+
   it("passes only authored arguments and maps the raw result", async () => {
     const seen: Record<string, unknown>[] = [];
     const implicitCarry: unknown[] = [];

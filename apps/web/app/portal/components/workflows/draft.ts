@@ -1,3 +1,4 @@
+import { scopedStorageKey } from "@/lib/portal-scope";
 /**
  * Workflow editor draft state (P3-FE-01).
  *
@@ -940,7 +941,7 @@ export function tryReadSerializedDraft(raw: string): SerializedDraft | null {
 
 /** Build the localStorage key for a given (tenant, workflow) pair. */
 export function draftStorageKey(tenant: string, workflowId: string): string {
-  return `workflow-draft:${tenant}:${workflowId}`;
+  return scopedStorageKey(`workflow-draft:${tenant}:${workflowId}`);
 }
 
 /** Retain workflow-level settings and extensions when saving canvas edits.

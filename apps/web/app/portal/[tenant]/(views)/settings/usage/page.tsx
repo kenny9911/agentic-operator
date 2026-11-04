@@ -20,7 +20,7 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import {
   Badge,
   Button,
@@ -29,7 +29,7 @@ import {
   Panel,
   ViewHeader,
 } from "@/app/portal/components";
-import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useTenant, useDomainSlug } from "@/app/portal/lib/use-tenant";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { fmtNum } from "@/app/portal/lib/format";
 import { useBudget, useUsage, useUpdateBudget } from "@/lib/hooks/useUsage";
@@ -74,6 +74,7 @@ const ROUTING_DIMENSIONS: Array<{ id: RoutingDimension }> = [
 
 export default function UsagePage() {
   const tenant = useTenant();
+  const domainSlug = useDomainSlug();
   const { t } = useI18n();
   const [win, setWin] = useState<Window>("7d");
   const [metric, setMetric] = useState<"tokens" | "usd" | "runs">("tokens");
@@ -140,9 +141,9 @@ export default function UsagePage() {
         title={t("settings.section.usage")}
         subtitle={
           <>
-            {t("usagePage.tenant")}{" "}
+            {t("domains.domain")}{" "}
             <span className="mono" style={{ color: "var(--text)" }}>
-              {tenant}
+              {domainSlug}
             </span>{" "}
             {t("usagePage.windowedReadFrom")}{" "}
             <span className="mono" style={{ color: "var(--text)" }}>

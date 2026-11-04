@@ -1,4 +1,6 @@
 "use client";
+import { tenantHeaderFor } from "@/lib/hooks/tenant-header";
+
 
 /**
  * Run detail — summary, execution, observability, I/O, event, and agent tabs.
@@ -8,8 +10,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import { useParams, useRouter } from "@/lib/portal-navigation";
+import Link from "@/lib/portal-link";
 import {
   Badge,
   Button,
@@ -1275,7 +1277,7 @@ function LogsTab({ runId, tenant }: { runId: string; tenant: string }) {
       try {
         const res = await fetch(url, {
           credentials: "same-origin",
-          headers: { Accept: "text/event-stream", "x-agentic-tenant": tenant },
+          headers: { Accept: "text/event-stream", ...tenantHeaderFor(tenant) },
           signal: ac.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1359,7 +1361,7 @@ function LogsTab({ runId, tenant }: { runId: string; tenant: string }) {
         `/v1/runs/${encodeURIComponent(runId)}/logs/raw`,
         {
           credentials: "same-origin",
-          headers: { "x-agentic-tenant": tenant },
+          headers: { ...tenantHeaderFor(tenant) },
         },
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

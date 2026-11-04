@@ -12,7 +12,12 @@
  */
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
+import {
+  DeferredDialogLoading,
+  withDeferredDialog,
+} from "@/app/portal/components/deferred-content";
+import { useRouter } from "@/lib/portal-navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TenantCreateResponse } from "@agentic/contracts";
 import { Icon } from "../Icon";
@@ -20,14 +25,31 @@ import { useI18n } from "@/app/portal/lib/preferences-context";
 import { useTenant, useTenantNavigate } from "../../lib/use-tenant";
 import { toast } from "../toast";
 import { TENANTS_KEYS } from "@/lib/hooks/useTenants";
-import { TenantCreateModal } from "./TenantCreateModal";
-import {
-  TenantTokenRevealModal,
-  type TenantTokenRevealPayload,
-} from "./TenantTokenRevealModal";
-import { ImportManifestModal } from "../import-manifest/ImportManifestModal";
+
+// A one-time token must never disappear through a cancellable chunk fallback.
+// Keep its small acknowledgment-protected dialog available synchronously.
+import { TenantTokenRevealModal, type TenantTokenRevealPayload } from "./TenantTokenRevealModal";
+
 import { downloadWorkflowTemplateFile } from "@/lib/hooks/useWorkflowAuthoring";
 import styles from "./sidebar.module.css";
+
+// Optional surfaces load only when their existing render condition is active.
+const TenantCreateModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("./TenantCreateModal").then((module) => module.TenantCreateModal),
+    { loading: DeferredDialogLoading },
+  ),
+);
+const ImportManifestModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("../import-manifest/ImportManifestModal").then(
+        (module) => module.ImportManifestModal,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
 
 export interface TenantOption {
   id: string;
@@ -114,7 +136,7 @@ export function TenantSwitcher({
         scopes: created.token.scopes ?? [],
       });
     } else {
-      setImportForSlug(slug);
+      router.push(`/portal/${slug}/domains`);
     }
   }
 
@@ -136,7 +158,7 @@ export function TenantSwitcher({
             onClose={() => {
               const slug = tokenReveal.slug;
               setTokenReveal(null);
-              setImportForSlug(slug);
+              router.push(`/portal/${slug}/domains`);
             }}
           />
         )}
@@ -195,6 +217,7 @@ export function TenantSwitcher({
           {active.name[0]}
         </div>
         <div className={styles.tenantDetails}>
+          <div style={{ fontSize: 10, color: "var(--text-3)" }}>{t("domains.tenant")}</div>
           <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 500 }}>
             {active.name}
           </div>
@@ -321,7 +344,7 @@ export function TenantSwitcher({
           onClose={() => {
             const slug = tokenReveal.slug;
             setTokenReveal(null);
-            setImportForSlug(slug);
+            router.push(`/portal/${slug}/domains`);
           }}
         />
       )}

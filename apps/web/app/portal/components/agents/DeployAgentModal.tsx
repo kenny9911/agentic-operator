@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/portal-navigation";
 import type {
   AgentModelSelection,
   DeployAuthoredAgentResponse,
@@ -35,7 +35,7 @@ import {
   type GenerateAgentPromptBody,
 } from "@/lib/hooks/useAgentAuthoring";
 import { formatAgentAuthoringError } from "@/lib/hooks/agent-authoring-response";
-import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useTenant, useDomainSlug } from "@/app/portal/lib/use-tenant";
 import { useI18n, type Translate } from "@/app/portal/lib/preferences-context";
 import { useToast } from "@/app/portal/components/toast";
 import { normalizeAuthoredEventName } from "./event-name";
@@ -61,6 +61,7 @@ const INHERIT_MODEL = "inherit";
 export function DeployAgentModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const tenant = useTenant();
+  const domainSlug = useDomainSlug();
   const toast = useToast();
   const { t } = useI18n();
   const { data: dag } = useDag();
@@ -506,8 +507,8 @@ export function DeployAgentModal({ onClose }: { onClose: () => void }) {
             </div>
             <div style={{ fontSize: 11, color: "var(--text-3)" }}>
               {published
-                ? t("deployAgentBuilder.header.liveSubtitle", { tenant })
-                : t("deployAgentBuilder.header.newSubtitle", { tenant })}
+                ? t("deployAgentBuilder.header.liveSubtitle", { tenant: domainSlug })
+                : t("deployAgentBuilder.header.newSubtitle", { tenant: domainSlug })}
             </div>
           </div>
           <button
@@ -589,7 +590,7 @@ export function DeployAgentModal({ onClose }: { onClose: () => void }) {
 
         <div style={{ padding: 20, overflow: "auto", flex: 1, minHeight: 0 }}>
           {published && (
-            <PublishedAgentSummary result={published} tenant={tenant} />
+            <PublishedAgentSummary result={published} domainSlug={domainSlug} />
           )}
           {!published && step === 0 && (
             <div>
@@ -1650,7 +1651,7 @@ export function DeployAgentModal({ onClose }: { onClose: () => void }) {
                     />
                     <div>
                       <div style={{ fontSize: 12, color: "var(--text)" }}>
-                        {t("deployAgentBuilder.review.liveRuntime", { tenant })}
+                        {t("deployAgentBuilder.review.liveRuntime", { tenant: domainSlug })}
                       </div>
                       <div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
                         {t("deployAgentBuilder.review.publishActions")}
@@ -1671,7 +1672,7 @@ export function DeployAgentModal({ onClose }: { onClose: () => void }) {
                   >
                     {t("deployAgentBuilder.review.publishGatePrefix")}{" "}
                     <span className="mono" style={{ color: "var(--text-2)" }}>
-                      {tenant}.{name || "agentName"}
+                      {domainSlug} / {name || "agentName"}
                     </span>{" "}
                     {t("deployAgentBuilder.review.publishGateSuffix")}
                   </div>
@@ -2252,10 +2253,10 @@ function OntologyCapability({
 
 function PublishedAgentSummary({
   result,
-  tenant,
+  domainSlug,
 }: {
   result: DeployAuthoredAgentResponse;
-  tenant: string;
+  domainSlug: string;
 }) {
   const { t } = useI18n();
   return (
@@ -2289,7 +2290,7 @@ function PublishedAgentSummary({
           marginTop: 6,
         }}
       >
-        {t("deployAgentBuilder.published.description", { tenant })}
+        {t("deployAgentBuilder.published.description", { tenant: domainSlug })}
       </div>
       <div
         style={{

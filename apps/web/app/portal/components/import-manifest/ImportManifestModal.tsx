@@ -1,4 +1,6 @@
 "use client";
+import { tenantHeaderFor } from "@/lib/hooks/tenant-header";
+
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -105,7 +107,7 @@ export interface ImportManifestModalProps {
 function manifestHeaders(slug: string): Record<string, string> {
   return {
     "content-type": "application/json",
-    "x-agentic-tenant": slug,
+    ...tenantHeaderFor(slug),
   };
 }
 

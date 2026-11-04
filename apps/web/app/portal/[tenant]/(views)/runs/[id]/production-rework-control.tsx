@@ -1,7 +1,9 @@
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/portal-navigation";
 import { Button, useToast } from "@/app/portal/components";
 import { ModalOverlay } from "@/app/portal/components/Modal";
 import {
@@ -169,11 +171,11 @@ export function ProductionReworkControl({
 
     let savedLocally = true;
     try {
-      localStorage.setItem(
+      domainStorage.setItem(
         factoryConversationStorageKey(tenant, preview.domain),
         result.data.runId,
       );
-      localStorage.setItem(activeRunKey(tenant), result.data.runId);
+      domainStorage.setItem(activeRunKey(tenant), result.data.runId);
     } catch {
       savedLocally = false;
     }

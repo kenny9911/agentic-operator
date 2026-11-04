@@ -2,7 +2,7 @@
 // OntoCode v10 · 会话页容器：把真实 /v1/ontocode 数据绑定到三栏工作台。
 // 本文件是唯一发请求的地方；展示组件保持纯净。零 mock：所有内容来自服务端记录。
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter } from "@/lib/portal-navigation";
 import type {
   OntoCodeBuildSession,
   OntoCodeConfigurationTask,
@@ -44,6 +44,9 @@ import {
   type OntoCodeArtifactSummaryItem,
 } from "@/lib/hooks/useOntoCodeWorkspace";
 import { useHealth } from "@/lib/hooks/useHealth";
+import { useCan } from "@/lib/hooks/useMe";
+import { useI18n } from "@/app/portal/lib/preferences-context";
+import { SessionLoadErrorState, isBusinessDomainScopedSessionMiss } from "@/app/portal/components/ontocode-workspace/SessionLoadErrorState";
 import {
   ArtifactInspectorConnected,
   buildIsInProgress,
@@ -93,6 +96,7 @@ import { SessionRail } from "./SessionRail";
 import { ActionCardView } from "./ActionCards";
 import { Composer, GuidedFlow } from "./GuidedFlow";
 import { useAssistantWait } from "./use-assistant-wait";
+import { CandidateTestInput, candidateTestTurn } from "./CandidateTestInput";
 
 const TONE_CHIP_CLASS: Record<string, string> = {
   ok: "",
@@ -169,14 +173,29 @@ function BoundConfigCard(props: {
   );
 }
 
+/** Mount execution controls and streams only after the scoped Session is authorized. */
 export function WorkbenchSessionConnected() {
-  const params = useParams<{ tenant: string; sessionId: string }>();
+  const params = useParams<{ tenant: string; domain?: string; sessionId: string }>();
+  const { t } = useI18n();
+  const sessionQ = useOntoCodeSession(params.tenant, params.sessionId);
+  if (sessionQ.isPending) {
+    return <div role="status" style={{ padding: 24, color: "var(--text-2)" }}>{t("ontocode.workspace.loadingSession")}</div>;
+  }
+  if (sessionQ.isError || !sessionQ.data?.session) {
+    return <SessionLoadErrorState tenantSlug={params.tenant} domainSlug={params.domain} tenantName={params.domain ?? params.tenant} unavailable={!sessionQ.isError || isBusinessDomainScopedSessionMiss(sessionQ.error)} />;
+  }
+  return <AuthorizedWorkbenchSession key={sessionQ.data.session.id} sessionQ={sessionQ} />;
+}
+
+function AuthorizedWorkbenchSession({ sessionQ }: { sessionQ: ReturnType<typeof useOntoCodeSession> }) {
+  const { t } = useI18n();
+  const can = useCan();
+  const params = useParams<{ tenant: string; domain?: string; sessionId: string }>();
   const tenant = params?.tenant ?? "";
   const sessionId = params?.sessionId ?? "";
   const router = useRouter();
 
   const sessionsQ = useOntoCodeSessions(tenant);
-  const sessionQ = useOntoCodeSession(tenant, sessionId);
   const projectsQ = useOntoCodeProjects(tenant);
   const messagesQ = useOntoCodeMessages(tenant, sessionId);
   const jobsQ = useOntoCodeHarnessJobs(tenant, sessionId);
@@ -522,6 +541,17 @@ export function WorkbenchSessionConnected() {
     session?.phase === "completed" ||
     registrationRetired;
 
+  const openCandidateTests = () => {
+    setInspectorOpen(true);
+    setInspectorTab("tests");
+  };
+  const candidateTestDisabledReason = !can("workflows.write")
+    ? t("candidateTests.noPermission")
+    : readOnly ? t("candidateTests.readOnly")
+    : session?.autonomyMode === "guide" ? t("candidateTests.guide")
+    : jobs.some(harnessJobIsInProgress) || sendRawTurn.isPending || sendTurn.isPending
+      ? t("candidateTests.active") : null;
+
   const renderCard = (item: Extract<FlowItemVM, { kind: "actionCard" }>) => {
     const card = item.card;
     const recommendation = card.recommendation;
@@ -640,6 +670,7 @@ export function WorkbenchSessionConnected() {
             }
             onPrimary={() => {
               if (duplicateBuild) return;
+              if (action.turnAction === "run_tests") { openCandidateTests(); return; }
               sendRawTurn.mutate({
                 text: action.label,
                 behavior: "execute",
@@ -838,6 +869,7 @@ export function WorkbenchSessionConnected() {
           sendRawTurn.error instanceof Error ? sendRawTurn.error.message : null
         }
         onAnswer={(answer) => {
+          if (resumeAction === "run_tests") { openCandidateTests(); return; }
           if (waitingJobForCard && resumeAction) {
             sendRawTurn.mutate({
               text: answer,
@@ -972,7 +1004,7 @@ export function WorkbenchSessionConnected() {
         onResizeInspector={workbench.resizeInspector}
         rail={
           <SessionRail
-            businessDomainLabel={tenant}
+            businessDomainLabel={params.domain ?? tenant}
             ontologyDomainLabel={project?.domain ?? "未绑定"}
             snapshotShort={session?.ontologySnapshotHash?.slice(0, 6) ?? null}
             ontologyFreshness={ontologyFreshnessQ.data ?? null}
@@ -1028,7 +1060,7 @@ export function WorkbenchSessionConnected() {
         }
         crumb={
           <>
-            <span className={styles.crumbSeg}>{tenant}</span>
+            <span className={styles.crumbSeg}>{tenant} / {params.domain ?? tenant}</span>
             <span className={styles.crumbSep}>/</span>
             <span className={styles.crumbHere}>
               {session?.title ?? (anyLoading ? "加载中…" : "Session")}
@@ -1259,6 +1291,24 @@ export function WorkbenchSessionConnected() {
                   }
                 />
               ) : inspectorTab === "tests" ? (
+                <div style={{ height: "100%", overflow: "auto" }}>
+                  <CandidateTestInput
+                    candidateRevision={candidateHeadQ.data?.packageVersion ? candidateHeadQ.data.head?.revision ?? null : null}
+                    disabledReason={candidateTestDisabledReason}
+                    onSubmit={async (cases) => {
+                      if (candidateTestDisabledReason) throw new Error(candidateTestDisabledReason);
+                      const reviewed = candidateHeadQ.data;
+                      const fresh = await candidateHeadQ.refetch();
+                      if (fresh.error) throw fresh.error;
+                      if (!reviewed?.head || !reviewed.packageVersion || !fresh.data?.head ||
+                        fresh.data.head.revision !== reviewed.head.revision ||
+                        fresh.data.packageVersion?.id !== reviewed.packageVersion.id) {
+                        throw new Error(t("candidateTests.candidateChanged"));
+                      }
+                      const receipt = await sendRawTurn.mutateAsync(candidateTestTurn(cases, t("candidateTests.run")));
+                      return receipt.command?.requiresHuman ? "approval" : "queued";
+                    }}
+                  />
                 <InspectorTestsView
                   overview={suiteQ.data?.overview ?? null}
                   jobs={jobs}
@@ -1269,6 +1319,7 @@ export function WorkbenchSessionConnected() {
                       : null
                   }
                 />
+                </div>
               ) : inspectorTab === "evidence" ? (
                 <InspectorEvidenceView
                   evidence={evidenceQ.data?.items ?? []}

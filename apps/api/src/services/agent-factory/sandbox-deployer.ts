@@ -13,7 +13,8 @@ import { readFileSync, existsSync } from "node:fs";
 import type { SandboxDeployer, SandboxDeployResult, SandboxCleanupReceipt, SandboxBrokerRegistrationProof, GeneratedAgentSpec, OntologyAction, AgentRunIO, FunctionTesterEntry, TestCase } from "@agentic/agent-factory";
 import { SANDBOX_CLEANUP_RECEIPT_SCHEMA, SANDBOX_BROKER_REGISTRATION_SCHEMA, SandboxLifecycleBlockedError, sandboxCleanupReceiptHash, catalogToolDefinitionHash, declarativeToolDefinitionHash } from "@agentic/agent-factory";
 import { compileGraph, verifyGraph, projectInputBinding, projectPlanToActions, verificationPolicy, synthesizeMockExternalAgents, externalInputEvents, caseOutcomeFromRuns, chainVerdictByKind } from "@agentic/agent-factory";
-import { loadApprovedFunctionTestCassette, testGeneratedFunction } from "./function-tester-run";
+import { loadApprovedFunctionTestCassette, preliminaryFunctionExpectedEvent, testGeneratedFunction } from "./function-tester-run";
+export { preliminaryFunctionExpectedEvent } from "./function-tester-run";
 import { getDb, tenants, runs, agents, steps, events, factoryTools, eq, and, desc, asc } from "@agentic/db";
 import { gt } from "drizzle-orm";
 import { makeId } from "@agentic/shared";
@@ -1415,7 +1416,7 @@ export class ManifestSandboxDeployer implements SandboxDeployer {
         for (const kase of cases) {
           const testEvent = { name: kase?.entryEvent ?? s.trigger?.[0] ?? "", data: kase?.payload ?? {} };
           const rejectLike = kase?.kind === "reject" || kase?.kind === "fault";
-          const expectedEvent = kase?.expectedEvent ?? (rejectLike ? s.emit?.[s.emit.length - 1] : s.emit?.[0]);
+          const expectedEvent = preliminaryFunctionExpectedEvent(s, kase);
           // The approved case may deterministically select a decision branch, but it can never
           // manufacture an external tool response. Tool calls below replay only definition-bound
           // probe/record cassettes and still have to match the actual argsHash inside the harness.
@@ -1423,7 +1424,10 @@ export class ManifestSandboxDeployer implements SandboxDeployer {
           caseRuns.push(await testGeneratedFunction(s, {
             testEvent,
             expectEmits: expectedEvent ? [expectedEvent] : undefined,
+            caseKind: kase?.kind,
             tenantSlug: ctx.tenantSlug,
+            tenantId: ctx.tenantId,
+            factoryExecutionScope: sandboxExecutionScope(ctx),
             fixture: {
               toolCassettes: evidence.toolCassettes,
               blockedToolReasons: evidence.blockedToolReasons,

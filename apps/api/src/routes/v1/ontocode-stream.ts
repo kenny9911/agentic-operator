@@ -1,6 +1,7 @@
 import { createStreamAuthorization } from "../../plugins/stream-auth";
 import type { FastifyInstance } from "fastify";
 import { requirePermission } from "../../plugins/rbac";
+import { createSseDrainRegistry } from "../../plugins/sse-drain";
 import {
   listOntoCodeEvents,
   OntoCodeStoreError,
@@ -63,6 +64,7 @@ function parseStreamVisibility(value: unknown): "user" | "debug" | null {
 export async function ontocodeStreamRoutes(
   app: FastifyInstance,
 ): Promise<void> {
+  const registerStreamDrain = createSseDrainRegistry(app);
   app.get<{
     Params: { sessionId: string };
     Querystring: {
@@ -133,6 +135,7 @@ export async function ontocodeStreamRoutes(
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    let unregisterDrain = () => {};
 
     const close = () => {
       if (closed) return;
@@ -140,14 +143,24 @@ export async function ontocodeStreamRoutes(
       if (pollTimer) clearInterval(pollTimer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (timeoutTimer) clearTimeout(timeoutTimer);
+      unregisterDrain();
       try {
         raw.end();
       } catch {
         // Socket may already be closed by the browser or reverse proxy.
       }
     };
-
-    const authorized = createStreamAuthorization(req, auth, "workflows.read", close);
+    const authorized = createStreamAuthorization(
+      req,
+      auth,
+      "workflows.read",
+      close,
+    );
+    unregisterDrain = registerStreamDrain(close);
+    req.raw.on("close", close);
+    req.raw.on("error", close);
+    raw.on("close", close);
+    raw.on("error", close);
 
     const write = async (frame: string): Promise<boolean> => {
       if (
@@ -211,10 +224,6 @@ export async function ontocodeStreamRoutes(
       }
     };
 
-    req.raw.on("close", close);
-    req.raw.on("error", close);
-    raw.on("close", close);
-    raw.on("error", close);
 
     await poll();
     if (closed || raw.destroyed || raw.writableEnded) return reply;

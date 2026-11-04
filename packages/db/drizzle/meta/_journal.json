@@ -596,6 +596,13 @@
       "when": 1789030801000,
       "tag": "0084_account_authority_projection",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "6",
+      "when": 1789030802000,
+      "tag": "0085_tenant_domain_hierarchy",
+      "breakpoints": true
     }
   ]
 }

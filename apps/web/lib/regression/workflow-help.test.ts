@@ -29,7 +29,7 @@ describe("production Workflows user guide", () => {
 
   it("keeps Help discoverable in both view and edit action sets", () => {
     expect(page).toContain(
-      'import { WorkflowHelp } from "@/app/portal/components/workflows/WorkflowHelp"',
+      'import("@/app/portal/components/workflows/WorkflowHelp")',
     );
     expect(page.match(/key="help"/g)).toHaveLength(2);
     expect(page).toContain("<WorkflowHelp");

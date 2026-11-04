@@ -1,4 +1,6 @@
 "use client";
+import PortalAnchor from "@/lib/portal-anchor";
+
 
 /**
  * OntoCode — presentational components (v10 light style, `.oc` scope).
@@ -1481,7 +1483,7 @@ export function OcNextSteps({ steps }: { steps: NextStep[] }) {
     <div className="oc-nextsteps">
       下一步
       {steps.map((s) => (
-        <a key={s.id} href={s.href}>{s.label}</a>
+        <PortalAnchor key={s.id} href={s.href}>{s.label}</PortalAnchor>
       ))}
     </div>
   );

@@ -9,6 +9,7 @@ const productionCompose = readFileSync(
   path.join(root, "docker-compose.production.yml"),
   "utf8",
 );
+const developmentCompose = readFileSync(path.join(root, "docker-compose.dev-sandbox.yml"), "utf8");
 const dockerfile = readFileSync(path.join(root, "apps/api/Dockerfile"), "utf8");
 const sandboxRunnerSource = readFileSync(
   path.join(root, "apps/api/src/sandbox-runner.ts"),
@@ -28,6 +29,31 @@ function between(source: string, start: string, end: string): string {
 }
 
 describe("external Factory sandbox deployment contract", () => {
+  it("routes development cleanup and callbacks through the durable gateway", () => {
+    const control = between(developmentCompose, "  sandbox-runner:\n", "  sandbox-workload:\n");
+    const workload = between(developmentCompose, "  sandbox-workload:\n", "  sandbox-broker-gateway:\n");
+    const gateway = between(developmentCompose, "  sandbox-broker-gateway:\n", "  sandbox-inngest:\n");
+    const broker = between(developmentCompose, "  sandbox-inngest:\n", "volumes:\n");
+    for (const consumer of [control, workload]) {
+      expect(consumer).toContain("SANDBOX_INNGEST_BASE_URL: http://sandbox-broker-gateway:3562");
+      expect(consumer).toContain("SANDBOX_INNGEST_CONTROL_BEARER_FILE: /run/secrets/factory-sandbox/control-bearer");
+      expect(consumer).toMatch(/sandbox-broker-gateway:\s+condition: service_healthy/);
+      expect(consumer).not.toContain("SANDBOX_GATEWAY_TOMBSTONE_HMAC");
+    }
+    expect(workload).toContain("SANDBOX_INNGEST_WORKLOAD_SERVE_ORIGIN: http://sandbox-broker-gateway:3562");
+    expect(gateway).toContain("target: sandbox-broker-gateway");
+    expect(gateway).toContain("factory-sandbox-gateway-state:/sandbox/gateway");
+    expect(gateway).toContain("SANDBOX_GATEWAY_TOMBSTONE_HMAC_FILE:");
+    expect(gateway).toContain("factory-sandbox-execution");
+    expect(gateway).toContain("factory-sandbox-broker-backend");
+    expect(gateway).not.toMatch(/\n\s+ports:/);
+    expect(gateway).not.toContain("/var/run/docker.sock");
+    expect(gateway).not.toContain("SANDBOX_RUNNER_REQUEST_HMAC");
+    expect(gateway).not.toMatch(/sandbox-workload:\s+condition:/);
+    expect(broker).toContain("networks: !override\n      - factory-sandbox-broker-backend");
+    expect(broker).not.toContain("factory-sandbox-execution");
+    expect(developmentCompose).toMatch(/factory-sandbox-broker-backend:\s+internal: true/);
+  });
   it("keeps every atomic manifest staging directory on its models filesystem", () => {
     const api = between(compose, "  api:\n", "  web:\n");
     const workload = between(compose, "  sandbox-workload:\n", "  sandbox-inngest:\n");
@@ -56,7 +82,7 @@ describe("external Factory sandbox deployment contract", () => {
     const workload = between(dockerfile, "FROM sandbox-workload-base AS sandbox-workload", "FROM ${NODE_BASE_IMAGE} AS codeact-candidate");
 
     expect(common).not.toMatch(/COPY[^\n]*\/models(?:\s|\/)/);
-    expect(dockerfile).toContain("ARG NODE_BASE_IMAGE=node:26.8.1-slim");
+    expect(dockerfile).toContain("ARG NODE_BASE_IMAGE=node:26.12.1-slim");
     expect(control).not.toMatch(/COPY[^\n]*\/tenants(?:\s|\/)/);
     expect(control).not.toContain("sandbox-runner-executor.ts");
     expect(control).not.toContain("bootstrap.ts");

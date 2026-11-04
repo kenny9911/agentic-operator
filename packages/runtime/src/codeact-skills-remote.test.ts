@@ -52,7 +52,7 @@ it("accepts only signed execution-bound Skill RPCs while retaining session autho
     const terminal = {
       schema: "agentic-production-codeact-terminal/v1", executionId: command.executionId, identityHash: command.identityHash,
       codeSha256: identity.codeSha256, executorId: "test-executor", buildId: "test-build", completedAt: new Date().toISOString(),
-      result: { ok: false, isolation: "isolated_container", failure: "candidate_failed", error: "intentional protocol-probe terminal", durationMs: 0, executorStarted: false, candidateImageDigest: null },
+      result: { ok: false, isolation: "isolated_container", failure: "protocol_failed", error: "intentional protocol-probe terminal", durationMs: 0, executorStarted: false, candidateImageDigest: null },
     };
     checked = true;
     return new Response(JSON.stringify(terminal), { status: 200, headers: { "x-agentic-codeact-signature": productionCodeActMessageSignature(terminal, secret) } });

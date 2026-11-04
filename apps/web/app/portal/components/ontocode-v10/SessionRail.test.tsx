@@ -1,3 +1,4 @@
+import { en } from "@/lib/i18n/en";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -95,7 +96,7 @@ function renderWithPrefs(
   overrides: Partial<React.ComponentProps<typeof SessionRail>> = {},
 ): string {
   return renderToStaticMarkup(
-    <PreferencesProvider>
+    <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>
       <SessionRail
         businessDomainLabel="招聘"
         ontologyDomainLabel="RAAS-v1"

@@ -27,6 +27,8 @@ export async function GET(req: NextRequest): Promise<Response> {
     cookie: req.headers.get("cookie") ?? "",
   };
   if (tenant) headers["x-agentic-tenant"] = tenant;
+  const domain = req.nextUrl.searchParams.get("domain");
+  if (domain) headers["x-agentic-domain"] = domain;
 
   const upstreamUrl = new URL(`${API_URL}/v1/agent-factory/stream`);
   upstreamUrl.searchParams.set("run", run);

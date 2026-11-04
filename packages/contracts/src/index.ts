@@ -25,6 +25,7 @@ export * from "./llm";
 export * from "./llm-settings";
 export * from "./stream";
 export * from "./tenants";
+export * from "./domains";
 export * from "./permissions";
 export * from "./access";
 export * from "./agent-factory-draft-sandbox";

@@ -1,4 +1,8 @@
 "use client";
+import { domainStorage } from "@/lib/portal-scope";
+
+import { scopedStorageKey } from "@/lib/portal-scope";
+
 
 /**
  * OntoCode — the v10-style front door over the factory brain.
@@ -11,8 +15,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import { useParams, useRouter } from "@/lib/portal-navigation";
+import Link from "@/lib/portal-link";
 import { useQueryClient } from "@tanstack/react-query";
 import { HelpTip } from "@/app/portal/components";
 import { usePreferences } from "@/app/portal/lib/preferences-context";
@@ -110,7 +114,7 @@ import {
 } from "./components";
 import "./ontocode.css";
 
-const convKey = (tenant: string, domain: string) => `ao:factory:conv:${tenant}:${domain}`;
+const convKey = (tenant: string, domain: string) => scopedStorageKey(`ao:factory:conv:${tenant}:${domain}`);
 
 export default function OntoCodePage() {
   const params = useParams<{ tenant: string }>();
@@ -219,8 +223,8 @@ export default function OntoCodePage() {
   useEffect(() => {
     if (!tenant || !domainId || streamReq || reattachedRef.current) return;
     reattachedRef.current = true;
-    const active = localStorage.getItem(activeRunKey(tenant));
-    const conv = localStorage.getItem(convKey(tenant, domainId));
+    const active = domainStorage.getItem(activeRunKey(tenant));
+    const conv = domainStorage.getItem(convKey(tenant, domainId));
     if (active) {
       nonceRef.current += 1;
       setConversationId(conv ?? active);
@@ -503,7 +507,7 @@ export default function OntoCodePage() {
 
   // ── conversation reset（换域/换本体后必须开新会话——与工厂语义一致） ──────────
   const resetConversation = useCallback(() => {
-    if (domainId) localStorage.removeItem(convKey(tenant, domainId));
+    if (domainId) domainStorage.removeItem(convKey(tenant, domainId));
     scopeAnalysisNonceRef.current += 1;
     setAnalyzingScope(false);
     setConversationId(null);
@@ -570,8 +574,8 @@ export default function OntoCodePage() {
     ) {
       return;
     }
-    localStorage.removeItem(activeRunKey(tenant));
-    if (domainId) localStorage.removeItem(convKey(tenant, domainId));
+    domainStorage.removeItem(activeRunKey(tenant));
+    if (domainId) domainStorage.removeItem(convKey(tenant, domainId));
     scopeAnalysisNonceRef.current += 1;
     setConversationId(null);
     setStreamReq(null); // useBrainStream 对 null 请求会清空 events/running/error
@@ -877,7 +881,7 @@ export default function OntoCodePage() {
     const receipt = result.data;
     const conv = existingConversation ?? receipt.runId;
     setConversationId(conv);
-    localStorage.setItem(convKey(tenant, domainId), conv);
+    domainStorage.setItem(convKey(tenant, domainId), conv);
     nonceRef.current += 1;
     setStreamReq({
       tenant,
@@ -935,7 +939,7 @@ export default function OntoCodePage() {
     setSelectedActionIds([]);
     setStartError(null);
     setConversationId(runId);
-    if (domainId) localStorage.setItem(convKey(tenant, domainId), runId);
+    if (domainId) domainStorage.setItem(convKey(tenant, domainId), runId);
     setStreamReq({ tenant, reconnectRunId: runId, conversation: runId, replayMode: "replace", nonce: nonceRef.current });
   }, [tenant, domainId]);
 

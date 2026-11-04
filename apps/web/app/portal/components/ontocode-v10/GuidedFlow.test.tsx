@@ -1,3 +1,4 @@
+import { en } from "@/lib/i18n/en";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -9,7 +10,7 @@ import { PreferencesProvider } from "@/app/portal/lib/preferences-context";
 /** ActionCardView renders HelpTip, which reads i18n preferences. */
 function renderCard(node: React.ReactElement): string {
   return renderToStaticMarkup(
-    <PreferencesProvider>{node}</PreferencesProvider>,
+    <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>{node}</PreferencesProvider>,
   );
 }
 
@@ -608,7 +609,7 @@ describe("Composer", () => {
   it("#ASSISTANT-CITE renders the evidence an answer named, and opens it", () => {
     const opened: Array<{ artifactId: string; versionId: string }> = [];
     const html = renderToStaticMarkup(
-      <PreferencesProvider>
+      <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>
         <GuidedFlow
           goal={null}
           renderCard={() => null}
@@ -639,7 +640,7 @@ describe("Composer", () => {
 
   it("#ASSISTANT-CITE says nothing when an answer cited nothing", () => {
     const html = renderToStaticMarkup(
-      <PreferencesProvider>
+      <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>
         <GuidedFlow
           goal={null}
           renderCard={() => null}

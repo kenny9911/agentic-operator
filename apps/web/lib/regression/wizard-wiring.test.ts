@@ -156,7 +156,7 @@ describe("regression: production wizard wiring", () => {
     const src = read("app/portal/components/shell/tenant-switcher.tsx");
 
     it("imports TenantCreateModal", () => {
-      expect(/from\s+["'][^"']*TenantCreateModal["']/.test(src)).toBe(true);
+      expect(src).toContain('import("./TenantCreateModal")');
     });
 
     it("does NOT show the 'Not yet implemented' toast for + New tenant", () => {

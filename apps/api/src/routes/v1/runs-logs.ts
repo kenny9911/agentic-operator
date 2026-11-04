@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { authorizedRunLogPath } from "@agentic/runtime";
 import { requirePermission } from "../../plugins/rbac";
 import { getRun } from "../../queries/runs";
+import { createSseDrainRegistry } from "../../plugins/sse-drain";
 
 const POLL_MS = 250;
 const HEARTBEAT_MS = 15_000;
@@ -44,6 +45,7 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 export async function runsLogsRoute(app: FastifyInstance) {
+  const registerStreamDrain = createSseDrainRegistry(app);
   app.get<{
     Params: { id: string };
     Querystring: { follow?: string; cursor?: string };
@@ -153,6 +155,7 @@ export async function runsLogsRoute(app: FastifyInstance) {
     let reading = false;
     let poll: ReturnType<typeof setInterval> | null = null;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let unregisterDrain = () => {};
 
     reply.hijack();
     const raw = reply.raw;
@@ -171,14 +174,21 @@ export async function runsLogsRoute(app: FastifyInstance) {
       if (heartbeat) clearInterval(heartbeat);
       poll = null;
       heartbeat = null;
+      carry = Buffer.alloc(0);
+      unregisterDrain();
       try {
         raw.end();
       } catch {
         // Socket may already be gone.
       }
     };
-
     const authorized = createStreamAuthorization(req, auth, "runs.read", close);
+    unregisterDrain = registerStreamDrain(close);
+    req.raw.on("close", close);
+    req.raw.on("error", close);
+    raw.on("close", close);
+    raw.on("error", close);
+
 
     const writeFrame = async (frame: string): Promise<void> => {
       if (
@@ -220,7 +230,11 @@ export async function runsLogsRoute(app: FastifyInstance) {
           const uncompressed = await gunzipAsync(await readFile(filePath));
           if (pos > uncompressed.length) pos = 0;
           let lineStart = pos;
-          for (let index = pos; index < uncompressed.length; index += 1) {
+          for (
+            let index = pos;
+            !closed && index < uncompressed.length;
+            index += 1
+          ) {
             if (uncompressed[index] !== 0x0a) continue;
             await emitLine(uncompressed.subarray(lineStart, index), index + 1);
             lineStart = index + 1;
@@ -266,7 +280,11 @@ export async function runsLogsRoute(app: FastifyInstance) {
             const combined =
               carry.length > 0 ? Buffer.concat([carry, bytes]) : bytes;
             let lineStart = 0;
-            for (let index = 0; index < combined.length; index += 1) {
+            for (
+              let index = 0;
+              !closed && index < combined.length;
+              index += 1
+            ) {
               if (combined[index] !== 0x0a) continue;
               await emitLine(
                 combined.subarray(lineStart, index),
@@ -274,6 +292,7 @@ export async function runsLogsRoute(app: FastifyInstance) {
               );
               lineStart = index + 1;
             }
+            if (closed) return "ok";
             carry = Buffer.from(combined.subarray(lineStart));
             carryStart = combinedStart + lineStart;
             if (carry.length > MAX_PARTIAL_LINE_BYTES) {
@@ -325,6 +344,7 @@ export async function runsLogsRoute(app: FastifyInstance) {
       await failStream(error);
       return reply;
     }
+    if (closed) return reply;
 
     if (!follow) {
       await writeFrame(sseFrame("end", "ok", String(pos)));
@@ -353,10 +373,6 @@ export async function runsLogsRoute(app: FastifyInstance) {
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
 
-    req.raw.on("close", close);
-    req.raw.on("error", close);
-    raw.on("close", close);
-    raw.on("error", close);
     return reply;
   });
 

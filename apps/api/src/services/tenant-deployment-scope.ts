@@ -8,6 +8,9 @@
  * tenant app.
  */
 
+import { domains, getDb, tenantRuntimeNamespaces, tenants } from "@agentic/db";
+import { eq } from "drizzle-orm";
+
 export function enabledTenantDeploymentScope(
   env: NodeJS.ProcessEnv = process.env,
 ): Set<string> | null {
@@ -17,7 +20,44 @@ export function enabledTenantDeploymentScope(
     .split(",")
     .map((slug) => slug.trim())
     .filter(Boolean);
-  return slugs.length > 0 ? new Set(slugs) : null;
+  if (slugs.length === 0) return null;
+  const scope = new Set(slugs);
+  // Process ownership is assigned to the owning Tenant. Its child Domains
+  // have opaque runtime slugs, so inherit the owner allow-list explicitly.
+  // Explicit namespace entries remain valid for existing shard deployments.
+  const children = getDb()
+    .select({
+      runtimeTenantId: domains.runtimeTenantId,
+      ownerSlug: tenants.slug,
+    })
+    .from(domains)
+    .innerJoin(tenants, eq(tenants.id, domains.tenantId))
+    .all();
+  const compatibilityNamespaces = getDb()
+    .select({
+      runtimeTenantId: tenantRuntimeNamespaces.tenantId,
+      ownerSlug: tenants.slug,
+    })
+    .from(tenantRuntimeNamespaces)
+    .innerJoin(
+      tenants,
+      eq(tenants.id, tenantRuntimeNamespaces.businessDomainTenantId),
+    )
+    .all();
+  const runtimeIds = new Set(
+    [...children, ...compatibilityNamespaces]
+      .filter((row) => scope.has(row.ownerSlug))
+      .map((row) => row.runtimeTenantId),
+  );
+  if (runtimeIds.size > 0) {
+    for (const runtime of getDb()
+      .select({ id: tenants.id, slug: tenants.slug })
+      .from(tenants)
+      .all()) {
+      if (runtimeIds.has(runtime.id)) scope.add(runtime.slug);
+    }
+  }
+  return scope;
 }
 
 export function isTenantInProcessDeploymentScope(

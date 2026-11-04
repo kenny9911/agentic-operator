@@ -112,6 +112,12 @@ interface RunnerJob {
   settled?: Promise<void>;
   result?: SandboxDeployResult;
   error?: { code: string; message: string };
+  cleanupRepair?: {
+    schema: "agent-factory-sandbox-cleanup-repair/v1";
+    previousStatus: "failed";
+    verifiedAt: string;
+    fence: SandboxCancelFenceAck;
+  };
 }
 
 function positiveInt(name: string, value: string | undefined, fallback: number): number {
@@ -654,8 +660,10 @@ async function requestWorkloadCancellationFence(input: {
   bundle: SandboxCandidateBundle;
   expiresAt: string;
   fetchFn: typeof fetch;
+  repairCleanup?: boolean;
 }): Promise<SandboxCancelFenceAck> {
   const appId = `${input.appPrefix}-${input.bundle.sandboxTenantSlug}`;
+  const cleanupRepairNonce = input.repairCleanup ? randomUUID() : undefined;
   const response = await input.fetchFn(
     `${input.workloadUrl}/internal/v1/executions/${encodeURIComponent(input.bundle.attemptId)}/cancel`,
     {
@@ -671,6 +679,7 @@ async function requestWorkloadCancellationFence(input: {
         sandboxTenantSlug: input.bundle.sandboxTenantSlug,
         appId,
         expiresAt: input.expiresAt,
+        ...(cleanupRepairNonce ? { cleanupRepairNonce } : {}),
       }),
       redirect: "error",
       signal: AbortSignal.timeout(input.bundle.policy.maxRunMs + 120_000),
@@ -683,7 +692,7 @@ async function requestWorkloadCancellationFence(input: {
   if (Buffer.byteLength(raw, "utf8") > 256 * 1024) {
     throw new Error("sandbox workload cancel-fence acknowledgement is too large");
   }
-  return verifySandboxCancelFenceAck(
+  const ack = verifySandboxCancelFenceAck(
     JSON.parse(raw),
     {
       attemptId: input.bundle.attemptId,
@@ -693,6 +702,10 @@ async function requestWorkloadCancellationFence(input: {
     },
     input.cancelFenceIntegrityKey,
   );
+  if (cleanupRepairNonce && ack.cleanupRepairNonce !== cleanupRepairNonce) {
+    throw new Error("sandbox cleanup repair acknowledgement is not fresh");
+  }
+  return ack;
 }
 
 function remoteWorkloadExecutor(
@@ -933,6 +946,7 @@ interface RunnerJobJournal {
   updatedAt: number;
   result?: SandboxDeployResult;
   error?: { code: string; message: string };
+  cleanupRepair?: RunnerJob["cleanupRepair"];
   integrityMac: string;
 }
 
@@ -992,6 +1006,7 @@ function persistJob(dir: string, job: RunnerJob, integrityKey: string): void {
     updatedAt: job.updatedAt,
     ...(job.result ? { result: job.result } : {}),
     ...(job.error ? { error: job.error } : {}),
+    ...(job.cleanupRepair ? { cleanupRepair: job.cleanupRepair } : {}),
   };
   const journal: RunnerJobJournal = {
     ...body,
@@ -1041,6 +1056,7 @@ function loadJobJournals(
       updatedAt: interrupted ? now : journal.updatedAt,
       controller: new AbortController(),
       ...(journal.result ? { result: journal.result } : {}),
+      ...(journal.cleanupRepair ? { cleanupRepair: journal.cleanupRepair } : {}),
       ...(interrupted
         ? {
             error: {
@@ -1559,6 +1575,52 @@ export async function registerSandboxRunnerJobRoutes(input: {
         throw new RemoteSandboxProtocolError("cancel_identity_mismatch", "Sandbox cancel identity mismatch");
       }
       const job = exactJob(attemptId, command.bundleHash);
+      // Explicit, signed retry of cancellation is the repair operation. Health
+      // alone never clears a cleanup failure, and the original error remains
+      // in the durable journal beside the fresh repair evidence.
+      if (job.status === "failed" && job.error?.code === "sandbox_cleanup_failed") {
+        await job.settled;
+        const fence = await requestWorkloadCancellationFence({
+          workloadUrl: input.config.workloadUrl,
+          workloadToken: input.config.workloadToken,
+          cancelFenceIntegrityKey: input.config.cancelFenceIntegrityKey,
+          appPrefix: input.config.appPrefix,
+          bundle: job.bundle,
+          expiresAt: cancelFenceExpiry(job.bundle, input.config.jobTtlMs, now()),
+          fetchFn,
+          repairCleanup: true,
+        });
+        const receipt = fence.cleanupReceipt;
+        if (
+          !receipt
+          || receipt.sandboxAttemptId !== job.attemptId
+          || receipt.sandboxTenantSlug !== job.bundle.sandboxTenantSlug
+          || receipt.appId !== `${input.config.appPrefix}-${job.bundle.sandboxTenantSlug}`
+          || sandboxCleanupReceiptIssues(receipt, {
+            candidateFingerprint: job.bundle.candidateFingerprint,
+            targetDomainId: job.bundle.targetDomainId,
+          }).length > 0
+        ) throw new Error("sandbox cleanup repair requires the exact verified workload receipt");
+        await workloadProvesNoOutstandingAttempts({
+          workloadUrl: input.config.workloadUrl,
+          workloadToken: input.config.workloadToken,
+          fetchFn,
+        });
+        await brokerProvesAppAbsent({
+          brokerOrigin: input.config.brokerOrigin,
+          appId: receipt.appId,
+          fetchFn,
+          authToken: input.config.brokerAuthToken,
+        });
+        const repaired: RunnerJob = { ...job, status: "cancelled", updatedAt: now().getTime(), cleanupRepair: {
+          schema: "agent-factory-sandbox-cleanup-repair/v1",
+          previousStatus: "failed",
+          verifiedAt: now().toISOString(),
+          fence,
+        } };
+        persistJob(input.config.journalDir, repaired, input.config.resultSigningKey);
+        Object.assign(job, repaired);
+      }
       if (!["completed", "failed", "cancelled"].includes(job.status)) {
         await requestWorkloadCancellationFence({
           workloadUrl: input.config.workloadUrl,
@@ -1602,7 +1664,7 @@ export async function registerSandboxRunnerJobRoutes(input: {
           job.controller.abort(new Error("sandbox runner job lease expired"));
           job.updatedAt = current;
           persistJob(input.config.journalDir, job, input.config.resultSigningKey);
-        } else if (["completed", "cancelled"].includes(job.status) && age > input.config.jobTtlMs) {
+        } else if (!job.cleanupRepair && ["completed", "cancelled"].includes(job.status) && age > input.config.jobTtlMs) {
           jobs.delete(attemptId);
           rmSync(journalFile(input.config.journalDir, attemptId), { force: true });
         }
@@ -1790,6 +1852,7 @@ export async function buildSandboxRunnerWorkload(input: {
   const cancelAck = (
     fence: ReturnType<SandboxCancelFenceStore["fence"]>,
     outcome?: SandboxWorkloadTerminalResult,
+    cleanupRepairNonce?: string,
   ): SandboxCancelFenceAck => signSandboxCancelFenceAck(
     input.config.cancelFenceIntegrityKey,
     {
@@ -1801,6 +1864,30 @@ export async function buildSandboxRunnerWorkload(input: {
       status: outcome ? "terminal" : "cancel_fenced",
       fencedAt: fence.fencedAt,
       expiresAt: fence.expiresAt,
+      ...(cleanupRepairNonce ? {
+        cleanupRepairNonce,
+        ...(() => {
+          const attempt = listSandboxAttempts().find((row) => row.id === fence.attemptId);
+          const receipt = attempt?.cleanupReceipt as SandboxDeployResult["cleanupReceipt"];
+          const candidateCleanup = candidateReaper.telemetry();
+          return !active.has(fence.attemptId)
+            && candidateCleanup.candidateCleanupReady
+            && !candidateCleanup.candidateReaperFailure
+            && attempt?.status === "cleanup_verified"
+            && attempt.remoteMayExist === false
+            && attempt.sandboxTenantSlug === fence.sandboxTenantSlug
+            && attempt.appId === fence.appId
+            && receipt?.sandboxAttemptId === fence.attemptId
+            && receipt.sandboxTenantSlug === fence.sandboxTenantSlug
+            && receipt.appId === fence.appId
+            && sandboxCleanupReceiptIssues(receipt, {
+              candidateFingerprint: attempt.candidateFingerprint,
+              targetDomainId: attempt.targetDomainId,
+            }).length === 0
+            ? { cleanupReceipt: receipt }
+            : {};
+        })(),
+      } : {}),
       ...(outcome
         ? {
             terminalStatus: outcome.status,
@@ -1946,6 +2033,7 @@ export async function buildSandboxRunnerWorkload(input: {
       sandboxTenantSlug?: unknown;
       appId?: unknown;
       expiresAt?: unknown;
+      cleanupRepairNonce?: unknown;
     };
     const expiresAt = typeof command.expiresAt === "string"
       ? Date.parse(command.expiresAt)
@@ -1960,6 +2048,9 @@ export async function buildSandboxRunnerWorkload(input: {
       || !Number.isFinite(expiresAt)
       || expiresAt <= now().getTime()
       || expiresAt > now().getTime() + 30 * 24 * 60 * 60_000
+      || (command.cleanupRepairNonce !== undefined
+        && (typeof command.cleanupRepairNonce !== "string"
+          || !/^[a-f0-9-]{36}$/.test(command.cleanupRepairNonce)))
     ) {
       return reply.code(400).send({
         error: { code: "cancel_identity_invalid", message: "cancel fence identity/expiry is invalid" },
@@ -1981,15 +2072,19 @@ export async function buildSandboxRunnerWorkload(input: {
         error: { code: "cancel_fence_rejected", message: safeError(error).message },
       });
     }
+    const cleanupRepairNonce = command.cleanupRepairNonce as string | undefined;
+    if (cleanupRepairNonce && !active.has(attemptId)) {
+      await reconcileCancellation(new Set(active.keys()));
+    }
     const done = terminal.get(attemptId);
     if (done) {
       return done.bundleHash === fence.bundleHash
-        ? reply.send(cancelAck(fence, done))
+        ? reply.send(cancelAck(fence, done, cleanupRepairNonce))
         : reply.code(409).send({ error: { code: "attempt_collision", message: "attempt id collision" } });
     }
     const running = active.get(attemptId);
     if (!running) {
-      return reply.code(202).send(cancelAck(fence));
+      return reply.code(202).send(cancelAck(fence, undefined, cleanupRepairNonce));
     }
     if (
       running.bundle.bundleHash !== fence.bundleHash
@@ -2000,7 +2095,7 @@ export async function buildSandboxRunnerWorkload(input: {
     running.controller.abort(new Error("sandbox workload cancelled by runner control"));
     const outcome = await running.settled;
     rememberTerminal(attemptId, outcome);
-    return reply.send(cancelAck(fence, outcome));
+    return reply.send(cancelAck(fence, outcome, cleanupRepairNonce));
   });
 
   app.get("/health", async (request, reply) => {

@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
+import { domainPortalPath } from "@/lib/portal-scope";
 import { Icon } from "@/app/portal/components/Icon";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { ApiResponseError } from "@/lib/api-response";
@@ -17,19 +18,22 @@ export function isBusinessDomainScopedSessionMiss(error: unknown): boolean {
 export function SessionLoadErrorState({
   tenantSlug,
   tenantName,
+  domainSlug,
   unavailable,
 }: {
   tenantSlug: string;
   tenantName: string;
+  domainSlug?: string;
   unavailable: boolean;
 }) {
   const { t } = useI18n();
-  const sessionCenterHref = `/portal/${tenantSlug}/ontocode-workspace`;
+  const sessionCenterHref = domainSlug ? domainPortalPath(tenantSlug, domainSlug, "ontocode-workspace") : `/portal/${tenantSlug}/ontocode-workspace`;
 
   return (
     <div className={styles.connectedPage}>
       <main
         className={styles.connectionState}
+        role="alert"
         data-tone="error"
         data-session-load-state={unavailable ? "unavailable" : "failed"}
       >
@@ -56,7 +60,7 @@ export function SessionLoadErrorState({
           <div className={styles.sessionUnavailableDomain}>
             <span>{t("ontocode.workspace.currentBusinessDomain")}</span>
             <strong>{tenantName}</strong>
-            {tenantName !== tenantSlug ? <code>{tenantSlug}</code> : null}
+            {tenantName !== (domainSlug ?? tenantSlug) ? <code>{domainSlug ?? tenantSlug}</code> : null}
           </div>
           <Link
             href={sessionCenterHref as never}

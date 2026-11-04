@@ -28,13 +28,13 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "26.8.1"
+  NODE_VERSION: "26.12.1"
   PNPM_VERSION: "11.21.0"
   REGISTRY: ghcr.io
   IMAGE_PREFIX: agentic
-  # Resolved from node:26.8.1-slim on 2026-09-09. Update this digest through
+  # Resolved from node:26.12.1-slim on 2026-11-05. Update this digest through
   # a normal code review; release never resolves a mutable Node tag.
-  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
+  SANDBOX_NODE_BASE_IMAGE: docker.io/library/node@sha256:94816674c62774da0d099a947bf4613b9e1972a2733abd0d0cd80e795f8411d0
 
 jobs:
   build-push:

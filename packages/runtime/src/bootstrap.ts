@@ -78,6 +78,7 @@ import {
 } from "./scheduler";
 import { resolveTenantEventAdapter } from "./event-adapter";
 import { commitTenantEventAdapter } from "./event-name";
+import { isDomainRuntimeActive } from "./domain-scope";
 
 /**
  * What `bootstrapTenant` returns. Spelled out so TS 6 doesn't try to infer
@@ -1408,12 +1409,6 @@ export async function bootstrapAllByTenant(
     ? new Set([...options.enabledTenantSlugs].filter(Boolean))
     : null;
   const folders = await discoverTenantFolders();
-  if (folders.length === 0) {
-    const root = resolveModelsRoot();
-    throw new FatalRuntimeBootstrapError(
-      `[bootstrap] no tenant model folders found in ${root ?? "<unconfigured models root>"}`,
-    );
-  }
 
   const tenantRows = getDb()
     .select({
@@ -1433,13 +1428,40 @@ export async function bootstrapAllByTenant(
   // stay in the DB; clearing `archived_at` (restore) + a re-register brings it
   // back. Read once per bootstrap so a re-register reflects the latest state.
   const archivedSlugs = new Set(
-    tenantRows.filter((row) => row.archivedAt != null).map((row) => row.slug),
+    tenantRows
+      .filter((row) => !isDomainRuntimeActive(row.id))
+      .map((row) => row.slug),
   );
   const operatorDisabledSlugs = new Set(
     tenantRows
       .filter((row) => !inngestEnabledByTenant.get(row.id))
       .map((row) => row.slug),
   );
+
+  if (folders.length === 0) {
+    // A fresh installation can legitimately have no deployed definitions.
+    // Keep the control plane available so operators can author the first one,
+    // while refusing to hide a lost model tree for an enabled live deployment.
+    const liveNamespaces = getDb()
+      .select({ slug: tenants.slug })
+      .from(deployments)
+      .innerJoin(tenants, eq(tenants.id, deployments.tenantId))
+      .where(
+        and(eq(deployments.target, "workflow"), eq(deployments.status, "live")),
+      )
+      .all()
+      .filter(
+        ({ slug }) =>
+          (!enabledTenantSlugs || enabledTenantSlugs.has(slug)) &&
+          !archivedSlugs.has(slug) &&
+          !operatorDisabledSlugs.has(slug),
+      );
+    if (liveNamespaces.length > 0) {
+      throw new FatalRuntimeBootstrapError(
+        `[bootstrap] no tenant model folders found for enabled live workflows: ${[...new Set(liveNamespaces.map(({ slug }) => slug))].join(", ")}`,
+      );
+    }
+  }
 
   const activeFolders = folders.filter((folder) => {
     if (!knownSlugs.has(folder.slug)) {
@@ -1476,6 +1498,9 @@ export async function bootstrapAllByTenant(
     if (enabledTenantSlugs && !enabledTenantSlugs.has(f.slug)) continue;
     if (archivedSlugs.has(f.slug)) {
       clearRuntimeScheduleStatusForTenant(f.slug);
+      // Explicitly clear broker functions left by a prior process. Omitting
+      // the app entirely can leave old cron/consumer registrations alive.
+      byTenant.set(f.slug, []);
       console.log(`[bootstrap] ${f.slug} (${f.folder}): archived — skipped`);
       continue;
     }
@@ -1573,7 +1598,7 @@ export async function bootstrapTenantBySlug(
     .all()[0];
   if (
     !tenantState ||
-    tenantState.archivedAt != null ||
+    !isDomainRuntimeActive(tenantState.id) ||
     !isTenantInngestDeploymentEnabled(tenantState.id)
   ) {
     clearRuntimeScheduleStatusForTenant(slug);

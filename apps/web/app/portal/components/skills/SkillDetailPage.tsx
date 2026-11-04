@@ -1,8 +1,10 @@
 "use client";
+import { scopedStorageKey } from "@/lib/portal-scope";
+
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import Link from "@/lib/portal-link";
+import { useRouter } from "@/lib/portal-navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import type {
   SkillBundle,
@@ -69,7 +71,7 @@ function SkillEditor({ initial }: { initial: SkillDetail }) {
   const cache = useQueryClient();
   const dirtyRegistry = useDirty();
   const can = useCan();
-  const editorKey = `${tenant}:${initial.skill.id}`;
+  const editorKey = scopedStorageKey(`${tenant}:${initial.skill.id}`);
   const retained = initial.skill.canEdit
     ? unsavedEditors.get(editorKey)
     : undefined;

@@ -34,8 +34,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import Link from "@/lib/portal-link";
+import { useRouter } from "@/lib/portal-navigation";
 import {
   ActorTag,
   Badge,

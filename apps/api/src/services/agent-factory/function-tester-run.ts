@@ -4,22 +4,48 @@
 // (研究证据:AgentCoder/Self-Collab 的增益主要来自此,而非多派 leader)。
 
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 import {
   renderTsFunctionModule,
   harnessTsModuleForTest,
   gradeFunctionTest,
+  assertGeneratedSpecExecutionOwner,
   type GeneratedAgentSpec,
   type TsFunctionModuleOpts,
   type FunctionTestVerdict,
   type FunctionTestAssertions,
+  type TestCase,
 } from "@agentic/agent-factory";
 import type { CanonicalCassetteDocument } from "@agentic/shared/cassette";
-import { runGeneratedModule, runGeneratedModuleProcess, runGeneratedModuleContainer, GENERATED_CODE_ALLOWLIST, type ModuleRunResult, type RunModuleOpts } from "@agentic/runtime";
+import { runGeneratedModule, runGeneratedModuleProcess, runGeneratedModuleContainer, runGeneratedCodeIsolated, GENERATED_CODE_ALLOWLIST, type ModuleRunResult, type RunModuleOpts, type RunGeneratedCodeOptions } from "@agentic/runtime";
 import {
   verifyCassetteEvidenceAttestation,
   type ExpectedCassetteEvidenceBinding,
 } from "./cassette-evidence-attestation";
+
+/** Preserve declared rejection-event workflows without treating the final
+ * success event as a failure outcome. An explicit case assertion wins. */
+export function preliminaryFunctionExpectedEvent(
+  spec: GeneratedAgentSpec,
+  testCase?: Pick<TestCase, "kind" | "expectedEvent">,
+): string | undefined {
+  if (testCase?.expectedEvent) return testCase.expectedEvent;
+  if (testCase?.kind === "reject") {
+    const hasTerminalSuppression = (plan: NonNullable<GeneratedAgentSpec["plan"]>): boolean => plan.some((step) =>
+      step.errorPolicy?.some((rule) => rule.suppressEmit === true && ("default" in rule ? rule.default : rule.do) === "terminal")
+      || hasTerminalSuppression(step.body ?? []));
+    // A caller must name an emitted branch explicitly when the source permits
+    // terminal handling that suppresses its implicit failure event.
+    if (hasTerminalSuppression(spec.plan ?? [])) return undefined;
+    const rejectionEvents = [...new Set(spec.emit.filter((event) => /FAIL|REJECT|ERROR|CONFLICT|DENIED|FAILED/i.test(event)))];
+    if (rejectionEvents.length > 1) {
+      throw new Error(`多个拒绝事件 [${rejectionEvents.join("、")}] 需要明确的 expectedEvent；不能猜测业务分支`);
+    }
+    return rejectionEvents[0];
+  }
+  return testCase?.kind === "fault" ? spec.emit.at(-1) : spec.emit[0];
+}
 
 // #P6 — isolation tier for the Tester's real execution. Escalate via FACTORY_EXEC_TIER:
 //   worker(default) → in-process worker_thread(fastest;时间/内存隔离,非安全边界)
@@ -37,7 +63,7 @@ function runByTier(tier: ExecTier, code: string, opts: RunModuleOpts): Promise<M
 }
 
 export interface TestGeneratedFunctionResult {
-  /** 渲染出的交付形态代码(inngest.createFunction)。 */
+  /** Exact reviewed CodeAct bytes, or the rendered declarative function module. */
   code: string;
   /** Tester 判据:跑通?发出期望事件? */
   verdict: FunctionTestVerdict;
@@ -114,7 +140,8 @@ export function loadApprovedFunctionTestCassette(
   }
 }
 
-/** 渲染 + 隔离真跑 + 打分一个生成的 function。never throws。 */
+/** Execute and grade the selected execution owner. Invalid CodeAct identity
+ * throws before execution; the deployer records it as a blocked function test. */
 export async function testGeneratedFunction(
   spec: GeneratedAgentSpec,
   opts: {
@@ -125,6 +152,9 @@ export async function testGeneratedFunction(
      * singleton expected event defaults to exact-set checking; callers may
      * override that with assertions.exactEmits. */
     assertions?: FunctionTestAssertions;
+    /** Explicit caller expectation; only reject with no expected event may
+     * accept a terminal handler rejection without any emission. */
+    caseKind?: "pass" | "reject" | "edge" | "fault";
     render?: TsFunctionModuleOpts;
     /** Execute an already-persisted generated module verbatim. Regression
      * replay uses this so promotion tests the reviewed artifact on disk, not a
@@ -133,6 +163,8 @@ export async function testGeneratedFunction(
     timeoutMs?: number;
     /** 若给,必须是 -sb 沙箱租户(隔离不变量)。 */
     tenantSlug?: string;
+    tenantId?: string;
+    factoryExecutionScope?: RunGeneratedCodeOptions["factoryExecutionScope"];
     /** 隔离层覆盖(缺省从 FACTORY_EXEC_TIER 读:worker/process/container)。 */
     tier?: ExecTier;
     /** Explicit, serializable dependency responses. There are deliberately no implicit
@@ -155,6 +187,82 @@ export async function testGeneratedFunction(
     };
   } = {},
 ): Promise<TestGeneratedFunctionResult> {
+  if (spec.codeExecuted === true) {
+    assertGeneratedSpecExecutionOwner(spec);
+    const code = spec.generatedCode;
+    if (!code?.trim() || (opts.code !== undefined && opts.code !== code)) {
+      throw new Error("CodeAct function test requires the exact reviewed generatedCode bytes");
+    }
+    if (!opts.tenantId || !opts.tenantSlug || opts.factoryExecutionScope?.kind !== "sandbox") {
+      throw new Error("CodeAct function test requires the active sandbox tenant and attempt scope");
+    }
+    const event = opts.testEvent && typeof opts.testEvent === "object" && !Array.isArray(opts.testEvent)
+      ? opts.testEvent as Record<string, unknown>
+      : {};
+    const input = event.data && typeof event.data === "object" && !Array.isArray(event.data)
+      ? event.data as Record<string, unknown>
+      : {};
+    const fixtureErrors: string[] = [];
+    const forbiddenCapability = async (): Promise<never> => {
+      const error = "pure CodeAct preliminary test attempted an undeclared runtime capability";
+      fixtureErrors.push(error);
+      throw new Error(error);
+    };
+    const expectedHash = createHash("sha256").update(code, "utf8").digest("hex");
+    // The same one-shot container kernel owns both this preliminary execution
+    // and the later broker run. Never test a rendered look-alike for CodeAct.
+    const run = await runGeneratedCodeIsolated(code, input, {
+      tenantId: opts.tenantId,
+      tenantSlug: opts.tenantSlug,
+      agentName: spec.short || spec.nameZh,
+      correlationId: `function-test:${spec.slug}`,
+      factoryExecutionScope: opts.factoryExecutionScope,
+      timeoutMs: opts.timeoutMs ?? 30_000,
+      allowedTools: [],
+      hostRuntimeKind: "fixture",
+      memory: {
+        get: forbiddenCapability,
+        put: forbiddenCapability,
+        delete: forbiddenCapability,
+        search: forbiddenCapability,
+      },
+      hostRuntime: {
+        reason: forbiddenCapability,
+        tool: forbiddenCapability,
+        invoke: forbiddenCapability,
+        spawn: forbiddenCapability,
+      },
+    });
+    const exactExecution = run.executorStarted
+      && run.handlerStarted === true
+      && run.isolation === "isolated_container"
+      && run.codeSha256 === expectedHash
+      && run.containerEvidence?.codeSha256 === expectedHash
+      && run.containerEvidence.attemptId === opts.factoryExecutionScope.attempt_id
+      && run.containerEvidence.isolation === "isolated_container"
+      && run.containerEvidence.removed === true
+      && run.containerEvidence.absenceVerified === true;
+    // The kernel publishes buffered emits only on a successful handler return.
+    // A candidate_failed terminal response therefore has no committed events;
+    // timeout, protocol, RPC and container failures never count as rejection.
+    const candidateFailure = !run.ok && run.failure === "candidate_failed";
+    const observation = {
+      ran: run.ok && exactExecution,
+      handlerStarted: exactExecution,
+      terminalFailure: candidateFailure && run.failureStage === "handler" && /^\[terminal\](?:\s|$)/.test(run.error),
+      ...(run.ok ? { result: run.data } : { error: run.error }),
+      emitNames: run.ok ? run.emitted.map((entry) => entry.event) : [],
+      emits: run.ok ? run.emitted.map((entry) => ({ name: entry.event, data: entry.payload })) : [],
+      fixtureErrors,
+    };
+    const verdict = gradeFunctionTest({
+      ok: exactExecution && (run.ok || candidateFailure),
+      result: observation,
+      ...(!run.ok ? { error: run.error } : {}),
+      ...(!exactExecution ? { error: "CodeAct handler-start, exact code or verified container cleanup evidence missing" } : {}),
+    }, { expectEmits: opts.expectEmits, assertions: opts.assertions, caseKind: opts.caseKind });
+    return { code, verdict, tier: "container", fixtureMode: "scripted" };
+  }
   const code = opts.code ?? renderTsFunctionModule(spec, opts.render);
   const harnessed = harnessTsModuleForTest(code);
   const tier = opts.tier ?? execTier();
@@ -169,7 +277,7 @@ export async function testGeneratedFunction(
     // isolate; everything else still stubs to {} (no fs / net / child_process reach).
     allowlist: [...GENERATED_CODE_ALLOWLIST],
   });
-  const verdict = gradeFunctionTest(run, { expectEmits: opts.expectEmits, assertions: opts.assertions });
+  const verdict = gradeFunctionTest(run, { expectEmits: opts.expectEmits, assertions: opts.assertions, caseKind: opts.caseKind });
   const hasEvidence = Object.keys(opts.fixture?.toolCassettes ?? {}).length > 0;
   const hasStructuralFixture = Boolean(opts.fixture?.reasonResult) ||
     Object.keys(opts.fixture?.invokeResults ?? {}).length > 0;

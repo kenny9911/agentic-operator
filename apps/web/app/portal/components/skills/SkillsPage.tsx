@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import Link from "@/lib/portal-link";
+import { useRouter } from "@/lib/portal-navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Badge, Button } from "@/app/portal/components";
 import { useI18n } from "@/app/portal/lib/preferences-context";
-import { useTenant } from "@/app/portal/lib/use-tenant";
+import { useTenant, useDomainSlug } from "@/app/portal/lib/use-tenant";
 import { useCan } from "@/lib/hooks/useMe";
 import { useSkills, skillKeys } from "@/lib/hooks/useSkills";
 import { formatApiError } from "@/lib/api-response";
@@ -17,6 +17,7 @@ import styles from "./skills.module.css";
 export function SkillsPage() {
   const { t, language } = useI18n();
   const tenant = useTenant();
+  const domainSlug = useDomainSlug();
   const router = useRouter();
   const cache = useQueryClient();
   const can = useCan();
@@ -39,7 +40,7 @@ export function SkillsPage() {
           <h1>{t("skills.title")}</h1>
           <p className={styles.subheading}>{t("skills.subtitle")}</p>
           <p className={styles.hint}>
-            {t("skills.workspaceScope", { tenant })}
+            {t("skills.workspaceScope", { tenant: domainSlug })}
           </p>
           <p className={styles.hint}>{t("skills.availabilityHint")}</p>
         </div>

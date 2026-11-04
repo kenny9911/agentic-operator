@@ -1,3 +1,4 @@
+import { en } from "@/lib/i18n/en";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -38,7 +39,7 @@ describe("Factory draft editor modal read-only fields", () => {
   it("shows the Ontology reason and disables both value editing and save", () => {
     vi.stubGlobal("React", React);
     const html = renderToStaticMarkup(
-      <PreferencesProvider>
+      <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>
         <DraftEditorModal contract={contract} onClose={vi.fn()} onSave={vi.fn()} />
       </PreferencesProvider>,
     );

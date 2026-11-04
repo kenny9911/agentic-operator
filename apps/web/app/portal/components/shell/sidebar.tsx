@@ -23,6 +23,9 @@ import {
   type PointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { useParams } from "next/navigation";
+import { DomainSwitcher } from "../domains/DomainSwitcher";
+import { domainPortalPath } from "@/lib/portal-scope";
 import { useTenant } from "../../lib/use-tenant";
 import { useCounts } from "@/lib/hooks/useAgents";
 import { useHealth, fmtBytes } from "@/lib/hooks/useHealth";
@@ -55,7 +58,9 @@ export function Sidebar({
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tenantSlug = useTenant();
-  const base = `/portal/${tenantSlug}`;
+  const { domain } = useParams<{ domain?: string }>();
+  const tenantBase = `/portal/${tenantSlug}`;
+  const base = domain ? domainPortalPath(tenantSlug, domain, "") : tenantBase;
   const { t } = useI18n();
   const can = useCan();
   const { data: counts } = useCounts();
@@ -225,7 +230,10 @@ export function Sidebar({
           }}
         />
 
+        <DomainSwitcher expanded={expanded} />
+
         <nav className={styles.nav} aria-label={t("sidebar.portalSections")}>
+          {domain ? <>
           <NavGroup label={t("nav.group.run")}>
             <NavItem
               href={`${base}/dashboard`}
@@ -303,28 +311,20 @@ export function Sidebar({
               matchPrefix
             />
             {can("skills.read") && <NavItem href={`${base}/skills`} icon="library" label={t("skills.title")} matchPrefix />}
-            <NavItem
-              href={`${base}/tenants`}
-              icon="agent"
-              label={t("nav.tenants")}
-              matchPrefix
-            />
-            {/* P6-AUTH — Access & roles. Shown only to tenant admins (members.read)
-             * and platform superadmins; viewers/operators never see it. */}
-            {can("members.read") ? (
-              <NavItem
-                href={`${base}/access`}
-                icon="human"
-                label={t("nav.access")}
-                matchPrefix
-              />
-            ) : null}
+            <NavItem href={`${base}/ontology`} icon="library" label={t("domains.ontology")} matchPrefix />
             <NavItem
               href={`${base}/settings`}
               icon="settings"
-              label={t("nav.settings")}
+              label={t("domains.settings")}
               matchPrefix
             />
+          </NavGroup>
+          </> : null}
+          <NavGroup label={t("domains.tenantAdministration")}>
+            <NavItem href={`${tenantBase}/domains`} scope="tenant" icon="workflow" label={t("domains.title")} />
+            <NavItem href={`${tenantBase}/tenants`} scope="tenant" icon="agent" label={t("nav.tenants")} matchPrefix />
+            {can("members.read") ? <NavItem href={`${tenantBase}/access`} scope="tenant" icon="human" label={t("domains.tenantAccess")} matchPrefix /> : null}
+            <NavItem href={`${tenantBase}/settings`} scope="tenant" icon="settings" label={t("domains.tenantSettings")} matchPrefix />
           </NavGroup>
         </nav>
 

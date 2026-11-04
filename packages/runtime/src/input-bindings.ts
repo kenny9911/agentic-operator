@@ -28,6 +28,10 @@ export interface RuntimeInputReferenceContext {
   /** Actual wire event name. Tenant-qualified names are matched by their bare
    * suffix against manifest source_events. */
   eventName?: string;
+  /** Exclusive CodeAct handlers validate their declared event values first.
+   * Callers must block a successful outcome on deferredIssues before any
+   * output can commit. This never defers binding-path or reference checks. */
+  deferEventValueValidation?: boolean;
 }
 
 function eventBindingApplies(binding: FactoryInputBinding, eventName: string | undefined): boolean {
@@ -142,7 +146,7 @@ export function initializeInputBindings(
   bindings: FactoryInputBinding[],
   eventData: Record<string, unknown>,
   referenceContext: RuntimeInputReferenceContext = { toolConfigs: {}, toolProfileRefs: {} },
-): { state: RuntimeInputBindingState; issues: RuntimeInputBindingIssue[] } {
+): { state: RuntimeInputBindingState; issues: RuntimeInputBindingIssue[]; deferredIssues: RuntimeInputBindingIssue[] } {
   // Once a factory manifest declares an input contract, only fields acquired
   // through that contract may enter tool/logic business data. Keeping the
   // historical whole-event view for manifests with no bindings preserves
@@ -156,6 +160,7 @@ export function initializeInputBindings(
     inactive: new Set<string>(),
   };
   const issues: RuntimeInputBindingIssue[] = [];
+  const deferredIssues: RuntimeInputBindingIssue[] = [];
   for (const binding of bindings) {
     if (!SAFE_BINDING_FIELD.test(binding.field) || FORBIDDEN_PATH_SEGMENTS.has(binding.field)) {
       issues.push({ code: "input_binding_field_invalid", field: binding.field, message: "绑定字段名不安全" });
@@ -167,8 +172,19 @@ export function initializeInputBindings(
         continue;
       }
       const path = binding.event_path.startsWith("event.") ? binding.event_path.slice("event.".length) : binding.event_path;
-      const problem = setValue(state, binding, readInputBindingPath(state.eventData, path));
-      if (problem) issues.push(problem);
+      if (referenceContext.deferEventValueValidation && pathSegments(path) === null) {
+        issues.push({ code: "input_binding_path_invalid", field: binding.field, message: "绑定路径不安全或格式无效" });
+        continue;
+      }
+      const result = readInputBindingPath(state.eventData, path);
+      const problem = setValue(state, binding, result);
+      if (referenceContext.deferEventValueValidation) {
+        // Preserve the exact declared value, including null/blank/wrong type,
+        // so the reviewed handler can perform its authored rejection. Missing
+        // fields stay absent and unrelated event data never enters this view.
+        if (result.found) state.data[binding.field] = result.value;
+        if (problem) deferredIssues.push(problem);
+      } else if (problem) issues.push(problem);
     } else if (binding.kind === "secret" || binding.kind === "config") {
       const match = binding.reference.match(/^tool:([^:]+):([A-Za-z_][A-Za-z0-9_-]*)$/);
       const toolName = match?.[1];
@@ -204,7 +220,7 @@ export function initializeInputBindings(
       }
     }
   }
-  return { state, issues };
+  return { state, issues, deferredIssues };
 }
 
 function resolveArgumentSource(state: RuntimeInputBindingState, path: string): PathResult {

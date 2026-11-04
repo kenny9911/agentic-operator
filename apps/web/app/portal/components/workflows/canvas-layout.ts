@@ -1,3 +1,4 @@
+import { scopedStorageKey } from "@/lib/portal-scope";
 import {
   MAX_CANVAS_H,
   MAX_CANVAS_W,
@@ -25,11 +26,11 @@ export function canvasLayoutStorageKey(
   workflow: string,
   version: string,
 ): string {
-  return `agentic:workflow-canvas-layout:v1:${JSON.stringify([
+  return scopedStorageKey(`agentic:workflow-canvas-layout:v1:${JSON.stringify([
     tenant,
     workflow,
     version,
-  ])}`;
+  ])}`);
 }
 
 export function workflowEdgeKey(

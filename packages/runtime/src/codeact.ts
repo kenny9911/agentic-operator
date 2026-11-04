@@ -394,6 +394,9 @@ export interface RunGeneratedCodeOptions {
   memoryMb?: number;
   production?: GeneratedCodeProductionPolicy;
   hostRuntime?: GeneratedCodeHostRuntime;
+  /** Trusted host guard for pending input validation; candidate input cannot
+   * disable it. Deny every RPC before models/tools/memory/invoke dispatch. */
+  denyHostCapabilities?: boolean;
   /** Server-owned host classification. `fixture` is for exact regression
    * artifacts: it invokes the supplied deterministic host adapter but records
    * the call as fixture evidence, never as a live integration. */
@@ -448,6 +451,9 @@ interface GeneratedCodeTelemetry {
   productionAttested: boolean;
   /** True only after Docker started the one-shot container for these bytes. */
   executorStarted: boolean;
+  /** Trusted candidate bootstrap reached the captured handler invocation.
+   * Missing legacy stage evidence must never be treated as true. */
+  handlerStarted?: boolean;
   /** Exit/removal evidence authored by the trusted container executor. */
   containerEvidence?: CodeActContainerExecutionEvidence;
   /** Exact result of the runtime attestation gate. */
@@ -468,6 +474,9 @@ export type GeneratedCodeExecutionResult =
   | (GeneratedCodeTelemetry & {
       ok: false;
       failure: GeneratedCodeFailure;
+      /** Trusted bootstrap exception stage; missing/unknown is not a
+       * handler rejection even when the container itself started. */
+      failureStage?: "setup" | "handler" | "result";
       error: string;
       timedOut?: boolean;
       crashed?: boolean;
@@ -571,12 +580,14 @@ export async function runGeneratedCodeIsolated(
     executorStarted = false,
     durationMs = Date.now() - started,
     containerEvidence?: CodeActContainerExecutionEvidence,
+    handlerStarted = false,
   ): GeneratedCodeTelemetry => ({
     isolation: "isolated_container",
     codeSha256,
     durationMs,
     productionAttested: attestation === "production_verified",
     executorStarted,
+    handlerStarted,
     ...(containerEvidence ? { containerEvidence } : {}),
     attestation,
     toolDispatches: [...toolDispatches],
@@ -869,6 +880,9 @@ export async function runGeneratedCodeIsolated(
     method: CodeActRpcMethod,
     args: unknown[],
   ): Promise<unknown> => {
+    if (options.denyHostCapabilities === true) {
+      throw new Error("CodeAct host capabilities are unavailable while input validation is pending");
+    }
     switch (method) {
       case "reason": {
         const systemPrompt =
@@ -1032,6 +1046,9 @@ export async function runGeneratedCodeIsolated(
     return {
       ok: false,
       failure: container.failure,
+      failureStage: ["setup", "handler", "result"].includes(container.failureStage ?? "")
+        ? container.failureStage
+        : undefined,
       error: container.error,
       timedOut: container.timedOut,
       crashed: container.crashed,
@@ -1040,6 +1057,7 @@ export async function runGeneratedCodeIsolated(
         container.executorStarted,
         container.durationMs,
         container.evidence,
+        container.handlerStarted === true,
       ),
     };
   }
@@ -1057,6 +1075,7 @@ export async function runGeneratedCodeIsolated(
       true,
       container.durationMs,
       container.evidence,
+      container.handlerStarted === true,
     ),
   };
 }

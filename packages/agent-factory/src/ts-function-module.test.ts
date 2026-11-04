@@ -32,6 +32,20 @@ function spec(over: Partial<GeneratedAgentSpec> = {}): GeneratedAgentSpec {
 }
 
 describe("#P1 renderTsFunctionModule — inngest.createFunction 形态", () => {
+  it("executes zero-argument tools with an explicit empty payload across durable steps", async () => {
+    const plan: PlanStep[] = [
+      { stepId: "prior", kind: "tool", tool: "meta.ping", toolArguments: {} },
+      { stepId: "ping", kind: "tool", tool: "meta.ping", toolArguments: {} },
+    ];
+    const run = loadHarnessed(renderTsFunctionModule(spec({ plan, tools: ["meta.ping"] })));
+    const result = await run({ data: { private_input: "must-not-forward" } }, {
+      tool: async () => ({ private_previous_result: "must-not-forward" }),
+      reason: async () => ({ ok: true }),
+    });
+    expect(result.ran).toBe(true);
+    expect(result.toolCalls).toEqual([{ name: "meta.ping", args: {} }, { name: "meta.ping", args: {} }]);
+  });
+
   it("产出 inngest.createFunction 骨架(对标旧 AO),含 id/name/retries/trigger", () => {
     const code = renderTsFunctionModule(spec());
     expect(code).toContain("inngest.createFunction(");

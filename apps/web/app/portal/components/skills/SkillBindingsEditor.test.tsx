@@ -1,3 +1,4 @@
+import { en } from "@/lib/i18n/en";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -79,7 +80,7 @@ function detail(summary: ManagedSkillSummary): SkillDetail {
 }
 function render(value?: unknown, disabled = false) {
   return renderToStaticMarkup(
-    <PreferencesProvider>
+    <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>
       <SkillBindingsEditor
         tenant="tenant"
         scope="agent"

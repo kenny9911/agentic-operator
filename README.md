@@ -47,7 +47,7 @@ Integrations stores third-party credentials (e.g. GoHire) encrypted per tenant.
 LLM traffic is routed per tenant through the gateway (providers include
 Moonshot and Z.ai) and accounted in a usage ledger surfaced at `/v1/usage`.
 
-The workspace requires exactly Node 26.8.1 and pnpm 11.21.0. Both versions are
+The workspace requires exactly Node 26.12.1 and pnpm 11.21.0. Both versions are
 pinned and enforced by the root lifecycle guards.
 
 ## Local development

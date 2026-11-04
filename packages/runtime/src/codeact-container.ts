@@ -92,6 +92,9 @@ interface ContainerResultBase {
   isolation: "isolated_container";
   durationMs: number;
   executorStarted: boolean;
+  /** Trusted bootstrap stage; absent from older images or infrastructure
+   * failures. Container launch alone never proves handler invocation. */
+  handlerStarted?: boolean;
   candidateImageDigest: string | null;
   evidence?: CodeActContainerExecutionEvidence;
 }
@@ -105,6 +108,7 @@ export type CodeActContainerResult =
   | (ContainerResultBase & {
       ok: false;
       failure: CodeActContainerFailure;
+      failureStage?: "setup" | "handler" | "result";
       error: string;
       timedOut?: boolean;
       crashed?: boolean;
@@ -614,6 +618,8 @@ function transpileCandidate(code: string): string {
 
 interface ProtocolResult {
   ok: boolean;
+  handlerStarted?: boolean;
+  failureStage?: "setup" | "handler" | "result";
   result?: Record<string, unknown>;
   emitted?: Array<{ event: string; payload: Record<string, unknown> }>;
   failure?: string;
@@ -1038,6 +1044,10 @@ export async function executeCodeActContainer(
             ok: false,
             isolation: "isolated_container",
             failure: protocolResult.failure === "candidate_failed" ? "candidate_failed" : "container_crashed",
+            handlerStarted: protocolResult.handlerStarted === true,
+            failureStage: ["setup", "handler", "result"].includes(protocolResult.failureStage ?? "")
+              ? protocolResult.failureStage
+              : undefined,
             error: protocolResult.error ?? `candidate exited with code ${exitCode}`,
             crashed: exitCode !== 0,
             durationMs: duration(),
@@ -1060,6 +1070,7 @@ export async function executeCodeActContainer(
             isolation: "isolated_container",
             result: protocolResult.result,
             emitted: Array.isArray(protocolResult.emitted) ? protocolResult.emitted : [],
+            handlerStarted: protocolResult.handlerStarted === true,
             durationMs: duration(),
             executorStarted: true,
             candidateImageDigest: image,

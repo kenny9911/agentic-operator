@@ -135,6 +135,7 @@ export function PortalChrome({
   // re-subscribes via the path dependency.
   const activeTenant = useTenant(user.tenant);
   useStream({
+    retainCursor: true,
     path: activeTenant
       ? `/livefeed?tenant=${encodeURIComponent(activeTenant)}`
       : "/livefeed",

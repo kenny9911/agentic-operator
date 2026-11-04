@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import Link from "next/link";
+import Link from "@/lib/portal-link";
 import { usePathname } from "next/navigation";
 import { Icon, type IconName } from "../Icon";
 import styles from "./sidebar.module.css";
@@ -34,6 +34,7 @@ export function NavGroup({
 
 export interface NavItemProps {
   href: string;
+  scope?: "tenant" | "domain";
   icon: IconName;
   label: string;
   /** Static count pill (e.g. "Agents (22)"). Numeric or string. */
@@ -52,6 +53,7 @@ export interface NavItemProps {
 
 export function NavItem({
   href,
+  scope,
   icon,
   label,
   count,
@@ -115,6 +117,7 @@ export function NavItem({
   return (
     <Link
       href={href as never}
+      scope={scope}
       className={styles.navItem}
       data-active={active}
       data-disabled="false"

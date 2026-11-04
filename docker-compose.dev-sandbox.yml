@@ -7,12 +7,29 @@
 #
 #   docker compose --env-file .env.production --env-file ~/.agentic/factory-sandbox.env \
 #     --profile factory-sandbox -f docker-compose.yml -f docker-compose.dev-sandbox.yml \
-#     up -d sandbox-inngest sandbox-workload sandbox-runner
+#     up -d sandbox-inngest sandbox-broker-gateway sandbox-workload sandbox-runner
 #
 # The workload/broker stay unpublished even here — the host api only ever talks to the signed
 # control API; workload/broker remain reachable solely on the internal execution network.
+# Cleanup requires the same durable tombstone gateway as production. Configure distinct
+# SANDBOX_INNGEST_CONTROL_BEARER_HOST_FILE and SANDBOX_GATEWAY_TOMBSTONE_HMAC_HOST_FILE
+# secret files (at least 32 bytes each). This topology remains development-only.
 services:
   sandbox-runner:
+    environment:
+      SANDBOX_INNGEST_BASE_URL: http://sandbox-broker-gateway:3562
+      SANDBOX_INNGEST_CONTROL_BEARER: ""
+      SANDBOX_INNGEST_CONTROL_BEARER_FILE: /run/secrets/factory-sandbox/control-bearer
+    volumes:
+      - type: bind
+        source: "${SANDBOX_INNGEST_CONTROL_BEARER_HOST_FILE:-/dev/null}"
+        target: /run/secrets/factory-sandbox/control-bearer
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      sandbox-broker-gateway:
+        condition: service_healthy
     ports:
       - "127.0.0.1:3560:3560"
     networks:
@@ -21,3 +38,87 @@ services:
       # joining the default bridge is what makes loopback publishing work while the two
       # sandbox networks stay `internal: true`.
       default: {}
+  sandbox-workload:
+    environment:
+      SANDBOX_INNGEST_BASE_URL: http://sandbox-broker-gateway:3562
+      SANDBOX_INNGEST_WORKLOAD_SERVE_ORIGIN: http://sandbox-broker-gateway:3562
+      SANDBOX_INNGEST_CONTROL_BEARER: ""
+      SANDBOX_INNGEST_CONTROL_BEARER_FILE: /run/secrets/factory-sandbox/control-bearer
+    volumes:
+      - type: bind
+        source: "${SANDBOX_INNGEST_CONTROL_BEARER_HOST_FILE:-/dev/null}"
+        target: /run/secrets/factory-sandbox/control-bearer
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      sandbox-broker-gateway:
+        condition: service_healthy
+  sandbox-broker-gateway:
+    profiles: [factory-sandbox]
+    image: "${FACTORY_SANDBOX_GATEWAY_IMAGE:-agentic-sandbox-gateway:dev}"
+    pull_policy: "${FACTORY_SANDBOX_GATEWAY_PULL_POLICY:-never}"
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: sandbox-broker-gateway
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    # Node + the TS launcher and concurrent health probe exceed 256 MiB.
+    mem_limit: "${FACTORY_SANDBOX_GATEWAY_MEMORY_LIMIT:-512m}"
+    cpus: "0.5"
+    expose: ["3562"]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3562"
+      AGENTIC_DATA_ROOT: /sandbox/gateway
+      SANDBOX_BROKER_UPSTREAM_ORIGIN: http://sandbox-inngest:8288
+      SANDBOX_WORKLOAD_UPSTREAM_ORIGIN: http://sandbox-workload:3561
+      SANDBOX_INNGEST_CONTROL_BEARER_FILE: /run/secrets/factory-sandbox/control-bearer
+      SANDBOX_GATEWAY_TOMBSTONE_HMAC_FILE: /run/secrets/factory-sandbox/gateway-tombstone-hmac
+      SANDBOX_GATEWAY_TOMBSTONE_MAX_ENTRIES: "${SANDBOX_GATEWAY_TOMBSTONE_MAX_ENTRIES:-10000}"
+      SANDBOX_INNGEST_APP_PREFIX: "${SANDBOX_INNGEST_APP_PREFIX:-agentic-factory-sandbox}"
+    volumes:
+      - factory-sandbox-gateway-state:/sandbox/gateway
+      - type: bind
+        source: "${SANDBOX_INNGEST_CONTROL_BEARER_HOST_FILE:-/dev/null}"
+        target: /run/secrets/factory-sandbox/control-bearer
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${SANDBOX_GATEWAY_TOMBSTONE_HMAC_HOST_FILE:-/dev/null}"
+        target: /run/secrets/factory-sandbox/gateway-tombstone-hmac
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    networks:
+      - factory-sandbox-execution
+      - factory-sandbox-broker-backend
+    depends_on:
+      sandbox-inngest:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const fs=require('node:fs');const t=fs.readFileSync('/run/secrets/factory-sandbox/control-bearer','utf8').trim();fetch('http://127.0.0.1:3562/health',{headers:{authorization:'Bearer '+t}}).then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+  sandbox-inngest:
+    networks: !override
+      - factory-sandbox-broker-backend
+volumes:
+  factory-sandbox-gateway-state:
+networks:
+  factory-sandbox-broker-backend:
+    internal: true

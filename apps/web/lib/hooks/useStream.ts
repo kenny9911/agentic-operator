@@ -21,6 +21,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
+import { scopedStreamPath } from "@/lib/portal-scope";
 import { useQueryClient } from "@tanstack/react-query";
 import { RunStreamEvent, type RunStreamEvent as StreamEvent } from "@agentic/contracts";
 
@@ -32,6 +34,10 @@ export interface UseStreamOptions {
    * Tests can pass `false` to keep behaviour deterministic.
    */
   reconnect?: boolean;
+  /** Keep the chrome's resume point with its scope cache across navigation. */
+  retainCursor?: boolean;
+  /** Local replay consumers can leave cache invalidation to portal chrome. */
+  invalidateQueries?: boolean;
   /**
    * Called for every parsed event. Useful for a debug ticker or a
    * tweaks-panel inspector. Cache invalidation still happens internally.
@@ -61,10 +67,29 @@ export function streamPathWithCursor(path: string, lastEventId: string): string 
   return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
 }
 
+/** A replay consumer starts from history; the chrome resumes its retained
+ * scope. Query-cache storage means eviction and logout erase the cursor too. */
+export function createStreamCursor(client: QueryClient, path: string, retain = false) {
+  const key = ["stream", "cursor", path] as const;
+  if (retain) client.setQueryDefaults(["stream", "cursor"], { gcTime: Infinity });
+  let lastEventId = retain ? client.getQueryData<string>(key) ?? "" : "";
+  return {
+    path: () => streamPathWithCursor(path, lastEventId),
+    remember(id: string) {
+      if (!id) return;
+      lastEventId = id;
+      if (retain) client.setQueryData(key, id);
+    },
+  };
+}
+
 export function useStream(opts: UseStreamOptions = {}): void {
   const queryClient = useQueryClient();
-  const path = opts.path ?? "/v1/stream";
+  const pathname = usePathname();
+  const path = scopedStreamPath(opts.path ?? "/livefeed", pathname);
   const reconnect = opts.reconnect ?? true;
+  const retainCursor = opts.retainCursor ?? false;
+  const invalidateQueries = opts.invalidateQueries ?? true;
   const onEventRef = useRef(opts.onEvent);
   const onStatusChangeRef = useRef(opts.onStatusChange);
 
@@ -78,7 +103,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
     let attempt = 0;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let lastEventId = "";
+    const cursor = createStreamCursor(queryClient, path, retainCursor);
 
     function connect() {
       if (cancelled) return;
@@ -86,7 +111,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
       // EventSource defaults to credentialed same-origin requests; the
       // browser sends the session cookie automatically through Next's
       // /v1/* rewrite to apps/api.
-      es = new EventSource(streamPathWithCursor(path, lastEventId), {
+      es = new EventSource(cursor.path(), {
         withCredentials: true,
       });
 
@@ -96,7 +121,8 @@ export function useStream(opts: UseStreamOptions = {}): void {
       };
 
       es.onmessage = (msg) => {
-        if (msg.lastEventId) lastEventId = msg.lastEventId;
+        if (cancelled) return;
+        cursor.remember(msg.lastEventId);
         let payload: unknown;
         try {
           payload = JSON.parse(msg.data);
@@ -109,7 +135,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
           console.warn("[useStream] dropping malformed event", parsed.error);
           return;
         }
-        dispatch(parsed.data, queryClient);
+        if (invalidateQueries) dispatch(parsed.data, queryClient);
         onEventRef.current?.(parsed.data);
       };
 
@@ -134,7 +160,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
       if (es) es.close();
       onStatusChangeRef.current?.("closed");
     };
-  }, [path, reconnect, queryClient]);
+  }, [path, reconnect, retainCursor, invalidateQueries, queryClient]);
 }
 
 // ─── Cache invalidation strategy ─────────────────────────────────────────────
@@ -206,34 +232,31 @@ import type { QueryClient } from "@tanstack/react-query";
  */
 const COALESCE_WINDOW_MS = 220;
 
-const pendingKeys = new Map<string, readonly unknown[]>();
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-function flushInvalidations(client: QueryClient): void {
-  flushTimer = null;
-  const keys = [...pendingKeys.values()];
-  pendingKeys.clear();
-  for (const queryKey of keys) void client.invalidateQueries({ queryKey });
+interface InvalidationQueue {
+  keys: Map<string, readonly unknown[]>;
+  timer: ReturnType<typeof setTimeout>;
 }
+// Each QueryClient belongs to one Tenant/Domain pair. A pending old-scope
+// flush must never absorb the new scope's events during navigation.
+const invalidationQueues = new Map<QueryClient, InvalidationQueue>();
 
-/** Queue a key for invalidation on the next flush. Exported for tests. */
-export function queueInvalidate(
-  client: QueryClient,
-  queryKey: readonly unknown[],
-): void {
-  pendingKeys.set(JSON.stringify(queryKey), queryKey);
-  if (flushTimer === null) {
-    flushTimer = setTimeout(() => flushInvalidations(client), COALESCE_WINDOW_MS);
+export function queueInvalidate(client: QueryClient, queryKey: readonly unknown[]): void {
+  let queue = invalidationQueues.get(client);
+  if (!queue) {
+    const keys = new Map<string, readonly unknown[]>();
+    const timer = setTimeout(() => {
+      invalidationQueues.delete(client);
+      for (const pending of keys.values()) void client.invalidateQueries({ queryKey: pending });
+    }, COALESCE_WINDOW_MS);
+    queue = { keys, timer };
+    invalidationQueues.set(client, queue);
   }
+  queue.keys.set(JSON.stringify(queryKey), queryKey);
 }
 
-/** For tests — drop anything queued and cancel the pending flush. */
 export function resetInvalidationQueue(): void {
-  pendingKeys.clear();
-  if (flushTimer !== null) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
+  for (const queue of invalidationQueues.values()) clearTimeout(queue.timer);
+  invalidationQueues.clear();
 }
 
 export function dispatch(event: StreamEvent, client: QueryClient): void {

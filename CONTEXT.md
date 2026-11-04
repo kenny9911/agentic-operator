@@ -1,19 +1,37 @@
 # Agentic Operator
 
-Event-driven multi-agent runtime and operations console. A Tenant's business Events trigger Agents; each firing is a Run made of Steps; a Run calls Tools through a credentialed Gateway, pauses for humans at Tasks, and may end by publishing another Event. Two authoring planes (Agent Studio, and the Agent Factory / OntoCode pipeline) produce Agents that reach a Tenant only through a gated Deployment.
+Event-driven multi-agent runtime and operations console. A Tenant owns Domains; each Domain's business Events trigger Agents, and each firing is a Run made of Steps. A Run calls Tools through a credentialed Gateway, pauses for humans at Tasks, and may end by publishing another Event; Agent Studio and the Agent Factory / OntoCode pipeline produce Agents that reach a Domain through a gated Deployment.
 
 This file is a glossary, not a spec. Definitions say what a thing **is**; how it is implemented lives in the code and in `docs/`.
+
+The Tenant/Domain hierarchy is implemented through explicit Domain ownership and exclusive execution namespaces. [ADR-0013](docs/adr/0013-tenants-own-business-domains.md) records the compatibility boundary; the [implementation and operator guide](docs/design/tenant-domain-hierarchy.md) describes configuration and migration.
 
 ## Language
 
 ### Tenancy
 
 **Tenant**:
-The top-level isolation unit. Every user-visible record belongs to exactly one Tenant, and its immutable slug namespaces events, function ids, file paths and URLs.
-_Avoid_: workspace, business domain (the product-facing label; say Tenant in code and docs), organisation, namespace
+The top-level ownership and isolation unit. A Tenant owns Domains and their resources, along with tenant-wide membership and administrative resources. Existing runtime state is adopted into its Default Domain without combining separate owners.
+_Avoid_: business domain, workspace, organisation, namespace
+
+**Domain**:
+A business problem and its governed enterprise ontology boundary, owned by exactly one Tenant. Workflows, Agents and their operational state belong to a Domain; Business Domain is the product-facing long form of the same concept.
+_Avoid_: tenant, project, workspace, scenario, ontology registration
+
+**Default Domain**:
+The Domain that retains a Tenant's original execution namespace and existing resources. Legacy URLs and credentials continue to address this exact Domain. New Tenants receive an empty Default Domain when first resolved.
+_Avoid_: first domain, fallback domain, inferred ontology identity
+
+**Execution Namespace**:
+The stable storage and dispatch identity assigned exclusively to one Domain. Existing runtime tables and protocols retain their technical `tenantId`/`tenantSlug` fields for this identity; those fields must not be replaced with the owning Tenant's id when operating on a child Domain.
+_Avoid_: Tenant (when referring to the product owner), Domain Grant, ontology identity
+
+**Domain Grant**:
+Authorization to access a particular Domain with a specified level of authority inside its owning Tenant. A Domain Grant is distinct from tenant membership.
+_Avoid_: tenant membership, runtime binding, source registration
 
 **Membership**:
-A user's role inside one Tenant: viewer, operator or admin. A platform superadmin bypasses Tenant roles.
+A user's role inside one Tenant: viewer, operator or admin. Domain access is a separate authorization concern; a platform superadmin has platform-level authority.
 _Avoid_: seat, grant, tenant user
 
 **Permission**:
@@ -21,7 +39,7 @@ One entry in the single RBAC catalog. The API enforces Permissions; the portal r
 _Avoid_: scope, right, capability (except for the portal-side projection)
 
 **API Token**:
-A Tenant-scoped bearer credential for upstream systems. Only its digest is stored; the plaintext exists once, on the create or rotate response.
+A bearer credential bound to one execution namespace for upstream systems. It can operate only on that namespace's Domain; a legacy credential does not gain sibling-Domain access. Only its digest is stored; the plaintext exists once, on the create or rotate response.
 _Avoid_: PAT, workspace token, key
 
 **Sandbox Tenant**:
@@ -29,13 +47,13 @@ A short-lived `-sb` Tenant with its own Inngest app, broker, keys and namespace,
 _Avoid_: staging (an internal import target name, never user-facing), test tenant, ephemeral app
 
 **Runtime Profile**:
-A Tenant-owned logical execution profile whose executable adapter coordinates live in immutable Runtime Profile Versions. It selects reviewed code, never authorization or data scope.
+A Domain-scoped logical execution profile whose executable adapter coordinates live in immutable Runtime Profile Versions. It selects reviewed code, never authorization or data scope. A new child Domain and a new empty Tenant's Default Domain have a built-in Global tools profile that requires no custom code package. Existing configured Domains retain their profile and registry identities.
 _Avoid_: execution adapter, environment, profile (bare)
 
 ### Events and runs
 
 **Event**:
-A named, Tenant-namespaced message that triggers Agents. Every Run starts from one Event and may end by emitting another.
+A named message belonging to a Domain within its Tenant that triggers Agents. Every Run starts from one Event and may end by emitting another.
 _Avoid_: message, signal, trigger (that is the Agent-side declaration)
 
 **Subject**:
@@ -47,7 +65,7 @@ The id minted for the first Run in a chain and inherited by every downstream Eve
 _Avoid_: trace id, causation id (that names only the parent Event)
 
 **Event Ledger**:
-The append-only per-Tenant, per-day record of every Event, which the Event row references rather than duplicates.
+The append-only per-execution-namespace, per-day record of every Event, which the Event row references rather than duplicates.
 _Avoid_: event log, event store (the queryable mirror table), audit log
 
 **Run**:
@@ -85,7 +103,7 @@ _Avoid_: entity, record (bare), artifact, instance
 ### Agents and authoring
 
 **Agent**:
-A unit of automation that is triggered by Events and produces Steps. An Agent is either a Manifest Agent or a Code Agent.
+A Domain-owned unit of automation that is triggered by Events and produces Steps. An Agent is either a Manifest Agent or a Code Agent.
 _Avoid_: bot, worker, function (the Inngest function is the runtime form of a Manifest Agent)
 
 **Manifest Agent**:
@@ -97,11 +115,11 @@ An Agent written as a TypeScript subclass of the base agent class and registered
 _Avoid_: custom agent, programmatic agent, class agent
 
 **Workflow Manifest**:
-The set of Manifest Agents that make up one Tenant's workflow, in its checked-in or authored JSON form.
+The set of Manifest Agents that make up one Domain's workflow, in its checked-in or authored JSON form.
 _Avoid_: workflow (bare: that is the authoring lane), manifest (bare), model, workflow.json
 
 **Model Root**:
-The checked-in directory holding one Tenant's Ontology and Workflow Manifest (workflow, actions, events, objects, rules), versioned by suffix.
+The checked-in directory holding one Domain's Ontology and Workflow Manifest (workflow, actions, events, objects, rules), versioned by suffix.
 _Avoid_: model, models dir, manifest dir, domain model
 
 **Action**:
@@ -133,7 +151,7 @@ The shared execution boundary that supplies an Agent's validated inputs and upst
 _Avoid_: Codex Harness (the separate app-server integration), Conductor
 
 **Workflow**:
-The named authoring lane for a Tenant, under which immutable Workflow Versions are recorded.
+The named authoring lane for a Domain, under which immutable Workflow Versions are recorded.
 _Avoid_: pipeline, flow, DAG (the derived layout, not the thing)
 
 **Workflow Version**:
@@ -141,7 +159,7 @@ An immutable compiled snapshot of a Workflow. A Deployment makes one Workflow Ve
 _Avoid_: revision, build, release
 
 **Deployment**:
-The act, and the record, of making one Workflow Version live for a Tenant, with the prior version kept as a rollback point.
+The act, and the record, of making one Workflow Version live for a Domain within its Tenant, with the prior version kept as a rollback point.
 _Avoid_: release, rollout, publish (the Studio verb), promotion (the Factory verb that ends in a Deployment)
 
 **Manifest Import**:
@@ -221,7 +239,7 @@ The Tools an Agent names in its definition. It is the trust boundary: a register
 _Avoid_: tool_use (the JSON key), permissions, tool grants
 
 **Tool Config**:
-Per-Tenant settings attached to one entry of a Tool Allow-list and handed to the Tool on every call, so one global Tool serves many Tenants.
+Domain-scoped settings attached to one entry of a Tool Allow-list and handed to the Tool on every call, so one global Tool can serve many Domains without sharing their settings implicitly.
 _Avoid_: options, settings, parameters, env
 
 **Tool Context**:
@@ -245,7 +263,7 @@ A Tool's declared route for confirming a claimed write by reading it back. An un
 _Avoid_: verification, post-check, confirmation
 
 **Integration**:
-A Tenant's binding to one external service: base URL plus credentials, encrypted at rest, with only a masked fragment ever shown.
+A Domain's binding to one external service: base URL plus credentials, encrypted at rest in its execution namespace, with only a masked fragment ever shown. Creating a sibling Domain does not copy this binding.
 _Avoid_: connector, credential, connection, provider (reserved for model vendors)
 
 **Integration Profile**:
@@ -253,7 +271,7 @@ The human-confirmed, non-secret configuration for one external system: which env
 _Avoid_: integration (the secret-bearing binding), config, settings
 
 **System Profile**:
-A Tenant's machine-readable declaration of one external platform: canonical id, aliases, capabilities, auth and governance posture. The single authority for system-name aliases.
+A Domain's machine-readable declaration of one external platform: canonical id, aliases, capabilities, auth and governance posture. The single authority for system-name aliases within that scope.
 _Avoid_: external system, connector profile
 
 **MCP Server**:
@@ -265,7 +283,7 @@ A portable bundle of task guidance and supporting resources available to an Agen
 _Avoid_: prompt, instruction, playbook
 
 **Skill Library**:
-A Tenant-owned or platform-shared collection of managed Skills, including their drafts and published versions.
+A Domain-scoped or explicitly platform-shared collection of managed Skills, including their drafts and published versions. Execution-namespace libraries are not automatically shared with sibling Domains.
 _Avoid_: tool registry, plugin store
 
 **Skill Draft**:
@@ -295,7 +313,7 @@ _Avoid_: Skill (without the Factory qualifier)
 ### Models and usage
 
 **Gateway**:
-The single credentialed front door for every model call. One concrete gateway exists per Tenant credential scope behind one stable routing gateway.
+The single credentialed front door for every model call. One concrete gateway exists per execution-namespace credential scope behind one stable routing gateway; existing platform configuration fallback remains separate from sharing another Domain's credentials.
 _Avoid_: LLM client, provider client, proxy
 
 **Provider**:
@@ -323,7 +341,7 @@ The append-only accounting of every model call, API call and Tool call, with cos
 _Avoid_: billing, metrics, spend log, telemetry (a separate Factory-only stream)
 
 **Usage Attribution**:
-The dimensions that tie a charge to the Tenant, Agent, Run, product interaction and API request that caused it. An unattributable call is rejected when attribution is required.
+The dimensions that tie a charge to its execution namespace, Agent, Run, product interaction and API request. The Domain and owning Tenant resolve through the namespace's immutable ownership mapping; a parent-wide billing roll-up is separate from the existing namespace ledger. An unattributable call is rejected when attribution is required.
 _Avoid_: tags, labels, metadata
 
 **Logical Call**:
@@ -335,7 +353,7 @@ One provider request made for a Logical Call. Each Attempt is one Usage Ledger r
 _Avoid_: retry, try, call
 
 **Budget Reservation**:
-An atomic pre-call capacity claim against a Tenant budget that survives crashes until its lease expires.
+An atomic pre-call capacity claim against an execution-namespace budget that survives crashes until its lease expires. Parent-wide shared budget enforcement is not implied by the Tenant/Domain hierarchy.
 _Avoid_: budget lease, quota hold, cap
 
 ### Agent Factory
@@ -391,7 +409,7 @@ _Avoid_: memory (Human Memory and Agent Memory are separate stores), lesson, not
 ### Ontology and OntoCode
 
 **Ontology**:
-A Tenant's business model: Objects, Actions, Events and Rules, plus the links between them, shipped in a Model Root or delivered as an Ontology Package.
+A Domain's business model: Objects, Actions, Events and Rules, plus the links between them, shipped in a Model Root or delivered as an Ontology Package.
 _Avoid_: schema, data model, domain model, knowledge graph
 
 **Ontology Action**:
@@ -414,16 +432,16 @@ _Avoid_: config, patch, extension, declarative overlay (the runtime's Factory-to
 The deterministic mapping from an Ontology plus Overlay to a Workflow Manifest: one Manifest Agent per Ontology Action.
 _Avoid_: generator, transpiler, codegen
 
-**Business Ontology Domain**:
-The registration binding one Tenant to one authoritative Ontology Domain, with a runtime binding mode and execution readiness. Its Ontology Domain id is the canonical upstream identity, never inferred from a slug.
-_Avoid_: domain binding (the legacy single pointer), domain (bare), registration
+**Ontology Registration**:
+The binding of a Domain to an authoritative ontology source and its exact source identity, with runtime binding and readiness information. A registration identifies the source; it does not establish Domain ownership or grant access.
+_Avoid_: business domain, tenant, Domain, Business Ontology Domain (the legacy registration name)
 
 **OntoCode**:
 The conversational engineering workspace where a forward-deployed engineer and the model build and deploy Agents, layered as Project, Session, Command, Harness Job and Evidence.
 _Avoid_: workbench, workspace (bare), chat
 
 **OntoCode Project**:
-The durable binding of a Tenant, a Business Ontology Domain and a Runtime Profile Version that owns OntoCode Sessions, artifacts, Evidence and Candidates.
+The durable container within a Tenant-owned Domain, bound to an Ontology Registration and a Runtime Profile Version, that owns OntoCode Sessions, artifacts, Evidence and Candidates.
 _Avoid_: project (bare), workspace
 
 **OntoCode Session**:
@@ -464,7 +482,11 @@ _Avoid_: task (bare), config gap, setup task, todo
 
 ## Relationships
 
-- A **Tenant** owns Workflows, Agents, Events, Runs, Tasks, Integrations, API Tokens and everything else user-visible.
+- A **Tenant** owns **Domains**, tenant-wide Memberships and administrative resources. The **Default Domain** adopts that Tenant's original execution namespace.
+- A **Domain** owns Workflows, Agents, Events, Runs, Tasks, Deployments and OntoCode Projects. Their descendants retain that Domain's ownership within its Tenant.
+- A **Domain** uses one exclusive **Execution Namespace** for runtime records, Integrations, API Tokens, Runtime Profiles, private Skill libraries and budgets. Tenant ownership does not implicitly share these resources across Domains.
+- A **Domain** has **Ontology Registrations** identifying its authoritative sources; a source binding is distinct from the Domain and its access grants.
+- Workflows, Agents and OntoCode are shared product capabilities operating on the selected **Domain**, not separate implementations for each Domain.
 - An **Event** triggers zero or more **Agents**; each firing is one **Run** about one **Subject**, sharing a **Correlation Id** with the chain it belongs to.
 - A **Run** is made of **Steps**; each Step comes from one authored **Action**; a Run may park on a **Task** or be placed on **Hold**, and may end by publishing an **Emitted Event**.
 - A **Manifest Agent** is declared in a **Workflow Manifest**; a **Deployment** makes one **Workflow Version** live; every path into a Deployment goes through **Manifest Import**.
@@ -475,6 +497,9 @@ _Avoid_: task (bare), config gap, setup task, todo
 
 ## Flagged ambiguities
 
+- **tenant / domain** are distinct ownership levels. Earlier Operator UI copy used Business Domain for a Tenant; that equivalence is superseded by the accepted hierarchy in ADR-0013.
+- **Business Ontology Domain** survives in legacy contract names for an **Ontology Registration**; it must not be mistaken for the Domain that owns operational resources.
+- **tenantId / tenantSlug** in legacy runtime contracts mean **Execution Namespace** coordinates. Product ownership is recorded separately in `domains.tenantId` and authenticated `ownerTenantId`; code must preserve both meanings.
 - **task** names three things: a human-in-the-loop pause (**Task**), a model-routing bucket (**Task Class**) and an OntoCode continuation (**Configuration Task**). Never write "task" bare; pick one.
 - **session** names a Studio chat container (**Studio Session**) and an OntoCode task thread (**OntoCode Session**). Always qualify.
 - **draft** names the Studio working copy (**Draft**) and a Factory candidate (**Factory Draft**). Always qualify.

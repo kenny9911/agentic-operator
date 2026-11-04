@@ -34,6 +34,8 @@ export async function GET(req: NextRequest): Promise<Response> {
     cookie: req.headers.get("cookie") ?? "",
   };
   if (tenant) headers["x-agentic-tenant"] = tenant;
+  const domain = req.nextUrl.searchParams.get("domain");
+  if (domain) headers["x-agentic-domain"] = domain;
   const lastEventId =
     req.headers.get("last-event-id") ??
     req.nextUrl.searchParams.get("lastEventId");
