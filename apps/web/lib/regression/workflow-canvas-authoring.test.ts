@@ -93,7 +93,7 @@ describe("enterprise workflow canvas authoring", () => {
 
   it("keeps enterprise draft/live execution and evidence on the workflow page", () => {
     expect(page).toContain(
-      'import { WorkflowRunConsole } from "@/app/portal/components/workflows/WorkflowRunConsole"',
+      'import("@/app/portal/components/workflows/WorkflowRunConsole")',
     );
     expect(page.match(/setShowRunConsole\(true\)/g)).toHaveLength(2);
     expect(page).toContain("<WorkflowRunConsole");

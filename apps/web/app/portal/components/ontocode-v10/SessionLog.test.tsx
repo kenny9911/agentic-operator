@@ -1,3 +1,4 @@
+import { en } from "@/lib/i18n/en";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -20,7 +21,7 @@ import { PreferencesProvider } from "@/app/portal/lib/preferences-context";
 /** These views render HelpTip, which reads i18n preferences. */
 function renderWithPrefs(node: React.ReactElement): string {
   return renderToStaticMarkup(
-    <PreferencesProvider>{node}</PreferencesProvider>,
+    <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>{node}</PreferencesProvider>,
   );
 }
 

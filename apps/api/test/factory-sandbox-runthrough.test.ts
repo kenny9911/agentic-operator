@@ -193,7 +193,9 @@ describe("factory sandbox live-runthrough (T1 + T2 integration)", () => {
     // A 2-agent chain with an EXTERNAL handoff: ProcessResume waits on RESUME_DOWNLOADED, which no
     // internal agent produces and we don't fire → the deployer must synthesize a mock to produce it.
     const specs = [
-      spec({ actionName: "CreateJd", trigger: ["RUNTHRU_START"], emit: ["JD_GENERATED"] }),
+      // The reject case exercises an authored rejection branch. A sole success
+      // event cannot serve as evidence that invalid input was rejected.
+      spec({ actionName: "CreateJd", trigger: ["RUNTHRU_START"], emit: ["JD_GENERATED", "JD_REJECTED"] }),
       spec({ actionName: "ProcessResume", trigger: ["RESUME_DOWNLOADED"], emit: ["RESUME_PROCESSED"] }),
     ];
     const deployer = new ManifestSandboxDeployer({
@@ -205,8 +207,8 @@ describe("factory sandbox live-runthrough (T1 + T2 integration)", () => {
       res = await deployer.deployAndObserve(domain, specs, {
         candidateFingerprint: "sandbox-evidence:v5:runthrough-candidate",
         testCases: [
-          { entryEvent: "RUNTHRU_START", payload: { subject: "rt-pass" }, kind: "pass" },
-          { entryEvent: "RUNTHRU_START", payload: { subject: "rt-reject", _force_reject: true }, kind: "reject" },
+          { entryEvent: "RUNTHRU_START", payload: { subject: "rt-pass" }, kind: "pass", expectedEvent: "JD_GENERATED" },
+          { entryEvent: "RUNTHRU_START", payload: { subject: "rt-reject", _force_reject: true }, kind: "reject", expectedEvent: "JD_REJECTED" },
         ],
       });
     } finally {

@@ -30,6 +30,7 @@ import {
 import {
   CreateDomainBodySchema,
   DomainSchema,
+  RuntimeAdapterCoordinatesSchema,
   UpdateDomainBodySchema,
   type CreateDomainBody,
   type Domain,
@@ -168,6 +169,11 @@ export function ensureDefaultDomain(ownerTenantId: string): Domain {
     // global Tools without first installing a custom TypeScript package.
     if (
       isNew &&
+      // Reserved/legacy tenant identities such as __system are valid existing
+      // scopes, but cannot name a native adapter. Backfill their Domain without
+      // manufacturing a profile or changing the exact runtime identity.
+      owner.slug === owner.slug.trim() &&
+      RuntimeAdapterCoordinatesSchema.shape.adapterRegistrySlug.safeParse(owner.slug).success &&
       !owner.archivedAt &&
       !tx
         .select({ id: workflows.id })

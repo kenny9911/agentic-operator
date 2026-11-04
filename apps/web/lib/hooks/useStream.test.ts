@@ -7,6 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
+import { clearPortalQueryCaches, PortalQueryCache } from "@/lib/portal-query-cache";
 import {
   dispatch,
   AGENT_KEYS,
@@ -18,6 +19,7 @@ import {
   TASK_KEYS,
   USAGE_KEYS,
   streamPathWithCursor,
+  createStreamCursor,
   resetInvalidationQueue,
 } from "./useStream";
 
@@ -307,5 +309,64 @@ describe("streamPathWithCursor", () => {
     expect(streamPathWithCursor("/livefeed?tenant=raas", "")).toBe(
       "/livefeed?tenant=raas",
     );
+  });
+});
+
+describe("retained stream cursors", () => {
+  const path = "/livefeed?tenant=alpha";
+
+  it("resumes after the last received event when returning to a retained scope", () => {
+    const cache = new PortalQueryCache();
+    cache.activate("alpha");
+    const first = createStreamCursor(cache.get("alpha"), path, true);
+    expect(first.path()).toBe(path);
+    first.remember("run:started:one");
+    first.remember("run:completed:one");
+    first.remember("");
+    cache.activate("beta");
+    cache.activate("alpha");
+    expect(createStreamCursor(cache.get("alpha"), path, true).path()).toBe(
+      `${path}&lastEventId=run%3Acompleted%3Aone`,
+    );
+    cache.clear();
+  });
+
+  it("keeps full replay for local consumers and their reconnect cursor private", () => {
+    const client = new QueryClient();
+    createStreamCursor(client, path, true).remember("chrome:latest");
+    const local = createStreamCursor(client, path);
+    expect(local.path()).toBe(path);
+    local.remember("local:replay");
+    expect(local.path()).toBe(`${path}&lastEventId=local%3Areplay`);
+    expect(createStreamCursor(client, path).path()).toBe(path);
+    expect(createStreamCursor(client, path, true).path()).toBe(`${path}&lastEventId=chrome%3Alatest`);
+    client.clear();
+  });
+
+  it("isolates cursor state by scope client, stream path, and portal instance", () => {
+    const cache = new PortalQueryCache();
+    const otherPortal = new PortalQueryCache();
+    createStreamCursor(cache.get("alpha"), path, true).remember("alpha:latest");
+    expect(createStreamCursor(cache.get("beta"), path, true).path()).toBe(path);
+    expect(createStreamCursor(cache.get("alpha/domains/sales"), path, true).path()).toBe(path);
+    expect(createStreamCursor(otherPortal.get("alpha"), path, true).path()).toBe(path);
+    expect(createStreamCursor(cache.get("alpha"), `${path}&backfill=2000`, true).path())
+      .toBe(`${path}&backfill=2000`);
+    cache.clear();
+    otherPortal.clear();
+  });
+
+  it("erases resume points on scope eviction and logout", () => {
+    const cache = new PortalQueryCache(1);
+    cache.activate("alpha");
+    const alpha = cache.get("alpha");
+    createStreamCursor(alpha, path, true).remember("alpha:latest");
+    cache.activate("beta");
+    expect(createStreamCursor(alpha, path, true).path()).toBe(path);
+    const beta = cache.get("beta");
+    createStreamCursor(beta, path, true).remember("beta:latest");
+    clearPortalQueryCaches(alpha);
+    expect(createStreamCursor(beta, path, true).path()).toBe(path);
+    cache.clear();
   });
 });

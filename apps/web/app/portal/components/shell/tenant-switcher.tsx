@@ -12,6 +12,11 @@
  */
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import {
+  DeferredDialogLoading,
+  withDeferredDialog,
+} from "@/app/portal/components/deferred-content";
 import { useRouter } from "@/lib/portal-navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TenantCreateResponse } from "@agentic/contracts";
@@ -20,14 +25,31 @@ import { useI18n } from "@/app/portal/lib/preferences-context";
 import { useTenant, useTenantNavigate } from "../../lib/use-tenant";
 import { toast } from "../toast";
 import { TENANTS_KEYS } from "@/lib/hooks/useTenants";
-import { TenantCreateModal } from "./TenantCreateModal";
-import {
-  TenantTokenRevealModal,
-  type TenantTokenRevealPayload,
-} from "./TenantTokenRevealModal";
-import { ImportManifestModal } from "../import-manifest/ImportManifestModal";
+
+// A one-time token must never disappear through a cancellable chunk fallback.
+// Keep its small acknowledgment-protected dialog available synchronously.
+import { TenantTokenRevealModal, type TenantTokenRevealPayload } from "./TenantTokenRevealModal";
+
 import { downloadWorkflowTemplateFile } from "@/lib/hooks/useWorkflowAuthoring";
 import styles from "./sidebar.module.css";
+
+// Optional surfaces load only when their existing render condition is active.
+const TenantCreateModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("./TenantCreateModal").then((module) => module.TenantCreateModal),
+    { loading: DeferredDialogLoading },
+  ),
+);
+const ImportManifestModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("../import-manifest/ImportManifestModal").then(
+        (module) => module.ImportManifestModal,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
 
 export interface TenantOption {
   id: string;

@@ -501,6 +501,8 @@ export function TerminalLogTab() {
     setConnection(status);
   }, []);
   useStream({
+    // The terminal needs history on each mount; chrome owns cache invalidation.
+    invalidateQueries: false,
     path: `/livefeed?tenant=${encodeURIComponent(tenant)}&backfill=${MAX_LINES}`,
     onEvent: append,
     onStatusChange,

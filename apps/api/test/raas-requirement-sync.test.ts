@@ -360,44 +360,71 @@ describe("RAAS real requirement sync", () => {
       triggered_event: [],
       cron_env: "PURE_SCHEDULE_CRON",
     });
-    const registered = registerAgent(agent, {
-      tenantId: "ten-pure-schedule",
-      tenantSlug: "pure-schedule",
-      workflowVersionId: "wfv-pure-schedule",
-    });
+    const db = getDb();
+    // Cron deliveries now verify persisted namespace lifecycle before emitting.
+    // Seed the real scope rather than bypassing that production safety gate.
+    db.insert(tenants)
+      .values({
+        id: "ten-pure-schedule",
+        slug: "pure-schedule",
+        name: "Pure schedule test",
+      })
+      .run();
+    try {
+      const registered = registerAgent(agent, {
+        tenantId: "ten-pure-schedule",
+        tenantSlug: "pure-schedule",
+        workflowVersionId: "wfv-pure-schedule",
+      });
 
-    expect(registered).not.toBeNull();
-    const consumerTriggers = (registered as unknown as {
-      opts: { triggers: Array<{ event: string }> };
-    }).opts.triggers;
-    expect(consumerTriggers).toEqual([
-      { event: "pure-schedule/__schedule.pureScheduleAgent" },
-    ]);
+      expect(registered).not.toBeNull();
+      const consumerTriggers = (registered as unknown as {
+        opts: { triggers: Array<{ event: string }> };
+      }).opts.triggers;
+      expect(consumerTriggers).toEqual([
+        { event: "pure-schedule/__schedule.pureScheduleAgent" },
+      ]);
 
-    const scheduled = registerCronTriggers({
-      tenantSlug: "pure-schedule",
-      manifest: [agent],
-      env: { PURE_SCHEDULE_CRON: "@hourly" },
-    });
-    let emitted: { name?: string } | undefined;
-    const producer = scheduled.functions[0] as unknown as {
-      fn: (input: {
+      const scheduled = registerCronTriggers({
+        tenantSlug: "pure-schedule",
+        manifest: [agent],
+        env: { PURE_SCHEDULE_CRON: "@hourly" },
+      });
+      let emitted: { name?: string } | undefined;
+      const producer = scheduled.functions[0] as unknown as {
+        fn: (input: {
+          step: {
+            sendEvent: (
+              id: string,
+              event: { name: string },
+            ) => Promise<void>;
+          };
+        }) => Promise<unknown>;
+      };
+      await producer.fn({
         step: {
-          sendEvent: (
-            id: string,
-            event: { name: string },
-          ) => Promise<void>;
-        };
-      }) => Promise<unknown>;
-    };
-    await producer.fn({
-      step: {
-        sendEvent: async (_id, event) => {
-          emitted = event;
+          sendEvent: async (_id, event) => {
+            emitted = event;
+          },
         },
-      },
-    });
-    expect(emitted?.name).toBe(consumerTriggers[0]?.event);
+      });
+      expect(emitted?.name).toBe(consumerTriggers[0]?.event);
+
+      // The same queued producer must stop after its persisted runtime archives.
+      db.update(tenants)
+        .set({ archivedAt: new Date() })
+        .where(eq(tenants.id, "ten-pure-schedule"))
+        .run();
+      emitted = undefined;
+      expect(
+        await producer.fn({
+          step: { sendEvent: async (_id, event) => { emitted = event; } },
+        }),
+      ).toMatchObject({ ok: false, skipped: true, reason: "domain_unavailable" });
+      expect(emitted).toBeUndefined();
+    } finally {
+      db.delete(tenants).where(eq(tenants.id, "ten-pure-schedule")).run();
+    }
   });
 
   it("rejects an orphan timezone instead of accepting dead schedule configuration", () => {

@@ -380,20 +380,28 @@ vi.mock("../src/services/llm", () => ({
 // Lifecycle ordering is the subject of this suite. Function-evidence replay has
 // its own tests; keep it deterministically green here so registration/cleanup
 // state transitions are exercised without depending on worker internals.
-vi.mock("../src/services/agent-factory/function-tester-run", () => ({
-  loadApprovedFunctionTestCassette: () => ({ blockedReason: "unused in tool-free lifecycle fixture" }),
-  testGeneratedFunction: vi.fn(async (_spec: GeneratedAgentSpec, opts: { expectEmits?: string[] }) => ({
-    code: "",
-    tier: "worker",
-    fixtureMode: "scripted",
-    verdict: {
-      pass: true,
-      ran: true,
-      emitNames: opts.expectEmits ?? [],
-      reasons: [],
-    },
-  })),
-}));
+vi.mock("../src/services/agent-factory/function-tester-run", async (importOriginal) => {
+  const { preliminaryFunctionExpectedEvent } = await importOriginal<
+    typeof import("../src/services/agent-factory/function-tester-run")
+  >();
+  return {
+    // Keep branch selection real while isolating worker execution. The deployer
+    // must reach registration so this suite can verify durable lifecycle order.
+    preliminaryFunctionExpectedEvent,
+    loadApprovedFunctionTestCassette: () => ({ blockedReason: "unused in tool-free lifecycle fixture" }),
+    testGeneratedFunction: vi.fn(async (_spec: GeneratedAgentSpec, opts: { expectEmits?: string[] }) => ({
+      code: "",
+      tier: "worker",
+      fixtureMode: "scripted",
+      verdict: {
+        pass: true,
+        ran: true,
+        emitNames: opts.expectEmits ?? [],
+        reasons: [],
+      },
+    })),
+  };
+});
 
 import {
   ManifestSandboxDeployer,

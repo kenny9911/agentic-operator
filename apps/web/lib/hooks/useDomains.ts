@@ -5,7 +5,8 @@ import type { Domain } from "@agentic/contracts";
 import { fetchApiData } from "@/lib/api-response";
 
 export type { Domain } from "@agentic/contracts";
-export const DOMAIN_KEYS = { tenant: (tenant: string) => ["domains", tenant] as const };
+import { DOMAIN_KEYS } from "@/lib/domain-query-keys";
+export { DOMAIN_KEYS } from "@/lib/domain-query-keys";
 
 async function callDomains<T>(tenant: string, path = "", init: RequestInit = {}): Promise<T> {
   return fetchApiData<T>(`/v1/domains${path}`, {
@@ -29,7 +30,7 @@ export function useDomains(tenant: string, includeArchived = false) {
 
 export function useDomain(tenant: string, domain: string | null) {
   return useQuery({
-    queryKey: [...DOMAIN_KEYS.tenant(tenant), "detail", domain],
+    queryKey: DOMAIN_KEYS.detail(tenant, domain),
     queryFn: () => callDomains<{ domain: Domain }>(tenant, `/${encodeURIComponent(domain!)}`),
     enabled: Boolean(tenant && domain), staleTime: 5_000, retry: false,
   });

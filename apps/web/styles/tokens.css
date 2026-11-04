@@ -54,9 +54,9 @@
    * accent → white ink. The runtime injection recomputes it per theme. */
   --on-signal: #000;
 
-  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-  --display: "Instrument Serif", "IBM Plex Serif", Georgia, serif;
+  --sans: var(--font-ibm-plex-sans, "IBM Plex Sans"), system-ui, -apple-system, sans-serif;
+  --mono: var(--font-ibm-plex-mono, "IBM Plex Mono"), ui-monospace, Menlo, monospace;
+  --display: var(--font-instrument-serif, "Instrument Serif"), "IBM Plex Serif", Georgia, serif;
 
   --r-sm: 4px;
   --r-md: 6px;

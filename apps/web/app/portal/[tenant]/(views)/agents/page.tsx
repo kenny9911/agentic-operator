@@ -13,6 +13,11 @@
  * grid when none is selected.
  */
 
+import dynamic from "next/dynamic";
+import {
+  DeferredDialogLoading,
+  withDeferredDialog,
+} from "@/app/portal/components/deferred-content";
 import { useMemo, useState } from "react";
 import { useRouter } from "@/lib/portal-navigation";
 import {
@@ -31,9 +36,28 @@ import { useRuns } from "@/lib/hooks/useRuns";
 import { useTenant } from "@/app/portal/lib/use-tenant";
 import { useI18n } from "@/app/portal/lib/preferences-context";
 import { agentKindLabel } from "@/app/portal/lib/protocol-labels";
-import { ImportManifestModal } from "@/app/portal/components/import-manifest/ImportManifestModal";
-import { DeployAgentModal } from "@/app/portal/components/agents/DeployAgentModal";
+
 import { buildAgentStats, type AgentStatsSnapshot } from "@/lib/agent-stats";
+
+// Optional surfaces load only when their existing render condition is active.
+const ImportManifestModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("@/app/portal/components/import-manifest/ImportManifestModal").then(
+        (module) => module.ImportManifestModal,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
+const DeployAgentModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("@/app/portal/components/agents/DeployAgentModal").then(
+        (module) => module.DeployAgentModal,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
 
 export default function AgentsPage() {
   const router = useRouter();

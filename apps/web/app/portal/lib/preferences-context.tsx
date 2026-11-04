@@ -22,11 +22,18 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import type { Language } from "@/lib/i18n/types";
-import { translate } from "@/lib/i18n";
+import {
+  LANGUAGE_COOKIE,
+  type I18nBundle,
+  type Language,
+} from "@/lib/i18n/types";
+import { translateDictionary } from "@/lib/i18n/core";
+import { useI18nBootstrap } from "@/lib/i18n/bootstrap";
+import { createI18nSelection } from "@/lib/i18n/client";
 import {
   accentVarsFor,
   DEFAULT_PREFERENCES,
@@ -61,13 +68,14 @@ interface PreferencesContextValue {
 
 const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
-function readStored(): Preferences {
-  if (typeof window === "undefined") return DEFAULT_PREFERENCES;
+function readStored(language: Language): Preferences {
+  const fallback = { ...DEFAULT_PREFERENCES, language };
+  if (typeof window === "undefined") return fallback;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return normalizePreferences(raw ? JSON.parse(raw) : {});
+    return raw ? normalizePreferences(JSON.parse(raw)) : fallback;
   } catch {
-    return DEFAULT_PREFERENCES;
+    return fallback;
   }
 }
 
@@ -100,27 +108,84 @@ function applyAccentVars(
   html.style.setProperty("--on-signal", v.onSignal);
 }
 
-export function PreferencesProvider({ children }: { children: ReactNode }) {
-  const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
+export function PreferencesProvider({
+  children,
+  initialBundle,
+}: {
+  children: ReactNode;
+  /** Explicit bootstrap for isolated component renders; the app inherits
+   * this from RootLayout so the dictionaries stay out of client JavaScript. */
+  initialBundle?: I18nBundle;
+}) {
+  const inheritedBundle = useI18nBootstrap();
+  const bootstrap = initialBundle ?? inheritedBundle;
+  if (!bootstrap) {
+    throw new Error(
+      "PreferencesProvider requires an I18nBootstrapProvider or initialBundle",
+    );
+  }
+  const [initial] = useState(bootstrap);
+  const [bundle, setBundle] = useState(initial);
+  const [prefs, setPrefs] = useState<Preferences>({
+    ...DEFAULT_PREFERENCES,
+    language: initial.language,
+  });
+  const desired = useRef(prefs);
+  const activeLanguage = useRef(initial.language);
+  const [selection] = useState(() => createI18nSelection(initial));
   // `loaded` keeps SSR deterministic and only applies browser preferences
   // after localStorage is available.
   const [loaded, setLoaded] = useState(false);
 
-  // Hydrate from localStorage after mount. Keeping this in React avoids a raw
-  // head script being rendered as a component by the Next.js dev runtime.
+  const applyPreferences = useCallback(
+    (next: Preferences, persist: boolean) => {
+      desired.current = next;
+      // Apply theme/density immediately while keeping the old, complete locale
+      // visible until a requested dictionary arrives. Never flash raw keys.
+      setPrefs({ ...next, language: activeLanguage.current });
+      selection.select(
+        next.language,
+        (ready) => {
+          activeLanguage.current = ready.language;
+          setBundle(ready);
+          setPrefs(next);
+          if (persist) writeStored(next);
+          try {
+            document.cookie = `${LANGUAGE_COOKIE}=${ready.language}; Path=/; Max-Age=31536000; SameSite=Lax`;
+          } catch {
+            // Restricted cookie storage must not prevent an in-tab preference.
+          }
+        },
+        () => {
+          // A failed locale fetch must not blank the application or claim that
+          // the displayed language changed. Selecting it again retries the load.
+          const retained = { ...next, language: activeLanguage.current };
+          desired.current = retained;
+          if (persist) writeStored(retained);
+        },
+      );
+    },
+    [selection],
+  );
+
+  // The cookie gives SSR and hydration the same complete dictionary. Older
+  // localStorage-only preferences migrate once, without delaying first paint.
   useEffect(() => {
-    setPrefs(readStored());
+    applyPreferences(readStored(initial.language), false);
     setLoaded(true);
-  }, []);
+    return () => selection.cancel();
+  }, [applyPreferences, initial.language, selection]);
 
   // Cross-tab sync.
   useEffect(() => {
     function onStorage(e: StorageEvent) {
-      if (e.key === STORAGE_KEY) setPrefs(readStored());
+      if (e.key === STORAGE_KEY) {
+        applyPreferences(readStored(initial.language), false);
+      }
     }
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [applyPreferences, initial.language]);
 
   // Apply preferences to <html>, and (in system mode) re-resolve when the
   // OS color scheme flips. Gated on `loaded` so the persisted value wins over
@@ -152,22 +217,24 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener("change", onChange);
   }, [loaded, prefs.theme, prefs.density, prefs.language, prefs.accent]);
 
-  const setPref = useCallback<SetPref>((keyOrEdits, val) => {
-    setPrefs((prev) => {
+  const setPref = useCallback<SetPref>(
+    (keyOrEdits, val) => {
       const edits =
         typeof keyOrEdits === "object" && keyOrEdits !== null
           ? (keyOrEdits as Partial<Preferences>)
           : ({ [keyOrEdits as string]: val } as Partial<Preferences>);
-      const next = { ...prev, ...edits };
-      writeStored(next);
-      return next;
-    });
-  }, []);
+      applyPreferences(
+        normalizePreferences({ ...desired.current, ...edits }),
+        true,
+      );
+    },
+    [applyPreferences],
+  );
 
   const t = useCallback(
     (key: string, vars?: Record<string, string | number>) =>
-      translate(prefs.language, key, vars),
-    [prefs.language],
+      translateDictionary(bundle.dictionary, key, vars),
+    [bundle.dictionary],
   );
 
   const value = useMemo<PreferencesContextValue>(

@@ -17,6 +17,7 @@ import { usePathname } from "next/navigation";
 import type { MeResponse, Permission } from "@agentic/contracts";
 import { ApiResponseError, fetchApiData } from "@/lib/api-response";
 import { tenantHeader, tenantFromPathname } from "./tenant-header";
+import { clearPortalQueryCaches } from "@/lib/portal-query-cache";
 
 async function callV1<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { headers: initHeaders, ...rest } = init;
@@ -65,6 +66,7 @@ export function useIsSuperadmin(): boolean {
 }
 
 export function useChangePassword() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: async (body: {
       currentPassword: string;
@@ -86,8 +88,10 @@ export function useChangePassword() {
           { clientKind: "passwordChangeUnconfirmed" },
         );
       }
-      if (result.signInRequired && typeof window !== "undefined")
-        window.location.href = "/sign-in";
+      if (result.signInRequired) {
+        clearPortalQueryCaches(qc);
+        if (typeof window !== "undefined") window.location.href = "/sign-in";
+      }
       return { ok: true as const };
     },
   });
@@ -112,7 +116,7 @@ export function useLogout() {
       return { ok: true as const };
     },
     onSuccess: () => {
-      qc.clear();
+      clearPortalQueryCaches(qc);
       if (typeof window !== "undefined") window.location.href = "/sign-in";
     },
   });

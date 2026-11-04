@@ -14,3 +14,15 @@ export type Language = "en" | "zh";
 export interface Dict {
   [key: string]: string | Dict;
 }
+
+/** Only the chosen language crosses the Server/Client Component boundary. */
+export interface I18nBundle {
+  language: Language;
+  dictionary: Dict;
+}
+
+export const LANGUAGE_COOKIE = "agentic.language";
+
+export function isLanguage(value: unknown): value is Language {
+  return value === "en" || value === "zh";
+}

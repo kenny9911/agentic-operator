@@ -218,6 +218,20 @@ describe("Tenant -> Domain schema and services", () => {
     ).toBe(OWNER);
   });
 
+  it.each(["__system", "legacy_name", "a"])("backfills legacy scope %s without inventing an invalid native adapter", (slug) => {
+    const tenantId = "ten-legacy-scope";
+    const db = getDb();
+    db.insert(tenants).values({ id: tenantId, slug, name: "Legacy scope" }).run();
+    db.insert(memberships).values({ userId: ADMIN, tenantId, role: "admin" }).run();
+
+    const domain = ensureDefaultDomain(tenantId);
+    expect(domain).toMatchObject({ tenantId, slug, runtimeTenantId: tenantId, runtimeTenantSlug: slug, isDefault: true });
+    expect(domainRoleForUser(domain.id, ADMIN)).toBe("admin");
+    expect(ensureDefaultDomain(tenantId)).toEqual(domain);
+    expect(listRuntimeProfiles({ tenantId, tenantSlug: slug }, { includeArchived: true })).toEqual([]);
+    expect(getRuntimeTenantRegistrySnapshot(slug)).toBeUndefined();
+  });
+
   it("makes a new empty Tenant's default Domain ready without changing legacy or custom registry identities", () => {
     const domain = ensureDefaultDomain(OWNER);
     const ctx = { tenantId: OWNER, tenantSlug: "owner" };

@@ -470,6 +470,9 @@ export function useWorkflowLiveState(
   // promotes it to the header upstream, so the canvas animates for the tenant
   // being viewed rather than the session default.
   useStream({
+    // Rebuild this mount's local reducer from history. Chrome resumes and
+    // invalidates query data, so these historical frames must not do it again.
+    invalidateQueries: false,
     path: tenant ? `/livefeed?tenant=${encodeURIComponent(tenant)}` : "/livefeed",
     onEvent,
   });

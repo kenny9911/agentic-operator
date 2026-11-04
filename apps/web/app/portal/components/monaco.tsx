@@ -224,7 +224,9 @@ export function MonacoEditor({
           automaticLayout: true,
           minimap: { enabled: false },
           fontSize: 12,
-          fontFamily: '"IBM Plex Mono", ui-monospace, Menlo, monospace',
+          fontFamily:
+            getComputedStyle(document.documentElement).getPropertyValue("--mono").trim() ||
+            "ui-monospace, Menlo, monospace",
           fontLigatures: false,
           lineHeight: 18,
           readOnly,

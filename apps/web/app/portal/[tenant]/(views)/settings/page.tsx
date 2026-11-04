@@ -2,6 +2,8 @@
 
 /** Settings only exposes sections backed by working persistence/API routes. */
 
+import dynamic from "next/dynamic";
+import { DeferredContentLoading } from "@/app/portal/components/deferred-content";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "@/lib/portal-navigation";
 import { Icon, ViewHeader } from "@/app/portal/components";
@@ -14,24 +16,80 @@ import {
   resolveDeepLinkedSection,
   type SettingsSectionId,
 } from "@/app/portal/components/settings/data";
-import { WorkspaceSection } from "@/app/portal/components/settings/sections/Workspace";
-import { AppearanceSection } from "@/app/portal/components/settings/sections/Appearance";
-import { AccountSection } from "@/app/portal/components/settings/sections/Account";
-import { PeopleSection } from "@/app/portal/components/settings/sections/People";
-import { AISection } from "@/app/portal/components/settings/sections/AI";
-import { ModelsSection } from "@/app/portal/components/settings/sections/Models";
-import { TokensSection } from "@/app/portal/components/settings/sections/Tokens";
-import {
-  IntegrationsSection,
-  type IntegrationConfigurationTaskContext,
-} from "@/app/portal/components/settings/sections/Integrations";
-import { BillingSection } from "@/app/portal/components/settings/sections/Billing";
+
+import type { IntegrationConfigurationTaskContext } from "@/app/portal/components/settings/sections/Integrations";
+
 import {
   ontocodeConfigurationTaskProvider,
   ontocodeConfigurationTaskSessionHref,
   ontocodeConfigurationTaskSystemName,
   useOntoCodeConfigurationTask,
 } from "@/lib/hooks/useOntoCodeWorkspace";
+
+// Optional surfaces load only when their existing render condition is active.
+const WorkspaceSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/Workspace").then(
+      (module) => module.WorkspaceSection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const AppearanceSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/Appearance").then(
+      (module) => module.AppearanceSection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const AccountSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/Account").then(
+      (module) => module.AccountSection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const PeopleSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/People").then(
+      (module) => module.PeopleSection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const AISection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/AI").then(
+      (module) => module.AISection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const ModelsSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/Models").then(
+      (module) => module.ModelsSection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const TokensSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/Tokens").then(
+      (module) => module.TokensSection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const IntegrationsSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/Integrations").then(
+      (module) => module.IntegrationsSection,
+    ),
+  { loading: DeferredContentLoading },
+);
+const BillingSection = dynamic(
+  () =>
+    import("@/app/portal/components/settings/sections/Billing").then(
+      (module) => module.BillingSection,
+    ),
+  { loading: DeferredContentLoading },
+);
 
 // P3-FE-03 / P3-FE-05 — these section ids deep-link to their own sub-routes
 // instead of being rendered inline (the views are too heavy to live in the

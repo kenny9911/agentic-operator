@@ -1,6 +1,11 @@
 "use client";
 import { domainStorage } from "@/lib/portal-scope";
-
+import dynamic from "next/dynamic";
+import {
+  DeferredContentLoading,
+  DeferredDialogLoading,
+  withDeferredDialog,
+} from "@/app/portal/components/deferred-content";
 
 /**
  * Workflows view — DAG canvas of all agents wired by events. P2-FE-08.
@@ -52,10 +57,7 @@ import { useTenant, useDomainSlug } from "@/app/portal/lib/use-tenant";
 import { DomainRuntime } from "@/app/portal/components/domains/DomainRuntime";
 import { useCan } from "@/lib/hooks/useMe";
 import { useDirty } from "@/app/portal/lib/dirty-context";
-import {
-  useI18n,
-  type Translate,
-} from "@/app/portal/lib/preferences-context";
+import { useI18n, type Translate } from "@/app/portal/lib/preferences-context";
 import {
   COL_W,
   MAX_CANVAS_H,
@@ -80,14 +82,13 @@ import {
   EventInspector,
   type EventCatalogItem,
 } from "@/app/portal/components/workflows/inspectors";
-import { NewWorkflowModal } from "@/app/portal/components/workflows/NewWorkflowModal";
+
 import { ConfirmPublishOverwriteModal } from "@/app/portal/components/workflows/ConfirmPublishOverwriteModal";
-import { ImportManifestModal } from "@/app/portal/components/import-manifest/ImportManifestModal";
-import { AgentEditor } from "@/app/portal/components/workflows/AgentEditor";
+
 import { removeWorkflowAgent } from "@/app/portal/components/workflows/workflow-handoff-draft";
 import { SkillBindingsEditor } from "@/app/portal/components/skills/SkillBindingsEditor";
 import { skillBindingsCopy } from "@/lib/i18n/skill-bindings";
-import { WorkflowHelp } from "@/app/portal/components/workflows/WorkflowHelp";
+
 import { WorkflowEdge } from "@/app/portal/components/workflows/WorkflowEdge";
 import {
   canvasLayoutStorageKey,
@@ -96,7 +97,7 @@ import {
   workflowEdgeKey,
   type CanvasLayout,
 } from "@/app/portal/components/workflows/canvas-layout";
-import { WorkflowRunConsole } from "@/app/portal/components/workflows/WorkflowRunConsole";
+
 import {
   applyDraft,
   addAgentToDraft,
@@ -173,6 +174,51 @@ import {
   useWorkflowCatalog,
 } from "@/lib/hooks/useWorkflowAuthoring";
 import styles from "./workflow.module.css";
+
+// Optional surfaces load only when their existing render condition is active.
+const NewWorkflowModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("@/app/portal/components/workflows/NewWorkflowModal").then(
+        (module) => module.NewWorkflowModal,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
+const ImportManifestModal = withDeferredDialog(
+  dynamic(
+    () =>
+      import("@/app/portal/components/import-manifest/ImportManifestModal").then(
+        (module) => module.ImportManifestModal,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
+const WorkflowRunConsole = withDeferredDialog(
+  dynamic(
+    () =>
+      import("@/app/portal/components/workflows/WorkflowRunConsole").then(
+        (module) => module.WorkflowRunConsole,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
+const WorkflowHelp = withDeferredDialog(
+  dynamic(
+    () =>
+      import("@/app/portal/components/workflows/WorkflowHelp").then(
+        (module) => module.WorkflowHelp,
+      ),
+    { loading: DeferredDialogLoading },
+  ),
+);
+const AgentEditor = dynamic(
+  () =>
+    import("@/app/portal/components/workflows/AgentEditor").then(
+      (module) => module.AgentEditor,
+    ),
+  { loading: DeferredContentLoading },
+);
 
 /** Server publish failures with a localized sentence of their own. */
 const PUBLISH_FAILURE_CODES = new Set([
@@ -2972,7 +3018,7 @@ export default function WorkflowsPage() {
           onClose={() => setShowRunConsole(false)}
         />
       )}
-      <WorkflowHelp tenant={tenant} open={showHelp} onClose={() => setShowHelp(false)} />
+      {showHelp && <WorkflowHelp tenant={tenant} open={showHelp} onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

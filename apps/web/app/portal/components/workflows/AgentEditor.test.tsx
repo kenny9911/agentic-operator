@@ -1,3 +1,4 @@
+import { en } from "@/lib/i18n/en";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PreferencesProvider } from "@/app/portal/lib/preferences-context";
@@ -280,7 +281,7 @@ describe("guided workflow authoring", () => {
       definition,
     };
     const html = renderToStaticMarkup(
-      <PreferencesProvider>
+      <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>
         <AgentEditor
           agent={agent}
           workflowAgents={[agent]}
@@ -319,7 +320,7 @@ describe("guided workflow authoring", () => {
     };
     const renderDraft = (draft: Parameters<typeof AgentEditor>[0]["draft"]) =>
       renderToStaticMarkup(
-        <PreferencesProvider>
+        <PreferencesProvider initialBundle={{ language: "en", dictionary: en }}>
           <AgentEditor
             agent={agent}
             workflowAgents={[agent]}

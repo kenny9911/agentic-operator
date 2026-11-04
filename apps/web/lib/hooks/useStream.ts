@@ -34,6 +34,10 @@ export interface UseStreamOptions {
    * Tests can pass `false` to keep behaviour deterministic.
    */
   reconnect?: boolean;
+  /** Keep the chrome's resume point with its scope cache across navigation. */
+  retainCursor?: boolean;
+  /** Local replay consumers can leave cache invalidation to portal chrome. */
+  invalidateQueries?: boolean;
   /**
    * Called for every parsed event. Useful for a debug ticker or a
    * tweaks-panel inspector. Cache invalidation still happens internally.
@@ -63,11 +67,29 @@ export function streamPathWithCursor(path: string, lastEventId: string): string 
   return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
 }
 
+/** A replay consumer starts from history; the chrome resumes its retained
+ * scope. Query-cache storage means eviction and logout erase the cursor too. */
+export function createStreamCursor(client: QueryClient, path: string, retain = false) {
+  const key = ["stream", "cursor", path] as const;
+  if (retain) client.setQueryDefaults(["stream", "cursor"], { gcTime: Infinity });
+  let lastEventId = retain ? client.getQueryData<string>(key) ?? "" : "";
+  return {
+    path: () => streamPathWithCursor(path, lastEventId),
+    remember(id: string) {
+      if (!id) return;
+      lastEventId = id;
+      if (retain) client.setQueryData(key, id);
+    },
+  };
+}
+
 export function useStream(opts: UseStreamOptions = {}): void {
   const queryClient = useQueryClient();
   const pathname = usePathname();
   const path = scopedStreamPath(opts.path ?? "/livefeed", pathname);
   const reconnect = opts.reconnect ?? true;
+  const retainCursor = opts.retainCursor ?? false;
+  const invalidateQueries = opts.invalidateQueries ?? true;
   const onEventRef = useRef(opts.onEvent);
   const onStatusChangeRef = useRef(opts.onStatusChange);
 
@@ -81,7 +103,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
     let attempt = 0;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let lastEventId = "";
+    const cursor = createStreamCursor(queryClient, path, retainCursor);
 
     function connect() {
       if (cancelled) return;
@@ -89,7 +111,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
       // EventSource defaults to credentialed same-origin requests; the
       // browser sends the session cookie automatically through Next's
       // /v1/* rewrite to apps/api.
-      es = new EventSource(streamPathWithCursor(path, lastEventId), {
+      es = new EventSource(cursor.path(), {
         withCredentials: true,
       });
 
@@ -100,7 +122,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
 
       es.onmessage = (msg) => {
         if (cancelled) return;
-        if (msg.lastEventId) lastEventId = msg.lastEventId;
+        cursor.remember(msg.lastEventId);
         let payload: unknown;
         try {
           payload = JSON.parse(msg.data);
@@ -113,7 +135,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
           console.warn("[useStream] dropping malformed event", parsed.error);
           return;
         }
-        dispatch(parsed.data, queryClient);
+        if (invalidateQueries) dispatch(parsed.data, queryClient);
         onEventRef.current?.(parsed.data);
       };
 
@@ -138,7 +160,7 @@ export function useStream(opts: UseStreamOptions = {}): void {
       if (es) es.close();
       onStatusChangeRef.current?.("closed");
     };
-  }, [path, reconnect, queryClient]);
+  }, [path, reconnect, retainCursor, invalidateQueries, queryClient]);
 }
 
 // ─── Cache invalidation strategy ─────────────────────────────────────────────

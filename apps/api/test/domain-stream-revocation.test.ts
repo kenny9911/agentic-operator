@@ -328,6 +328,13 @@ describe("open Domain streams revoke access before the next frame", () => {
     });
     await client.seen("event: ready");
     publish(f.domain.runtimeTenantId, "transport-blocked");
+    // Stream authorization may inspect the shared account authority before
+    // writing. Wait for the real transport hook to establish backpressure;
+    // publishing the event itself no longer synchronously writes a frame.
+    await vi.waitFor(() => expect(response).toBeDefined(), {
+      timeout: 2500,
+      interval: 10,
+    });
     publish(f.domain.runtimeTenantId, "forbidden-buffered-frame");
     grantDomainMembership(f.owner.id, f.domain.id, f.userId, "viewer");
     response!.emit("drain");
